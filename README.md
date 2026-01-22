@@ -91,6 +91,17 @@ Choose the path that matches your project state.
 4.  **Resume Work**:
     Run `/identify-bug` or `/plan-feature` to start contributing.
 
+### Path C: Autonomous Mode
+*Best for hands-off development.*
+
+1.  **Ignite the Loop**:
+    Run `autonomous_loop`.
+2.  **Bootstrap**:
+    -   **Empty Repo**: It will ask for your Vision and Success Criteria once, then take over.
+    -   **Existing Repo**: It will read your `ROADMAP.md` and start executing the next active task.
+3.  **Sit Back**:
+    The agent will Plan, Spec, Implement, and Verify features in a continuous loop, answering its own questions based on your defined Mission and Standards.
+
 ---
 
 ## Core Workflows
