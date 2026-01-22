@@ -49,6 +49,13 @@ Installs into `.agent/workflows` with YAML frontmatter for IDE integration.
 ./bin/glados-install.sh --mode antigravity
 ```
 
+### Gemini CLI Mode
+Installs as an Agent Skill into `.gemini/skills/glados` (following the Agent Skills standard).
+
+```bash
+./bin/glados-install.sh --mode gemini
+```
+
 ### Direct Mode
 Installs into `glados/` in your project root. Useful for manual inspection or custom setups.
 

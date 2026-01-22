@@ -51,6 +51,7 @@ Options:
 Modes:
     antigravity   Installs to .agent/workflows with YAML frontmatter
     claude        Installs to .claude/commands (standard markdown)
+    gemini        Installs to .gemini/skills/glados (Agent Skills standard)
     direct        Installs to glados/ in the project root
 EOF
     exit 0
@@ -179,6 +180,58 @@ install_direct() {
     echo "Run these workflows directly or use them as reference." >> "$target/README.md"
 }
 
+install_gemini() {
+    local target="$1/.gemini/skills/glados"
+    print_status "Installing for Gemini at $target..."
+    mkdir -p "$target"
+    mkdir -p "$target/workflows"
+    mkdir -p "$target/modules"
+    mkdir -p "$target/personas"
+
+    # Install SKILL.md
+    if [ -f "$SRC_TEMPLATES/SKILL_GEMINI.md" ]; then
+        cp "$SRC_TEMPLATES/SKILL_GEMINI.md" "$target/SKILL.md"
+    else
+        echo "WARNING: SKILL_GEMINI.md not found in templates."
+    fi
+
+    # Install Workflows (with path adaptation)
+    for file in "$SRC_WORKFLOWS"/*.md; do
+        [ -e "$file" ] || continue
+        dest="$target/workflows/$(basename "$file")"
+        install_file "$file" "$dest" "false"
+        
+        # Adaptation: Gemini skill files are typically relative or looked up by name.
+        # We replace specific "glados/" path prefixes to generic relative ones so the agent looks in the skill bundle.
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' 's|glados/modules/|modules/|g' "$dest"
+            sed -i '' 's|glados/personas/|personas/|g' "$dest"
+        else
+            sed -i 's|glados/modules/|modules/|g' "$dest"
+            sed -i 's|glados/personas/|personas/|g' "$dest"
+        fi
+    done
+
+    # Install Modules
+    for file in "$SRC_MODULES"/*.md; do
+        [ -e "$file" ] || continue
+        dest="$target/modules/$(basename "$file")"
+        install_file "$file" "$dest" "false"
+        # Adapt self-references if any
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' 's|glados/personas/|personas/|g' "$dest"
+        else
+            sed -i 's|glados/personas/|personas/|g' "$dest"
+        fi
+    done
+
+    # Install Personas
+    for file in "$SRC_PERSONAS"/*.md; do
+        [ -e "$file" ] || continue
+        install_file "$file" "$target/personas/$(basename "$file")" "false"
+    done
+}
+
 # -----------------------------------------------------------------------------
 # Main Logic
 # -----------------------------------------------------------------------------
@@ -235,6 +288,9 @@ case "$MODE" in
         ;;
     claude)
         install_claude "$TARGET_DIR"
+        ;;
+    gemini)
+        install_gemini "$TARGET_DIR"
         ;;
     direct)
         install_direct "$TARGET_DIR"
