@@ -10,7 +10,10 @@
 ### 1. Initialize Trace
 -   Ask user for the Feature Name (e.g., "User Authentication").
 -   Convert to camelCase (e.g., `userAuth`).
--   Create a directory: `specs/[YYYY-MM-DD]_feature_[camelCaseName]/`.
+-   **CRITICAL**: Create a directory: `specs/[YYYY-MM-DD]_feature_[camelCaseName]/`.
+    -   **DO NOT** create a `plans/` directory.
+    -   **DO NOT** create numbered files like `001_plan.md` in the root or `plans/`.
+    -   ALL work must happen inside the timestamped `specs/` directory.
 -   Create `README.md` (The Trace Log).
 -   Log session start.
 

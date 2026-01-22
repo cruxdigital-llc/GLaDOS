@@ -57,6 +57,10 @@
         -   *Proxy Decision*: When asked for goals, use roadmap item description.
     -   Run `/spec-feature` (Autonomously).
         -   *Proxy Decision*: Approve specs if they align with `MISSION.md`.
+    -   **Validation (CRITICAL)**:
+        -   Check: Did you create a `plans/` directory or numbered files (e.g., `001_plan.md`)?
+        -   **If YES**: STOP IMMEDIATELY. This is a violation. Move content to `specs/[YYYY-MM-DD]_...` before proceeding.
+        -   **If NO**: Proceed to Implementation.
 
 3.  **Implement**:
     -   Run `/implement-feature` (Autonomously).

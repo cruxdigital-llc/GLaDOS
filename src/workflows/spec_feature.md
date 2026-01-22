@@ -4,6 +4,7 @@
 
 ## Prerequisites
 - [ ] Feature directory exists (`specs/[YYYY-MM-DD]_feature_[name]/`).
+- [ ] **CRITICAL**: Ensure you are NOT working in a `plans/` directory. If `plans/` exists, ignore it and use `specs/`.
 
 ## Process
 
