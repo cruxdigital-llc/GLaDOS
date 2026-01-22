@@ -42,7 +42,14 @@ Installs into `.agent/workflows` with YAML frontmatter for IDE integration.
 ./bin/glados-install.sh --mode antigravity
 ```
 
-### 2. Direct Mode
+### 2. Claude Code Mode
+Installs into `.claude/commands` as standard markdown files, enabling usage with Claude Code slash commands.
+
+```bash
+./bin/glados-install.sh --mode claude
+```
+
+### 3. Direct Mode
 Installs into `glados/` in your project root. Useful for manual inspection or custom setups.
 
 ```bash
