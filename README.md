@@ -31,37 +31,46 @@ Logic is shared across workflows using Modules (`src/modules/`).
 
 ---
 
-## Installation
 
-GLaDOS is installed via a shell script that injects the workflows into your project.
+GLaDOS installs directly into your project, creating a `glados/` directory for configuration and command scripts.
 
-### Claude Code Mode
-Installs into `.claude/commands` as standard markdown files, enabling usage with Claude Code slash commands.
+### Basic Installation
 
+To install (or update) GLaDOS, run the install script and specify your environment:
+
+**Claude Code:**
 ```bash
 ./bin/glados-install.sh --mode claude
 ```
+*Installs commands to `.claude/commands`.*
 
-### Antigravity Mode
-Installs into `.agent/workflows` with YAML frontmatter for IDE integration.
-
+**Antigravity (IDE):**
 ```bash
 ./bin/glados-install.sh --mode antigravity
 ```
+*Installs workflows to `.agent/workflows`.*
 
-### Gemini CLI Mode
-Installs as an Agent Skill into `.gemini/skills/glados` (following the Agent Skills standard).
-
+**Gemini CLI:**
 ```bash
 ./bin/glados-install.sh --mode gemini
 ```
+*Installs as a skill to `.gemini/skills/glados`.*
 
-### Direct Mode
-Installs into `glados/` in your project root. Useful for manual inspection or custom setups.
+### The `glados/` Directory
+
+Every installation scaffolds a `glados/` directory in your project root:
+-   `glados/PROJECT_STATUS.md`: The high-level state of your project.
+-   `glados/personas/`: Custom personas (add your own here!).
+-   `glados/overlays/`: Directory for local overlays to customize workflows.
+
+### Updates & Overlays
+
+To update your commands or ingest new local overlays from `glados/overlays/`, run:
 
 ```bash
-./bin/glados-install.sh --mode direct
+./bin/glados-update.sh --ingest-overlays
 ```
+
 
 ---
 

@@ -3,7 +3,7 @@
 **Goal**: Analyze an existing codebase to understand its structure and populate `PROJECT_STATUS.md`.
 
 ## Prerequisites
-- [ ] `PROJECT_STATUS.md` exists (or will be confirmed created).
+- [ ] `glados/PROJECT_STATUS.md` exists (or will be confirmed created).
 
 ## Process
 
@@ -24,7 +24,7 @@ Log the start of the session in `specs/[YYYY-MM-DD]_review_codebase/README.md`.
 3.  **Debt**: Note obvious technical debt or "TODOs".
 
 ### 4. Status Population
-Update `PROJECT_STATUS.md` with:
+Update `glados/PROJECT_STATUS.md` with:
 -   **Architecture**: A summary of your findings (Tech Stack, Patterns).
 -   **Mission**: Infer the mission if not explicitly stated (mark as "Inferred").
 -   **Active Tasks**: Leave empty or add "Determine Roadmap".
@@ -34,7 +34,7 @@ Update `PROJECT_STATUS.md` with:
 
 > [!IMPORTANT]
 > **Trace**: Log the findings and analysis in `specs/[YYYY-MM-DD]_codebase_review/README.md`.
-> **Status**: Ensure `PROJECT_STATUS.md` is fully populated based on your findings.
+> **Status**: Ensure `glados/PROJECT_STATUS.md` is fully populated based on your findings.
 
 ### 6. Completion
 Ask the user if they want to proceed to "Retrospect" or "Plan Feature".

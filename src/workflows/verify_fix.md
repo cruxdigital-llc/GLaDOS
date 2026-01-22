@@ -23,7 +23,7 @@
 -   Merge the reproduction test into the main test suite (if appropriate) to prevent regression.
 
 ### 5. Completion
-1.  **Status**: Update `PROJECT_STATUS.md`:
+1.  **Status**: Update `glados/PROJECT_STATUS.md`:
     -   Remove from "Known Issues".
     -   Add to "Recent Changes".
 2.  **Trace**: Mark `specs/[...]/README.md` as CLOSED.

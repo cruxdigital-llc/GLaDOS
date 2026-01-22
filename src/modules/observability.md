@@ -13,9 +13,12 @@
     -   Persona feedback (if applicable).
 
 ### 2. Update Status
--   **Target**: `PROJECT_STATUS.md` in the project root.
+-   **Target**: `glados/PROJECT_STATUS.md` (previously in project root).
 -   **Action**: Update the following sections if changed:
     -   **Architecture**: If tech stack or major patterns changed.
-    -   **Active Tasks**: Add new items or move completed ones to "Recent Changes".
+    -   **Current Focus** (CRITICAL):
+        -   **Hierarchy**: Maintain `Epic` -> `Feature` -> `Task` structure.
+        -   **Specificity**: Do not use generic terms like "Coding". Use "Implementing Auth Middleware in auth.ts".
+        -   **State**: move completed items to "Recent Changes".
     -   **Known Issues**: Add discovered bugs or debt.
     -   **Recent Changes**: summarize completed workflows.

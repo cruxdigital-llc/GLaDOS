@@ -1,6 +1,6 @@
 ## Prerequisites
 - [ ] Mission is defined (`MISSION.md`).
-- [ ] `PROJECT_STATUS.md` is up to date.
+- [ ] `glados/PROJECT_STATUS.md` is up to date.
 
 ## Process
 
@@ -46,7 +46,7 @@ To modify: Edit directly.
 
 > [!IMPORTANT]
 > **Trace**: Log the decisions made and file paths in `specs/[YYYY-MM-DD]_plan_product/README.md`.
-> **Status**: Update `PROJECT_STATUS.md`:
+> **Status**: Update `glados/PROJECT_STATUS.md`:
 > -   "Architecture": Summarize the Tech Stack.
 > -   "Active Tasks": Add the top items from the MVP roadmap.
 

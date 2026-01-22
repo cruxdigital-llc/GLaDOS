@@ -6,6 +6,7 @@
 
 set -e
 
+
 # -----------------------------------------------------------------------------
 # Configuration & Defaults
 # -----------------------------------------------------------------------------
@@ -69,13 +70,31 @@ install_file() {
     
     local filename=$(basename "$source")
     
-    # Check for overlay replacement
-    if [ -n "$OVERLAY" ] && [ -f "$SRC_OVERLAYS/$OVERLAY/$filename" ]; then
-        source="$SRC_OVERLAYS/$OVERLAY/$filename"
-        if [ "$VERBOSE" = "true" ]; then
-             echo "  (Overlay) Using $source"
+    # 1. Check for LOCAL PROJECT overlay (Highest Priority)
+    # This allows users to override files by placing them in glados/overlays/<active_overlay>/
+    # Note: We need to know which local overlay is active. For now, we'll support a generic mechanism
+    # or rely on the same --overlay flag if referencing a local name?
+    #
+    # Actually, the requirement is "ingest overlays". 
+    # For initial install, we stick to src/overlays. 
+    # But if the user provides --overlay, we should ALSO check target/glados/overlays/$OVERLAY.
+    
+    if [ -n "$OVERLAY" ]; then
+        if [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
+             source="$TARGET_DIR/glados/overlays/$OVERLAY/$filename"
+             if [ "$VERBOSE" = "true" ]; then
+                 echo "  (Local Overlay) Using $source"
+             fi
+        elif [ -f "$SRC_OVERLAYS/$OVERLAY/$filename" ]; then
+            source="$SRC_OVERLAYS/$OVERLAY/$filename"
+            if [ "$VERBOSE" = "true" ]; then
+                 echo "  (Source Overlay) Using $source"
+            fi
         fi
     fi
+
+    # Ensure directory exists
+    mkdir -p "$(dirname "$dest")"
 
     if [ "$add_frontmatter" = "true" ]; then
         # Extract title from the first line (assuming # Title format)
@@ -92,6 +111,56 @@ install_file() {
     
     if [ "$VERBOSE" = "true" ]; then
         echo "  Installed $filename to $dest"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Scaffolding
+# -----------------------------------------------------------------------------
+
+scaffold_glados() {
+    local target="$1"
+    print_status "Scaffolding GLaDOS structure in $target/glados..."
+    
+    local glados_dir="$target/glados"
+    mkdir -p "$glados_dir"
+    mkdir -p "$glados_dir/personas"
+    mkdir -p "$glados_dir/overlays"
+    
+    # 1. PROJECT_STATUS.md
+    if [ ! -f "$glados_dir/PROJECT_STATUS.md" ]; then
+        if [ -f "$SRC_TEMPLATES/PROJECT_STATUS.md" ]; then
+            cp "$SRC_TEMPLATES/PROJECT_STATUS.md" "$glados_dir/PROJECT_STATUS.md"
+            print_status "Created $glados_dir/PROJECT_STATUS.md"
+        fi
+    else
+        if [ "$VERBOSE" = "true" ]; then
+            echo "  Skipping PROJECT_STATUS.md (already exists)"
+        fi
+    fi
+    
+    # 2. Personas (Always copy/update standard personas to allow user modification)
+    #    Actually, if we overwrite, user mods are lost.
+    #    Strategy: Only copy if not present? Or provide a reliable set?
+    #    Requirement: "glados/personas should have copies of all the pre-baked personas"
+    #    Let's copy them. Users should rename if they want to heavily fork, or we treat these as "core".
+    #    Safest for "user can add their own" is to copy standard ones.
+    for file in "$SRC_PERSONAS"/*.md; do
+        [ -e "$file" ] || continue
+        exclude_overwrite="false" 
+        # Logic to avoid overwriting could go here if needed.
+        # For now, we'll implement a simple copy (overwrite) for standard personas
+        # so updates to GLaDOS propagate.
+        cp "$file" "$glados_dir/personas/"
+    done
+    
+    # 3. Overlays README
+    if [ ! -f "$glados_dir/overlays/README.md" ]; then
+         if [ -f "$SRC_TEMPLATES/OVERLAYS_README.md" ]; then
+            cp "$SRC_TEMPLATES/OVERLAYS_README.md" "$glados_dir/overlays/README.md"
+         else
+            echo "# GLaDOS Overlays" > "$glados_dir/overlays/README.md"
+         fi
     fi
 }
 
@@ -121,8 +190,8 @@ install_antigravity() {
         install_file "$file" "$1/.agent/modules/$(basename "$file")" "false"
     done
     
-    # Install Personas (hidden or visible? For AG, maybe visible workflows?)
-    # For now, let's put them in .agent/personas
+    # Install Personas
+    # For Antigravity, we ALSO install to .agent/personas for internal tool use
     local persona_target="$1/.agent/personas"
     mkdir -p "$persona_target"
     for file in "$SRC_PERSONAS"/*.md; do
@@ -140,20 +209,15 @@ install_claude() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/$(basename "$file")" "false"
     done
-    
-    # Claude doesn't inherently support a persona directory structure in commands
-    # We might leave them as reference files
 }
 
 install_direct() {
     local target="$1/glados"
     print_status "Installing directly to $target..."
-    mkdir -p "$target"
+    # Reuse scaffold logic somewhat, but direct needs specific subfolders for workflows
     mkdir -p "$target/workflows"
-    mkdir -p "$target/templates"
-    mkdir -p "$target/personas"
     mkdir -p "$target/modules"
-
+    
     # Workflows
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
@@ -165,19 +229,6 @@ install_direct() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/modules/$(basename "$file")" "false"
     done
-    
-    # Templates
-    cp "$SRC_TEMPLATES"/*.md "$target/templates/" 2>/dev/null || true
-    
-    # Personas
-    for file in "$SRC_PERSONAS"/*.md; do
-        [ -e "$file" ] || continue
-        install_file "$file" "$target/personas/$(basename "$file")" "false"
-    done
-    
-    # Create a simple README in the target
-    echo "# GLaDOS Workflows" > "$target/README.md"
-    echo "Run these workflows directly or use them as reference." >> "$target/README.md"
 }
 
 install_gemini() {
@@ -202,7 +253,6 @@ install_gemini() {
         install_file "$file" "$dest" "false"
         
         # Adaptation: Gemini skill files are typically relative or looked up by name.
-        # We replace specific "glados/" path prefixes to generic relative ones so the agent looks in the skill bundle.
         if [[ "$OSTYPE" == "darwin"* ]]; then
             sed -i '' 's|glados/modules/|modules/|g' "$dest"
             sed -i '' 's|glados/personas/|personas/|g' "$dest"
@@ -217,7 +267,6 @@ install_gemini() {
         [ -e "$file" ] || continue
         dest="$target/modules/$(basename "$file")"
         install_file "$file" "$dest" "false"
-        # Adapt self-references if any
         if [[ "$OSTYPE" == "darwin"* ]]; then
             sed -i '' 's|glados/personas/|personas/|g' "$dest"
         else
@@ -282,6 +331,12 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
+# Always scaffold the glados directory regardless of mode
+# EXCEPT for direct mode, which installs INTO glados/, so we be careful not to double up or conflict.
+# But 'scaffold_glados' handles the extras (PROJECT_STATUS, personas, overlays dir).
+# Direct mode function mainly handles workflows/modules.
+scaffold_glados "$TARGET_DIR"
+
 case "$MODE" in
     antigravity)
         install_antigravity "$TARGET_DIR"
@@ -302,3 +357,4 @@ case "$MODE" in
 esac
 
 print_status "Installation complete!"
+

@@ -3,7 +3,7 @@
 **Goal**: Analyze requirements and create a high-level plan for a new feature.
 
 ## Prerequisites
-- [ ] `PROJECT_STATUS.md` exists.
+- [ ] `glados/PROJECT_STATUS.md` exists.
 
 ## Process
 
@@ -21,7 +21,7 @@
 Invoke module: `glados/modules/capabilities.md`
 -   **Context**: Determine what tools can assist with this feature (e.g., Browser for UI).
 
--   **Scan**: Check the installed `personas/` directory (e.g., `.agent/personas/` or `glados/personas/`).
+-   **Scan**: Check the installed `personas/` directory (e.g., `glados/personas/` or `.agent/personas/`).
 -   **Present**: List all available personas to the user.
 -   **Select**: Ask: "Which Personas should assist with this feature?" (e.g., Security Expert, Accessibility Lead).
 -   **Log**: Record the list of **Active Personas** in `specs/[...]/README.md`.

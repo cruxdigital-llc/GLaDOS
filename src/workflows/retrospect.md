@@ -3,7 +3,7 @@
 **Goal**: Review recent work to improve processes and standards.
 
 ## Prerequisites
-- [ ] `PROJECT_STATUS.md` exists.
+- [ ] `glados/PROJECT_STATUS.md` exists.
 
 ## Process
 
@@ -27,7 +27,7 @@ Ask the user what specifically they want to retrospect on (e.g., "The last featu
 
 > [!IMPORTANT]
 > **Trace**: Log the discussion and action items in `specs/[YYYY-MM-DD]_retrospective/README.md`.
-> **Status**: Update `PROJECT_STATUS.md` "Recent Changes" to reflect the retrospective and any process updates.
+> **Status**: Update `glados/PROJECT_STATUS.md` "Recent Changes" to reflect the retrospective and any process updates.
 
 ### 5. Completion
 Summarize the action items for the user.

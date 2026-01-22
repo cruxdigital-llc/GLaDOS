@@ -10,9 +10,17 @@ It should be updated whenever a significant change occurs in the architecture, r
 ## Architecture
 [High-level description of the current architecture]
 
-## Active Tasks
-- [ ] [High priority task 1]
-- [ ] [High priority task 2]
+## Current Focus
+*This section tracks the immediate work stack. Updates here should be specific.*
+
+### 1. [Epic / High Level Goal]
+*Lead: [Persona]*
+-   [ ] **[Current Feature/Task Name]**: [Brief status, e.g., "Implementing core logic"]
+    -   [ ] Subtask 1
+    -   [ ] Subtask 2
+
+### 2. Backlog / Upcoming
+-   [ ] [Next Priority Item]
 
 ## Known Issues / Technical Debt
 - [Description of known issue 1]
