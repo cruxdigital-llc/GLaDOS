@@ -35,21 +35,21 @@ This prevents "hallucination spirals" by validating state at each checkpoint.
 
 GLaDOS is installed via a shell script that injects the workflows into your project.
 
-### 1. Antigravity Mode (Recommended)
-Installs into `.agent/workflows` with YAML frontmatter for IDE integration.
-
-```bash
-./bin/glados-install.sh --mode antigravity
-```
-
-### 2. Claude Code Mode
+### Claude Code Mode
 Installs into `.claude/commands` as standard markdown files, enabling usage with Claude Code slash commands.
 
 ```bash
 ./bin/glados-install.sh --mode claude
 ```
 
-### 3. Direct Mode
+### Antigravity Mode
+Installs into `.agent/workflows` with YAML frontmatter for IDE integration.
+
+```bash
+./bin/glados-install.sh --mode antigravity
+```
+
+### Direct Mode
 Installs into `glados/` in your project root. Useful for manual inspection or custom setups.
 
 ```bash
