@@ -26,13 +26,16 @@ You can find the specific instructions for each workflow in the `workflows/` dir
 -   **Plan Product**: `workflows/plan_product.md`
 -   **Establish Standards**: `workflows/establish_standards.md`
 -   **Review Codebase**: `workflows/review_codebase.md`
+-   **Adopt Codebase**: `workflows/adopt_codebase.md` - Full brownfield onboarding.
 -   **Retrospect**: `workflows/retrospect.md`
+-   **Recombobulate**: `workflows/recombobulate.md` - Clean up vibe debt, formalize patterns.
+-   **Consolidate**: `workflows/consolidate.md` - Alias for Recombobulate.
 
 ## Architecture
 
 This skill also includes:
--   **Modules** (`modules/`): Reusable logic for Observability (`observability.md`) and Persona Reviews (`persona_review.md`).
--   **Personas** (`personas/`): Role definitions (Product Manager, Architect, QA) used during reviews.
+-   **Modules** (`modules/`): Reusable logic for Observability, Persona Context (review + operating modes), Standards Gate (3-tier enforcement), Pattern Observer (implicit standard detection), and Capabilities.
+-   **Personas** (`personas/`): Role definitions with type metadata (review, operating, hybrid).
 
 ## Instructions
 

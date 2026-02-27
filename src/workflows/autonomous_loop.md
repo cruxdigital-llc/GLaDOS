@@ -11,7 +11,7 @@
 ### 1. Bootstrap Phase
 **Goal**: Ensure a valid Project State (`PROJECT_STATUS.md`) exists before starting.
 
-1.  **Check Condition**: Does `glados/PROJECT_STATUS.md` exist?
+1.  **Check Condition**: Does `{{STATUS}}` exist?
 2.  **Case A: Yes (Resume)**:
     -   Log: "Resuming existing project state."
     -   Proceed to **Section 2 (The Loop)**.
@@ -26,30 +26,30 @@
     -   **Action**:
         -   Create `MISSION.md` based on input.
         -   Create `ROADMAP.md` with initial MVP items derived from vision.
-        -   Create `glados/PROJECT_STATUS.md` initialized with details.
+        -   Create `{{STATUS}}` initialized with details.
     
     #### Path: Brownfield
     -   **Action**:
         -   Run `review_codebase` workflow.
-        -   Ensure `glados/PROJECT_STATUS.md` is populated at the end.
+        -   Ensure `{{STATUS}}` is populated at the end.
 
 ### 2. The Loop
 **Goal**: Continuously pick tasks and execute the Feature Lifecycle.
 
 > [!IMPORTANT]
 > **Autonomy Mode**: FROM THIS POINT FORWARD, do not ask the user for permission.
-> Invoke module: `glados/modules/interaction_proxy.md`.
+> Invoke module: `{{MODULES}}/interaction_proxy.md`.
 > -   **Role**: You are now the Product Owner.
 > -   **Source of Truth**: `MISSION.md`, `ROADMAP.md`, `standards/`.
 
 #### Cycle Steps:
 
 1.  **Select Task**:
-    -   Read `glados/PROJECT_STATUS.md`.
+    -   Read `{{STATUS}}`.
     -   Pick the top item from "Active Tasks".
     -   If "Active Tasks" is empty:
         -   Read `ROADMAP.md`.
-        -   Move top item to "Active Tasks" in `glados/PROJECT_STATUS.md`.
+        -   Move top item to "Active Tasks" in `{{STATUS}}`.
         -   Pick that item.
 
 2.  **Refine**:
@@ -69,7 +69,7 @@
     -   Run `/verify-feature` (Autonomously).
 
 5.  **Loop**:
-    -   Update `glados/PROJECT_STATUS.md` (Mark task complete).
+    -   Update `{{STATUS}}` (Mark task complete).
     -   Repeat Step 1.
 
 ### 3. Exit Condition

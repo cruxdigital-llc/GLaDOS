@@ -71,14 +71,6 @@ install_file() {
     local filename=$(basename "$source")
     
     # 1. Check for LOCAL PROJECT overlay (Highest Priority)
-    # This allows users to override files by placing them in glados/overlays/<active_overlay>/
-    # Note: We need to know which local overlay is active. For now, we'll support a generic mechanism
-    # or rely on the same --overlay flag if referencing a local name?
-    #
-    # Actually, the requirement is "ingest overlays". 
-    # For initial install, we stick to src/overlays. 
-    # But if the user provides --overlay, we should ALSO check target/glados/overlays/$OVERLAY.
-    
     if [ -n "$OVERLAY" ]; then
         if [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
              source="$TARGET_DIR/glados/overlays/$OVERLAY/$filename"
@@ -108,9 +100,58 @@ install_file() {
     else
         cp "$source" "$dest"
     fi
+
+    # 2. Resolve path placeholders based on install mode
+    resolve_placeholders "$dest"
     
     if [ "$VERBOSE" = "true" ]; then
         echo "  Installed $filename to $dest"
+    fi
+}
+
+# Resolve {{PLACEHOLDER}} variables in an installed file based on MODE.
+# Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
+resolve_placeholders() {
+    local file="$1"
+    
+    # Determine mode-specific paths
+    local path_status path_modules path_personas
+    case "$MODE" in
+        antigravity)
+            path_status="glados/PROJECT_STATUS.md"
+            path_modules=".agent/modules"
+            path_personas=".agent/personas"
+            ;;
+        claude)
+            path_status="glados/PROJECT_STATUS.md"
+            path_modules="glados/modules"
+            path_personas="glados/personas"
+            ;;
+        gemini)
+            path_status="glados/PROJECT_STATUS.md"
+            path_modules="modules"
+            path_personas="personas"
+            ;;
+        direct)
+            path_status="glados/PROJECT_STATUS.md"
+            path_modules="glados/modules"
+            path_personas="glados/personas"
+            ;;
+    esac
+
+    # Apply replacements (portable sed across macOS and Linux)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' \
+            -e "s|{{STATUS}}|${path_status}|g" \
+            -e "s|{{MODULES}}|${path_modules}|g" \
+            -e "s|{{PERSONAS}}|${path_personas}|g" \
+            "$file"
+    else
+        sed -i \
+            -e "s|{{STATUS}}|${path_status}|g" \
+            -e "s|{{MODULES}}|${path_modules}|g" \
+            -e "s|{{PERSONAS}}|${path_personas}|g" \
+            "$file"
     fi
 }
 
@@ -126,6 +167,9 @@ scaffold_glados() {
     mkdir -p "$glados_dir"
     mkdir -p "$glados_dir/personas"
     mkdir -p "$glados_dir/overlays"
+    mkdir -p "$glados_dir/observations"
+    mkdir -p "$glados_dir/philosophies"
+    mkdir -p "$glados_dir/standards"
     
     # 1. PROJECT_STATUS.md
     if [ ! -f "$glados_dir/PROJECT_STATUS.md" ]; then
@@ -139,18 +183,9 @@ scaffold_glados() {
         fi
     fi
     
-    # 2. Personas (Always copy/update standard personas to allow user modification)
-    #    Actually, if we overwrite, user mods are lost.
-    #    Strategy: Only copy if not present? Or provide a reliable set?
-    #    Requirement: "glados/personas should have copies of all the pre-baked personas"
-    #    Let's copy them. Users should rename if they want to heavily fork, or we treat these as "core".
-    #    Safest for "user can add their own" is to copy standard ones.
+    # 2. Personas (copy standard personas, updates propagate on reinstall)
     for file in "$SRC_PERSONAS"/*.md; do
         [ -e "$file" ] || continue
-        exclude_overwrite="false" 
-        # Logic to avoid overwriting could go here if needed.
-        # For now, we'll implement a simple copy (overwrite) for standard personas
-        # so updates to GLaDOS propagate.
         cp "$file" "$glados_dir/personas/"
     done
     
@@ -161,6 +196,32 @@ scaffold_glados() {
          else
             echo "# GLaDOS Overlays" > "$glados_dir/overlays/README.md"
          fi
+    fi
+
+    # 4. Observations (staging area for pattern_observer)
+    if [ ! -f "$glados_dir/observations/observed_standards.md" ]; then
+        if [ -f "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" ]; then
+            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed_standards.md"
+        fi
+    fi
+    if [ ! -f "$glados_dir/observations/observed_philosophies.md" ]; then
+        if [ -f "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" ]; then
+            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed_philosophies.md"
+        fi
+    fi
+
+    # 5. Philosophies README
+    if [ ! -f "$glados_dir/philosophies/README.md" ]; then
+        if [ -f "$SRC_TEMPLATES/PHILOSOPHIES_README.md" ]; then
+            cp "$SRC_TEMPLATES/PHILOSOPHIES_README.md" "$glados_dir/philosophies/README.md"
+        fi
+    fi
+
+    # 6. Standards README
+    if [ ! -f "$glados_dir/standards/README.md" ]; then
+        if [ -f "$SRC_TEMPLATES/STANDARDS_README.md" ]; then
+            cp "$SRC_TEMPLATES/STANDARDS_README.md" "$glados_dir/standards/README.md"
+        fi
     fi
 }
 
@@ -246,20 +307,11 @@ install_gemini() {
         echo "WARNING: SKILL_GEMINI.md not found in templates."
     fi
 
-    # Install Workflows (with path adaptation)
+    # Install Workflows
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
         dest="$target/workflows/$(basename "$file")"
         install_file "$file" "$dest" "false"
-        
-        # Adaptation: Gemini skill files are typically relative or looked up by name.
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's|glados/modules/|modules/|g' "$dest"
-            sed -i '' 's|glados/personas/|personas/|g' "$dest"
-        else
-            sed -i 's|glados/modules/|modules/|g' "$dest"
-            sed -i 's|glados/personas/|personas/|g' "$dest"
-        fi
     done
 
     # Install Modules
@@ -267,11 +319,6 @@ install_gemini() {
         [ -e "$file" ] || continue
         dest="$target/modules/$(basename "$file")"
         install_file "$file" "$dest" "false"
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' 's|glados/personas/|personas/|g' "$dest"
-        else
-            sed -i 's|glados/personas/|personas/|g' "$dest"
-        fi
     done
 
     # Install Personas

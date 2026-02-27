@@ -1,5 +1,5 @@
 ## Prerequisites
-- [ ] `glados/PROJECT_STATUS.md` exists.
+- [ ] `{{STATUS}}` exists.
 
 ## Process
 
@@ -39,7 +39,7 @@ To modify: Edit this file directly. GLaDOS will read the current state before ma
 
 > [!IMPORTANT]
 > **Trace**: Log the interview summary and file creation in `specs/[YYYY-MM-DD]_mission_statement/README.md`.
-> **Status**: Update the "Project Overview" section in `glados/PROJECT_STATUS.md` with a link to `MISSION.md`.
+> **Status**: Update the "Project Overview" section in `{{STATUS}}` with a link to `MISSION.md`.
 
 ### 5. User Verification
 Ask the user to review `MISSION.md`.
