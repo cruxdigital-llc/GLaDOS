@@ -5,13 +5,13 @@
 ## Instructions
 
 ### 1. Identify Personas
--   **Source**: Scan the `glados/personas/` (or `.agent/personas/`) directory to find all available persona files.
+-   **Source**: Scan the `{{PERSONAS}}/` directory to find all available persona files.
 -   **Filter**: Use ALL found personas by default.
     -   *Optional*: If the trace `README.md` explicitly lists "Active Personas", you may limit the review to that subset.
 
 ### 2. Review Loop
 For *each* active persona:
-1.  **Load Context**: Read the definition in `glados/personas/[persona_name].md`.
+1.  **Load Context**: Read the definition in `{{PERSONAS}}/[persona_name].md`.
 2.  **Adopt Role**: "Acting as [Persona Name]..."
 3.  **Audit**: Review the current work (Plan, Spec, or Code) against the persona's:
     -   **Responsibilities**: Is the core job being done?

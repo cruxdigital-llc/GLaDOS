@@ -16,18 +16,33 @@ GLaDOS forces the agent to adopt specific viewpoints during planning and verific
 -   **Product Manager**: "Is this valuable?"
 -   **Architect**: "Is this scalable?"
 -   **QA**: "Is this breakable?"
-*Add your own personas (e.g., Security Expert) by dropping files into `src/personas`.*
+
+Personas support three modes: **review** (critique during gates), **operating** (drive session behavior), and **hybrid** (both). Add your own by dropping files into `src/personas`.
 
 ### ⚡ Split Lifecycles
 Development is broken into discrete, verifying steps:
 **Plan** → **Spec** → **Implement** → **Verify**.
 This prevents "hallucination spirals" by validating state at each checkpoint.
 
+### 🛡️ Standards Gate
+Documented standards are enforced automatically at pre- and post-implementation checkpoints using three severity tiers:
+-   **must**: Blocks the workflow.
+-   **should**: Warning in the trace.
+-   **may**: Informational.
+
+### 🧭 Philosophies
+Beyond standards (the *what*), GLaDOS tracks **philosophies** (the *why*) — high-level design principles like "All APIs should be RESTful" or "Zero-downtime deployments are non-negotiable." Core philosophies are enforced as blocking constraints.
+
+### 👁️ Silent Capture
+The `pattern_observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `glados/observations/` for later review.
+
 ### 🧩 Modular Architecture
 Logic is shared across workflows using Modules (`src/modules/`).
 -   **Observability**: Standardized logging.
--   **Capabilities**: Introspects available tools (Browser, DB, MCPs) to enhance execution.
--   **Persona Review**: Iterates through active stakeholders.
+-   **Persona Context**: Review and operating persona management.
+-   **Standards Gate**: Automated enforcement at checkpoints.
+-   **Pattern Observer**: Passive implicit-pattern detection.
+-   **Capabilities**: Introspects available tools (Browser, DB, MCPs).
 
 ---
 
@@ -62,6 +77,9 @@ Every installation scaffolds a `glados/` directory in your project root:
 -   `glados/PROJECT_STATUS.md`: The high-level state of your project.
 -   `glados/personas/`: Custom personas (add your own here!).
 -   `glados/overlays/`: Directory for local overlays to customize workflows.
+-   `glados/standards/`: Documented coding and architectural standards.
+-   `glados/philosophies/`: High-level design principles and agreements.
+-   `glados/observations/`: Staging area for implicitly detected patterns.
 
 ### Updates & Overlays
 
@@ -91,13 +109,13 @@ Choose the path that matches your project state.
 ### Path B: Brownfield (Existing Codebase)
 *Best for integrating GLaDOS into an active repo.*
 
-1.  **Map the Territory**:
-    Run `/review-codebase`. GLaDOS will analyze your file structure, infer your tech stack, and populate `PROJECT_STATUS.md`.
-2.  **Codify Knowledge**:
-    Run `/establish-standards`. This interactively extracts "tribal knowledge" (e.g., "How do we handle errors?") into `standards/` files so future agents follow your rules.
-3.  **Align on Goals**:
-    Run `/mission` to ensure the agent understands the project's high-level purpose.
-4.  **Resume Work**:
+1.  **Full Onboarding** (recommended):
+    Run `/adopt-codebase`. This orchestrates the full brownfield sequence: structural analysis, standards extraction, philosophy discovery, and mission alignment.
+2.  **Or, Step by Step**:
+    1.  Run `/review-codebase` to analyze your file structure and populate `PROJECT_STATUS.md`.
+    2.  Run `/establish-standards` to extract tribal knowledge into `standards/` files.
+    3.  Run `/mission` to ensure the agent understands the project's purpose.
+3.  **Resume Work**:
     Run `/identify-bug` or `/plan-feature` to start contributing.
 
 ### Path C: Autonomous Mode
@@ -124,6 +142,7 @@ Once installed, use these workflows to drive development.
 | `/plan-product` | Generates `ROADMAP.md` & `TECH_STACK.md`. |
 | `/establish-standards` | Interactive interview to create `standards/*.md`. |
 | `/review-codebase` | Spider the directory to build `PROJECT_STATUS.md`. |
+| `/adopt-codebase` | Full brownfield onboarding sequence. |
 
 ### 2. The Development Loop
 For every feature, follow this 4-step cycle:
@@ -136,10 +155,12 @@ For every feature, follow this 4-step cycle:
 ### 3. Maintenance
 | Command | Description |
 | :--- | :--- |
-| `/identify-bug` | creates a reproduction plan before touching code. |
+| `/identify-bug` | Creates a reproduction plan before touching code. |
 | `/plan-fix` | Lightweight planning for smaller issues. |
 | `/implement-fix` | Targeted code changes. |
 | `/retrospect` | Review recent work to improve `standards/` or process. |
+| `/recombobulate` | Systematically clean up vibe debt, formalize patterns, audit standards. |
+| `/consolidate` | Alias for `/recombobulate`. |
 
 ---
 
@@ -180,6 +201,19 @@ You can customize GLaDOS without forking it using **Overlays**.
 ```bash
 ./bin/glados-install.sh --mode antigravity --overlay my_overlay
 ```
+
+---
+
+## Playbook: Adopting GLaDOS in Your Team
+
+See **[PLAYBOOK.md](PLAYBOOK.md)** for comprehensive guidance on:
+
+-   **Solo quickstart**: Day-1 install through week-2 steady state.
+-   **Recommended cadence**: Per-feature, weekly, monthly, and quarterly rituals.
+-   **Team adoption**: A 4-stage evangelization path from Champion → Pair → Team → Multi-Team.
+-   **Customization**: Adding personas, philosophies, and overlays.
+-   **Anti-patterns**: Common mistakes that undermine adoption.
+-   **Measuring success**: Signals that GLaDOS is delivering value.
 
 ---
 

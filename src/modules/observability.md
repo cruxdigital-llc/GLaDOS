@@ -13,7 +13,7 @@
     -   Persona feedback (if applicable).
 
 ### 2. Update Status
--   **Target**: `glados/PROJECT_STATUS.md` (previously in project root).
+-   **Target**: `{{STATUS}}` (previously in project root).
 -   **Action**: Update the following sections if changed:
     -   **Architecture**: If tech stack or major patterns changed.
     -   **Current Focus** (CRITICAL):

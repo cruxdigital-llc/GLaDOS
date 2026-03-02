@@ -13,7 +13,7 @@
 -   Log session resumption.
 
 ### 2. Capabilities Check
-Invoke module: `glados/modules/capabilities.md`
+Invoke module: `{{MODULES}}/capabilities.md`
 -   **Context**: checking for tools to speed up implementation (e.g. looking up docs via browser).
 
 ### 3. Task Breakdown
@@ -31,6 +31,7 @@ For each task in `tasks.md`:
 ### 4. Observability Update
 > [!IMPORTANT]
 > **Trace**: Ensure all file changes are logged in `specs/[...]/README.md`.
+> Invoke module: `{{MODULES}}/pattern_observer.md` — Log any implicit standards or philosophies observed during implementation.
 
 ### 5. Handoff
 -   Suggest running `/verify-feature` next.

@@ -22,13 +22,18 @@
 -   Create `specs/[...]/spec.md`.
 
 ### 3. Review (Persona-based)
-Invoke module: `glados/modules/persona_review.md`
+Invoke module: `{{MODULES}}/persona_context.md`
 -   **Context**: Reviewing the **Specification**.
 
-### 4. Observability Update
-> [!IMPORTANT]
-> Invoke module: `glados/modules/observability.md`
-> -   **Context**: Log spec creation and review results.
+### 4. Standards Gate (Pre-Implementation)
+Invoke module: `{{MODULES}}/standards_gate.md`
+-   **Context**: Audit the specification against applicable standards before implementation begins.
+-   **Checkpoint**: `pre-implementation`
 
-### 5. Handoff
+### 5. Observability Update
+> [!IMPORTANT]
+> Invoke module: `{{MODULES}}/observability.md`
+> -   **Context**: Log spec creation, review results, and standards gate report.
+
+### 6. Handoff
 -   Suggest running `/implement-feature` next.

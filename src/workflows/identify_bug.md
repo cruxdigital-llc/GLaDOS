@@ -3,7 +3,7 @@
 **Goal**: Reproduce and isolate a bug.
 
 ## Prerequisites
-- [ ] `glados/PROJECT_STATUS.md` exists.
+- [ ] `{{STATUS}}` exists.
 
 ## Process
 
@@ -26,7 +26,7 @@
 ### 4. Observability Update
 > [!IMPORTANT]
 > **Trace**: Log the successful reproduction (or failure to reproduce) in `specs/[...]/README.md`.
-> **Status**: Add to "Known Issues" in `glados/PROJECT_STATUS.md`.
+> **Status**: Add to "Known Issues" in `{{STATUS}}`.
 
 ### 5. Handoff
 -   Suggest running `/plan-fix` next.

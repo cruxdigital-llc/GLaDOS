@@ -3,7 +3,7 @@
 **Goal**: Extract tribal knowledge from the codebase into concise, documented standards.
 
 ## Prerequisites
-- [ ] `glados/PROJECT_STATUS.md` exists.
+- [ ] `{{STATUS}}` exists.
 
 ## Process
 
@@ -49,7 +49,7 @@ Update `standards/index.yml` with the new files.
 
 > [!IMPORTANT]
 > **Trace**: Log the discovered patterns and created standard files in `specs/[YYYY-MM-DD]_establish_standards/README.md`.
-> **Status**: Update `glados/PROJECT_STATUS.md` to reflect new standards in the "Architecture" or "Standards" section.
+> **Status**: Update `{{STATUS}}` to reflect new standards in the "Architecture" or "Standards" section.
 
 ### 7. Completion
 Ask if the user wants to continue to another area.

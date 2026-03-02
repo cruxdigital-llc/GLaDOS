@@ -3,7 +3,7 @@
 **Goal**: Analyze requirements and create a high-level plan for a new feature.
 
 ## Prerequisites
-- [ ] `glados/PROJECT_STATUS.md` exists.
+- [ ] `{{STATUS}}` exists.
 
 ## Process
 
@@ -18,10 +18,10 @@
 -   Log session start.
 
 ### 2. Context & Persona Selection
-Invoke module: `glados/modules/capabilities.md`
+Invoke module: `{{MODULES}}/capabilities.md`
 -   **Context**: Determine what tools can assist with this feature (e.g., Browser for UI).
 
--   **Scan**: Check the installed `personas/` directory (e.g., `glados/personas/` or `.agent/personas/`).
+-   **Scan**: Check the installed personas directory at `{{PERSONAS}}/`.
 -   **Present**: List all available personas to the user.
 -   **Select**: Ask: "Which Personas should assist with this feature?" (e.g., Security Expert, Accessibility Lead).
 -   **Log**: Record the list of **Active Personas** in `specs/[...]/README.md`.
@@ -37,7 +37,7 @@ Invoke module: `glados/modules/capabilities.md`
 
 ### 5. Observability Update
 > [!IMPORTANT]
-> Invoke module: `glados/modules/observability.md`
+> Invoke module: `{{MODULES}}/observability.md`
 > -   **Context**: Log decisions in trace, add feature to "Active Tasks" in status.
 
 ### 6. Handoff
