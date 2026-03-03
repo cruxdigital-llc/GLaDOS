@@ -13,8 +13,8 @@ A practical guide to adopting GLaDOS in your project and your team — from firs
    ./bin/glados-install.sh --mode antigravity  # or claude, gemini
    ```
 2. **Choose your path**:
-   - **New project?** Start with `/mission` → `/plan-product` → `/plan-feature`.
-   - **Existing codebase?** Run `/adopt-codebase` for a guided onboarding, or step through `/review-codebase` → `/establish-standards` → `/mission` manually.
+   - **New project?** Start with `/glados/mission` → `/glados/plan-product` → `/glados/plan-feature`.
+   - **Existing codebase?** Run `/glados/adopt-codebase` for a guided onboarding, or step through `/glados/review-codebase` → `/glados/establish-standards` → `/glados/mission` manually.
 3. **Establish 2-3 standards** right away. Don't boil the ocean — pick the most contentious or error-prone areas (e.g., "How do we handle errors?", "What's our test strategy?").
 
 ### Week 1: Build Muscle Memory
@@ -44,16 +44,16 @@ Review what was captured. Promote the real patterns to `standards/` or `philosop
 ### Per Feature
 | Step | Workflow | Who Approves |
 |---|---|---|
-| Plan | `/plan-feature` | Developer (self or peer) |
-| Spec | `/spec-feature` | Developer + Personas (auto) |
+| Plan | `/glados/plan-feature` | Developer (self or peer) |
+| Spec | `/glados/spec-feature` | Developer + Personas (auto) |
 | Standards Check | *automatic via standards-gate* | System (blocking on `must`) |
-| Implement | `/implement-feature` | Developer |
-| Verify | `/verify-feature` | Developer + Personas (auto) |
+| Implement | `/glados/implement-feature` | Developer |
+| Verify | `/glados/verify-feature` | Developer + Personas (auto) |
 
 ### Weekly (or Per Sprint)
 | Activity | Workflow | Purpose |
 |---|---|---|
-| Retrospect | `/retrospect` | Human reflection — what went well, what didn't |
+| Retrospect | `/glados/retrospect` | Human reflection — what went well, what didn't |
 | Quick Consolidation | `/recombobulate --scope observations-only` | Promote any accumulated observations |
 
 ### Monthly (or Per Milestone)
@@ -91,13 +91,13 @@ Expand to a small group. This is where you discover:
 - Whether personas need tuning for your domain.
 - How the observations system handles multiple contributors.
 
-**Key action**: Run `/establish-standards` as a group exercise. The interview format naturally surfaces disagreements and builds consensus.
+**Key action**: Run `/glados/establish-standards` as a group exercise. The interview format naturally surfaces disagreements and builds consensus.
 
 #### Stage 3: Team (Full Adoption)
 Once the standards and philosophies feel right:
 - Commit the `glados/` directory to version control.
 - Add GLaDOS install to your onboarding docs.
-- Use `/adopt-codebase` for any new team member's first session — it's a great way to learn the codebase with guided analysis.
+- Use `/glados/adopt-codebase` for any new team member's first session — it's a great way to learn the codebase with guided analysis.
 
 #### Stage 4: Multi-Team
 For organizations with multiple repos:
@@ -113,8 +113,8 @@ For organizations with multiple repos:
 |---|---|
 | **Developer** | Runs the development loop daily. Owns `specs/` for their features. |
 | **Tech Lead** | Reviews standards and philosophies. Runs `/recombobulate --scope full` periodically. Tunes personas. |
-| **Product Owner** | Maintains `MISSION.md` and `ROADMAP.md`. Reviews `/plan-feature` outputs. |
-| **New Hire** | Runs `/adopt-codebase` as onboarding. Reads `standards/` and `philosophies/` as documentation. |
+| **Product Owner** | Maintains `MISSION.md` and `ROADMAP.md`. Reviews `/glados/plan-feature` outputs. |
+| **New Hire** | Runs `/glados/adopt-codebase` as onboarding. Reads `standards/` and `philosophies/` as documentation. |
 
 ---
 
@@ -179,8 +179,8 @@ Things that will undermine GLaDOS adoption:
 |---|---|---|
 | **Documenting 50 standards on day one** | Alert fatigue. Agent ignores everything. | Start with 2-3 `must` standards. Add more as patterns emerge. |
 | **Making everything `must` severity** | Nothing feels important when everything is critical. | Use the full `must`/`should`/`may` spectrum. Most standards should be `should`. |
-| **Skipping `/retrospect`** | Vibe debt accumulates silently. | Make it a ritual — even 10 minutes after a sprint. |
-| **Never running `/recombobulate`** | Observations pile up, standards drift unnoticed. | Schedule monthly at minimum. |
+| **Skipping `/glados/retrospect`** | Vibe debt accumulates silently. | Make it a ritual — even 10 minutes after a sprint. |
+| **Never running `/glados/recombobulate`** | Observations pile up, standards drift unnoticed. | Schedule monthly at minimum. |
 | **Treating philosophies like standards** | Philosophies guide; they don't prescribe syntax. | Keep philosophies high-level. If it has a code example, it's a standard. |
 | **Mandating GLaDOS top-down** | Resistance and resentment. | Let champions demonstrate value first. |
 
@@ -193,7 +193,7 @@ How to know GLaDOS is working:
 | Signal | How to Check |
 |---|---|
 | **Fewer "wait, we don't do it that way" moments** | Standards gate catches violations before review |
-| **Faster onboarding** | New hires use `/adopt-codebase` and read standards instead of asking 50 questions |
+| **Faster onboarding** | New hires use `/glados/adopt-codebase` and read standards instead of asking 50 questions |
 | **Consistent codebase** | `/recombobulate --scope full` finds fewer drift issues over time |
 | **Preserved decisions** | `specs/` traces explain *why* things were built the way they were |
 | **Living standards** | `glados/observations/` regularly produces promotable patterns |

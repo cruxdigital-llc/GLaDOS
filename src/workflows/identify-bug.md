@@ -29,4 +29,4 @@
 > **Status**: Add to "Known Issues" in `{{STATUS}}`.
 
 ### 5. Handoff
--   Suggest running `/plan-fix` next.
+-   Suggest running `/glados/plan-fix` next.

@@ -4,8 +4,8 @@
 
 ## Usage
 Invoked at two checkpoints:
-1. **Pre-implementation**: After `/spec-feature`, before `/implement-feature`.
-2. **Post-implementation**: During `/verify-feature`, before declaring success.
+1. **Pre-implementation**: After `/glados/spec-feature`, before `/glados/implement-feature`.
+2. **Post-implementation**: During `/glados/verify-feature`, before declaring success.
 
 ## Instructions
 

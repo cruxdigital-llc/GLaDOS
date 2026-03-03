@@ -33,4 +33,4 @@ Ask the user what specifically they want to retrospect on (e.g., "The last featu
 Summarize the action items for the user.
 
 > [!TIP]
-> Consider running `/recombobulate` to systematically audit the codebase for standards drift, formalize observations, and clean up any accumulated vibe debt.
+> Consider running `/glados/recombobulate` to systematically audit the codebase for standards drift, formalize observations, and clean up any accumulated vibe debt.

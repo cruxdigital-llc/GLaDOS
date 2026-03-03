@@ -49,4 +49,4 @@ Append to the appropriate file in `glados/observations/`:
 ### 4. No Blocking
 -   **NEVER** interrupt the current workflow to log an observation.
 -   **NEVER** ask the user to confirm an observation mid-workflow.
--   Observations are reviewed during `/recombobulate`.
+-   Observations are reviewed during `/glados/recombobulate`.

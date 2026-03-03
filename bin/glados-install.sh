@@ -51,8 +51,8 @@ Options:
     -h, --help          Show this help message
 
 Modes:
-    antigravity   Installs to .agent/workflows with YAML frontmatter
-    claude        Installs to .claude/commands (standard markdown)
+    antigravity   Installs to .agent/workflows/glados with YAML frontmatter
+    claude        Installs to .claude/commands/glados (standard markdown)
     gemini        Installs to .gemini/skills/glados (Agent Skills standard)
     direct        Installs to glados/ in the project root
 EOF
@@ -110,11 +110,9 @@ install_file() {
     fi
 }
 
-# Remove legacy underscore-named files from a GLaDOS-managed directory.
-# Only removes a file if a corresponding dash-named replacement exists,
-# ensuring user-generated files are never touched. This is safe because
-# cleanup is only called on GLaDOS-managed directories (workflows, modules, etc.),
-# not on user content directories (standards, philosophies, etc.).
+# Remove legacy underscore-named files from a GLaDOS-owned directory.
+# Only removes a file if a corresponding dash-named replacement exists.
+# Safe to use on directories GLaDOS fully owns (glados/personas, glados/observations, etc.).
 cleanup_legacy_files() {
     local dir="$1"
     [ -d "$dir" ] || return
@@ -132,6 +130,40 @@ cleanup_legacy_files() {
     done
 }
 
+# Migrate GLaDOS files from an old top-level install to the new glados/ subdirectory.
+# For each file in the glados/ subdirectory, removes the matching file (dash or underscore
+# named) from the parent directory if it exists. No file list needed — we just compare
+# what we installed against what's in the parent.
+cleanup_old_toplevel() {
+    local glados_dir="$1"  # e.g., .claude/commands/glados
+    local parent_dir
+    parent_dir="$(dirname "$glados_dir")"
+    [ -d "$glados_dir" ] || return
+    [ -d "$parent_dir" ] || return
+
+    for file in "$glados_dir"/*.md; do
+        [ -e "$file" ] || continue
+        local filename
+        filename="$(basename "$file")"
+        # Remove dash-named version from parent
+        if [ -f "$parent_dir/$filename" ]; then
+            rm "$parent_dir/$filename"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Migrated from top-level: $filename"
+            fi
+        fi
+        # Remove underscore-named version from parent
+        local underscore_version
+        underscore_version="$(echo "$filename" | tr '-' '_')"
+        if [ "$underscore_version" != "$filename" ] && [ -f "$parent_dir/$underscore_version" ]; then
+            rm "$parent_dir/$underscore_version"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Cleaned up legacy top-level: $underscore_version"
+            fi
+        fi
+    done
+}
+
 # Resolve {{PLACEHOLDER}} variables in an installed file based on MODE.
 # Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
 resolve_placeholders() {
@@ -142,8 +174,8 @@ resolve_placeholders() {
     case "$MODE" in
         antigravity)
             path_status="glados/PROJECT_STATUS.md"
-            path_modules=".agent/modules"
-            path_personas=".agent/personas"
+            path_modules=".agent/modules/glados"
+            path_personas=".agent/personas/glados"
             ;;
         claude)
             path_status="glados/PROJECT_STATUS.md"
@@ -259,7 +291,7 @@ scaffold_glados() {
 # -----------------------------------------------------------------------------
 
 install_antigravity() {
-    local target="$1/.agent/workflows"
+    local target="$1/.agent/workflows/glados"
     local action="Installing"
     [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
     print_status "$action for Antigravity at $target..."
@@ -270,35 +302,34 @@ install_antigravity() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/$(basename "$file")" "true"
     done
-    
+    cleanup_old_toplevel "$target"
+
     # Install Templates (hidden)
     mkdir -p "$1/.agent/templates"
     cp "$SRC_TEMPLATES"/*.md "$1/.agent/templates/" 2>/dev/null || true
 
     # Install Modules (hidden/support)
-    mkdir -p "$1/.agent/modules"
+    local module_target="$1/.agent/modules/glados"
+    mkdir -p "$module_target"
     for file in "$SRC_MODULES"/*.md; do
         [ -e "$file" ] || continue
-        install_file "$file" "$1/.agent/modules/$(basename "$file")" "false"
+        install_file "$file" "$module_target/$(basename "$file")" "false"
     done
-    
+    cleanup_old_toplevel "$module_target"
+
     # Install Personas
     # For Antigravity, we ALSO install to .agent/personas for internal tool use
-    local persona_target="$1/.agent/personas"
+    local persona_target="$1/.agent/personas/glados"
     mkdir -p "$persona_target"
     for file in "$SRC_PERSONAS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$persona_target/$(basename "$file")" "false"
     done
-
-    # Clean up legacy underscore-named files
-    cleanup_legacy_files "$target"
-    cleanup_legacy_files "$1/.agent/modules"
-    cleanup_legacy_files "$persona_target"
+    cleanup_old_toplevel "$persona_target"
 }
 
 install_claude() {
-    local target="$1/.claude/commands"
+    local target="$1/.claude/commands/glados"
     local action="Installing"
     [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
     print_status "$action for Claude at $target..."
@@ -309,8 +340,8 @@ install_claude() {
         install_file "$file" "$target/$(basename "$file")" "false"
     done
 
-    # Clean up legacy underscore-named files
-    cleanup_legacy_files "$target"
+    # Clean up files from old top-level install
+    cleanup_old_toplevel "$target"
 }
 
 install_direct() {
