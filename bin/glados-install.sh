@@ -70,7 +70,10 @@ install_file() {
     local add_frontmatter="$3"
     
     local filename=$(basename "$source")
-    
+
+    # Skip README files — they're not commands/workflows
+    [ "$filename" = "README.md" ] && return
+
     # 1. Check for LOCAL PROJECT overlay (Highest Priority)
     if [ -n "$OVERLAY" ]; then
         if [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
