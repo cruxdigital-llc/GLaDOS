@@ -2,7 +2,7 @@
 
 **Goal**: Manage agent personas for both *review* (critiquing work) and *operating* (driving behavior) modes.
 
-> Replaces the simpler `persona_review.md` module.
+> Replaces the simpler `persona-review.md` module.
 
 ## Persona Types
 
@@ -53,7 +53,7 @@ When invoked for review (at Plan, Spec, or Verify checkpoints):
    3. **Audit**: Review the current work against the persona's:
       - **Responsibilities**: Is the core job being done?
       - **Key Questions**: Have they been answered?
-      - **Standards Weight**: Cross-reference relevant standards from `standards_gate`.
+      - **Standards Weight**: Cross-reference relevant standards from `standards-gate`.
    4. **Log Feedback**: Record critique in the trace.
       - *Format*: `**[Persona Name]**: [Feedback]`
 4. **Synthesis**:
@@ -73,7 +73,7 @@ teams:
     personas: [architect]
     description: "For minor changes"
   full_review:
-    personas: [product_manager, architect, qa]
+    personas: [product-manager, architect, qa]
     description: "Default for all features"
 ```
 

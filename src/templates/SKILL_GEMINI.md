@@ -12,21 +12,21 @@ You have activated the GLaDOS Framework. This skill provides a set of rigorous w
 You can find the specific instructions for each workflow in the `workflows/` directory provided by this skill.
 
 ### Core Development
--   **Plan Feature**: `workflows/plan_feature.md` - Analyze requirements, select personas, update roadmap.
--   **Spec Feature**: `workflows/spec_feature.md` - Create detailed technical specifications.
--   **Implement Feature**: `workflows/implement_feature.md` - Execute the coding loop with traceability.
--   **Verify Feature**: `workflows/verify_feature.md` - Run tests and architectural sign-off.
--   **Identify Bug**: `workflows/identify_bug.md` - Reproduce and isolate issues.
--   **Plan Fix**: `workflows/plan_fix.md` - Design a regression-free fix.
--   **Implement Fix**: `workflows/implement_fix.md` - Apply the fix.
--   **Verify Fix**: `workflows/verify_fix.md` - Verify resolution.
+-   **Plan Feature**: `workflows/plan-feature.md` - Analyze requirements, select personas, update roadmap.
+-   **Spec Feature**: `workflows/spec-feature.md` - Create detailed technical specifications.
+-   **Implement Feature**: `workflows/implement-feature.md` - Execute the coding loop with traceability.
+-   **Verify Feature**: `workflows/verify-feature.md` - Run tests and architectural sign-off.
+-   **Identify Bug**: `workflows/identify-bug.md` - Reproduce and isolate issues.
+-   **Plan Fix**: `workflows/plan-fix.md` - Design a regression-free fix.
+-   **Implement Fix**: `workflows/implement-fix.md` - Apply the fix.
+-   **Verify Fix**: `workflows/verify-fix.md` - Verify resolution.
 
 ### Project Setup & Maintenance
 -   **Mission**: `workflows/mission.md`
--   **Plan Product**: `workflows/plan_product.md`
--   **Establish Standards**: `workflows/establish_standards.md`
--   **Review Codebase**: `workflows/review_codebase.md`
--   **Adopt Codebase**: `workflows/adopt_codebase.md` - Full brownfield onboarding.
+-   **Plan Product**: `workflows/plan-product.md`
+-   **Establish Standards**: `workflows/establish-standards.md`
+-   **Review Codebase**: `workflows/review-codebase.md`
+-   **Adopt Codebase**: `workflows/adopt-codebase.md` - Full brownfield onboarding.
 -   **Retrospect**: `workflows/retrospect.md`
 -   **Recombobulate**: `workflows/recombobulate.md` - Clean up vibe debt, formalize patterns.
 -   **Consolidate**: `workflows/consolidate.md` - Alias for Recombobulate.

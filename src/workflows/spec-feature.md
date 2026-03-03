@@ -1,4 +1,4 @@
-# Spec Feature
+# (GLaDOS) Spec Feature
 
 **Goal**: Create a detailed technical specification for the feature.
 
@@ -22,11 +22,11 @@
 -   Create `specs/[...]/spec.md`.
 
 ### 3. Review (Persona-based)
-Invoke module: `{{MODULES}}/persona_context.md`
+Invoke module: `{{MODULES}}/persona-context.md`
 -   **Context**: Reviewing the **Specification**.
 
 ### 4. Standards Gate (Pre-Implementation)
-Invoke module: `{{MODULES}}/standards_gate.md`
+Invoke module: `{{MODULES}}/standards-gate.md`
 -   **Context**: Audit the specification against applicable standards before implementation begins.
 -   **Checkpoint**: `pre-implementation`
 

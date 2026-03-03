@@ -34,7 +34,7 @@ Documented standards are enforced automatically at pre- and post-implementation 
 Beyond standards (the *what*), GLaDOS tracks **philosophies** (the *why*) — high-level design principles like "All APIs should be RESTful" or "Zero-downtime deployments are non-negotiable." Core philosophies are enforced as blocking constraints.
 
 ### 👁️ Silent Capture
-The `pattern_observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `glados/observations/` for later review.
+The `pattern-observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `glados/observations/` for later review.
 
 ### 🧩 Modular Architecture
 Logic is shared across workflows using Modules (`src/modules/`).
@@ -122,7 +122,7 @@ Choose the path that matches your project state.
 *Best for hands-off development.*
 
 1.  **Ignite the Loop**:
-    Run `autonomous_loop`.
+    Run `autonomous-loop`.
 2.  **Bootstrap**:
     -   **Empty Repo**: It will ask for your Vision and Success Criteria once, then take over.
     -   **Existing Repo**: It will read your `ROADMAP.md` and start executing the next active task.
@@ -193,13 +193,13 @@ Here is what a typical GLaDOS interaction looks like.
 
 You can customize GLaDOS without forking it using **Overlays**.
 
-1.  Create `src/overlays/my_overlay/`.
-2.  Copy a file (e.g., `src/workflows/plan_feature.md`) to your overlay directory.
+1.  Create `src/overlays/my-overlay/`.
+2.  Copy a file (e.g., `src/workflows/plan-feature.md`) to your overlay directory.
 3.  Edit it.
 4.  Install with the overlay:
 
 ```bash
-./bin/glados-install.sh --mode antigravity --overlay my_overlay
+./bin/glados-install.sh --mode antigravity --overlay my-overlay
 ```
 
 ---

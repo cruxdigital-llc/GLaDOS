@@ -1,6 +1,6 @@
 # Observed Philosophies
 
-*This file is populated automatically by the `pattern_observer` module during normal workflow execution.*
+*This file is populated automatically by the `pattern-observer` module during normal workflow execution.*
 *Items here are reviewed and promoted (or discarded) during `/recombobulate`.*
 
 ---

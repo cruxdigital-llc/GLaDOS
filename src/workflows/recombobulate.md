@@ -1,4 +1,4 @@
-# Recombobulate
+# (GLaDOS) Recombobulate
 
 **Goal**: Systematically clean up "vibe debt" — tighten the codebase, formalize implicit patterns, resolve standards drift, and retire dead code.
 
@@ -25,7 +25,7 @@ If no scope is specified, default to `observations-only` (safest, most common us
 ## Process
 
 ### Phase 1: Observe
-1.  Read `glados/observations/observed_standards.md` and `observed_philosophies.md`.
+1.  Read `glados/observations/observed-standards.md` and `observed-philosophies.md`.
 2.  Scan recent `specs/` traces for patterns, corrections, and deviations.
 3.  List all current `standards/` and `philosophies/` files.
 4.  Log discovery summary in the trace.

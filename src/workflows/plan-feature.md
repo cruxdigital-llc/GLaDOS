@@ -1,4 +1,4 @@
-# Plan Feature
+# (GLaDOS) Plan Feature
 
 **Goal**: Analyze requirements and create a high-level plan for a new feature.
 

@@ -20,6 +20,6 @@ glados/
   overlays/
     README.md
     my-team-standards/        <-- Your overlay name
-      plan_feature.md         <-- Overrides default plan_feature
+      plan-feature.md         <-- Overrides default plan-feature
       architect.md            <-- Overrides default architect persona
 ```

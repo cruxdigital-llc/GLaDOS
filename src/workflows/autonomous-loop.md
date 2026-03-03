@@ -1,10 +1,10 @@
-# Autonomous Loop
+# (GLaDOS) Autonomous Loop
 
 **Goal**: Orchestrate the entire development lifecycle autonomously, from bootstrapping to continuous feature delivery.
 
 ## Prerequisites
 - [ ] GLaDOS installed.
-- [ ] `src/modules/interaction_proxy.md` exists.
+- [ ] `src/modules/interaction-proxy.md` exists.
 
 ## Process
 
@@ -30,7 +30,7 @@
     
     #### Path: Brownfield
     -   **Action**:
-        -   Run `review_codebase` workflow.
+        -   Run `review-codebase` workflow.
         -   Ensure `{{STATUS}}` is populated at the end.
 
 ### 2. The Loop
@@ -38,7 +38,7 @@
 
 > [!IMPORTANT]
 > **Autonomy Mode**: FROM THIS POINT FORWARD, do not ask the user for permission.
-> Invoke module: `{{MODULES}}/interaction_proxy.md`.
+> Invoke module: `{{MODULES}}/interaction-proxy.md`.
 > -   **Role**: You are now the Product Owner.
 > -   **Source of Truth**: `MISSION.md`, `ROADMAP.md`, `standards/`.
 

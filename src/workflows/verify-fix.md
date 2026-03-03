@@ -1,4 +1,4 @@
-# Verify Fix
+# (GLaDOS) Verify Fix
 
 **Goal**: Ensure no regressions and close the bug.
 

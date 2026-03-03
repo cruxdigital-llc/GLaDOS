@@ -29,7 +29,7 @@ This teaches you the GLaDOS rhythm and surfaces any standards you forgot to docu
 
 ### Week 2+: Let Patterns Emerge
 
-By now the `pattern_observer` module is silently logging things to `glados/observations/`. After 3-5 features:
+By now the `pattern-observer` module is silently logging things to `glados/observations/`. After 3-5 features:
 
 ```
 /recombobulate --scope observations-only
@@ -46,7 +46,7 @@ Review what was captured. Promote the real patterns to `standards/` or `philosop
 |---|---|---|
 | Plan | `/plan-feature` | Developer (self or peer) |
 | Spec | `/spec-feature` | Developer + Personas (auto) |
-| Standards Check | *automatic via standards_gate* | System (blocking on `must`) |
+| Standards Check | *automatic via standards-gate* | System (blocking on `must`) |
 | Implement | `/implement-feature` | Developer |
 | Verify | `/verify-feature` | Developer + Personas (auto) |
 

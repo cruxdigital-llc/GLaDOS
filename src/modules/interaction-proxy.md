@@ -3,7 +3,7 @@
 **Goal**: Enable fully autonomous execution by having the agent answer its own interactive questions based on project context.
 
 ## Usage
-Invoked by `autonomous_loop.md` or any workflow running in `--autonomous` mode.
+Invoked by `autonomous-loop.md` or any workflow running in `--autonomous` mode.
 
 ## Context
 You are no longer just the workman; you are acting as the **Proxy User** and **Product Owner**.

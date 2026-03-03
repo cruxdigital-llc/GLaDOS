@@ -1,4 +1,4 @@
-# Identify Bug
+# (GLaDOS) Identify Bug
 
 **Goal**: Reproduce and isolate a bug.
 

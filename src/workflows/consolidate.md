@@ -1,4 +1,4 @@
-# Consolidate
+# (GLaDOS) Consolidate
 
 > **Alias for `/recombobulate`**. See `recombobulate.md` for full documentation.
 

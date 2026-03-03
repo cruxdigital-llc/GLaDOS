@@ -1,4 +1,4 @@
-# Establish Standards
+# (GLaDOS) Establish Standards
 
 **Goal**: Extract tribal knowledge from the codebase into concise, documented standards.
 
@@ -8,9 +8,9 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_establish_standards/`.
+Create a directory: `specs/[YYYY-MM-DD]_establish-standards/`.
 Create a `README.md` inside it.
-Log the start of the session in `specs/[YYYY-MM-DD]_establish_standards/README.md`.
+Log the start of the session in `specs/[YYYY-MM-DD]_establish-standards/README.md`.
 
 ### 2. Focus Area Selection
 If no area is specified by the user, sidebar with the user to identify one:
@@ -48,7 +48,7 @@ Update `standards/index.yml` with the new files.
 ### 6. Observability Update
 
 > [!IMPORTANT]
-> **Trace**: Log the discovered patterns and created standard files in `specs/[YYYY-MM-DD]_establish_standards/README.md`.
+> **Trace**: Log the discovered patterns and created standard files in `specs/[YYYY-MM-DD]_establish-standards/README.md`.
 > **Status**: Update `{{STATUS}}` to reflect new standards in the "Architecture" or "Standards" section.
 
 ### 7. Completion

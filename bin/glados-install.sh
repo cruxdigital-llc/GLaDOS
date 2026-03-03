@@ -23,6 +23,7 @@ MODE=""
 TARGET_DIR=""
 OVERLAY=""
 VERBOSE="false"
+IS_UPGRADE="false"
 
 # -----------------------------------------------------------------------------
 # Common Functions
@@ -109,6 +110,26 @@ install_file() {
     fi
 }
 
+# Remove legacy underscore-named files that have been replaced with dash-named equivalents.
+# Scans the given directory for files containing underscores and removes them if a
+# corresponding dash-named file exists.
+cleanup_legacy_files() {
+    local dir="$1"
+    [ -d "$dir" ] || return
+
+    for file in "$dir"/*_*.md; do
+        [ -e "$file" ] || continue
+        local dash_version
+        dash_version="$(echo "$file" | tr '_' '-')"
+        if [ -f "$dash_version" ]; then
+            rm "$file"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Cleaned up legacy file: $(basename "$file")"
+            fi
+        fi
+    done
+}
+
 # Resolve {{PLACEHOLDER}} variables in an installed file based on MODE.
 # Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
 resolve_placeholders() {
@@ -161,7 +182,11 @@ resolve_placeholders() {
 
 scaffold_glados() {
     local target="$1"
-    print_status "Scaffolding GLaDOS structure in $target/glados..."
+    if [ "$IS_UPGRADE" = "true" ]; then
+        print_status "Updating GLaDOS structure in $target/glados..."
+    else
+        print_status "Scaffolding GLaDOS structure in $target/glados..."
+    fi
     
     local glados_dir="$target/glados"
     mkdir -p "$glados_dir"
@@ -188,6 +213,7 @@ scaffold_glados() {
         [ -e "$file" ] || continue
         cp "$file" "$glados_dir/personas/"
     done
+    cleanup_legacy_files "$glados_dir/personas"
     
     # 3. Overlays README
     if [ ! -f "$glados_dir/overlays/README.md" ]; then
@@ -198,15 +224,16 @@ scaffold_glados() {
          fi
     fi
 
-    # 4. Observations (staging area for pattern_observer)
-    if [ ! -f "$glados_dir/observations/observed_standards.md" ]; then
+    # 4. Observations (staging area for pattern-observer)
+    cleanup_legacy_files "$glados_dir/observations"
+    if [ ! -f "$glados_dir/observations/observed-standards.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed_standards.md"
+            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed-standards.md"
         fi
     fi
-    if [ ! -f "$glados_dir/observations/observed_philosophies.md" ]; then
+    if [ ! -f "$glados_dir/observations/observed-philosophies.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed_philosophies.md"
+            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed-philosophies.md"
         fi
     fi
 
@@ -231,7 +258,9 @@ scaffold_glados() {
 
 install_antigravity() {
     local target="$1/.agent/workflows"
-    print_status "Installing for Antigravity at $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Antigravity at $target..."
     mkdir -p "$target"
 
     # Install Workflows
@@ -259,42 +288,60 @@ install_antigravity() {
         [ -e "$file" ] || continue
         install_file "$file" "$persona_target/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target"
+    cleanup_legacy_files "$1/.agent/modules"
+    cleanup_legacy_files "$persona_target"
 }
 
 install_claude() {
     local target="$1/.claude/commands"
-    print_status "Installing for Claude at $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Claude at $target..."
     mkdir -p "$target"
 
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target"
 }
 
 install_direct() {
     local target="$1/glados"
-    print_status "Installing directly to $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action directly to $target..."
     # Reuse scaffold logic somewhat, but direct needs specific subfolders for workflows
     mkdir -p "$target/workflows"
     mkdir -p "$target/modules"
-    
+
     # Workflows
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/workflows/$(basename "$file")" "false"
     done
-    
+
     # Modules
     for file in "$SRC_MODULES"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/modules/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target/workflows"
+    cleanup_legacy_files "$target/modules"
 }
 
 install_gemini() {
     local target="$1/.gemini/skills/glados"
-    print_status "Installing for Gemini at $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Gemini at $target..."
     mkdir -p "$target"
     mkdir -p "$target/workflows"
     mkdir -p "$target/modules"
@@ -326,6 +373,11 @@ install_gemini() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/personas/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target/workflows"
+    cleanup_legacy_files "$target/modules"
+    cleanup_legacy_files "$target/personas"
 }
 
 # -----------------------------------------------------------------------------
@@ -378,6 +430,14 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
+# Detect if this is an upgrade
+if [ -d "$TARGET_DIR/glados" ]; then
+    IS_UPGRADE="true"
+    print_status "Existing GLaDOS installation detected — upgrading..."
+else
+    print_status "Installing GLaDOS..."
+fi
+
 # Always scaffold the glados directory regardless of mode
 # EXCEPT for direct mode, which installs INTO glados/, so we be careful not to double up or conflict.
 # But 'scaffold_glados' handles the extras (PROJECT_STATUS, personas, overlays dir).
@@ -403,5 +463,9 @@ case "$MODE" in
         ;;
 esac
 
-print_status "Installation complete!"
+if [ "$IS_UPGRADE" = "true" ]; then
+    print_status "Upgrade complete!"
+else
+    print_status "Installation complete!"
+fi
 

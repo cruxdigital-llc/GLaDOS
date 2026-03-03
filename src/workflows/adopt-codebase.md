@@ -1,4 +1,4 @@
-# Adopt Codebase
+# (GLaDOS) Adopt Codebase
 
 **Goal**: Comprehensive brownfield onboarding — analyze, document, and integrate an existing codebase into the GLaDOS framework.
 
@@ -9,7 +9,7 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_adopt_codebase/`.
+Create a directory: `specs/[YYYY-MM-DD]_adopt-codebase/`.
 Create a `README.md` inside it.
 Log the start of the adoption session.
 

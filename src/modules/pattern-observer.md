@@ -23,7 +23,7 @@ For each detected pattern, determine:
 ### 3. Log
 Append to the appropriate file in `glados/observations/`:
 
-#### For Standards → `glados/observations/observed_standards.md`
+#### For Standards → `glados/observations/observed-standards.md`
 ```markdown
 ### [Date] - [Short Title]
 - **Source**: [How it was detected — user correction, repeated pattern, explicit statement]
@@ -34,7 +34,7 @@ Append to the appropriate file in `glados/observations/`:
 - **Status**: pending
 ```
 
-#### For Philosophies → `glados/observations/observed_philosophies.md`
+#### For Philosophies → `glados/observations/observed-philosophies.md`
 ```markdown
 ### [Date] - [Short Title]
 - **Source**: [How it was detected]

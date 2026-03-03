@@ -1,4 +1,4 @@
-# Implement Feature
+# (GLaDOS) Implement Feature
 
 **Goal**: Write code to satisfy the specification.
 
@@ -31,7 +31,7 @@ For each task in `tasks.md`:
 ### 4. Observability Update
 > [!IMPORTANT]
 > **Trace**: Ensure all file changes are logged in `specs/[...]/README.md`.
-> Invoke module: `{{MODULES}}/pattern_observer.md` — Log any implicit standards or philosophies observed during implementation.
+> Invoke module: `{{MODULES}}/pattern-observer.md` — Log any implicit standards or philosophies observed during implementation.
 
 ### 5. Handoff
 -   Suggest running `/verify-feature` next.
