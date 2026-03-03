@@ -110,42 +110,23 @@ install_file() {
     fi
 }
 
-# Legacy filenames that GLaDOS previously shipped with underscores.
-# Only these specific files will be cleaned up during upgrades — never user-generated content.
-LEGACY_FILES=(
-    "adopt_codebase.md"
-    "autonomous_loop.md"
-    "establish_standards.md"
-    "identify_bug.md"
-    "implement_feature.md"
-    "implement_fix.md"
-    "plan_feature.md"
-    "plan_fix.md"
-    "plan_product.md"
-    "review_codebase.md"
-    "spec_feature.md"
-    "verify_feature.md"
-    "verify_fix.md"
-    "pattern_observer.md"
-    "interaction_proxy.md"
-    "persona_context.md"
-    "persona_review.md"
-    "standards_gate.md"
-    "product_manager.md"
-    "observed_standards.md"
-    "observed_philosophies.md"
-)
-
-# Remove known legacy underscore-named files from the given directory.
+# Remove legacy underscore-named files from a GLaDOS-managed directory.
+# Only removes a file if a corresponding dash-named replacement exists,
+# ensuring user-generated files are never touched. This is safe because
+# cleanup is only called on GLaDOS-managed directories (workflows, modules, etc.),
+# not on user content directories (standards, philosophies, etc.).
 cleanup_legacy_files() {
     local dir="$1"
     [ -d "$dir" ] || return
 
-    for filename in "${LEGACY_FILES[@]}"; do
-        if [ -f "$dir/$filename" ]; then
-            rm "$dir/$filename"
+    for file in "$dir"/*_*.md; do
+        [ -e "$file" ] || continue
+        local dash_version
+        dash_version="$(echo "$file" | tr '_' '-')"
+        if [ -f "$dash_version" ]; then
+            rm "$file"
             if [ "$VERBOSE" = "true" ]; then
-                echo "  Cleaned up legacy file: $filename"
+                echo "  Cleaned up legacy file: $(basename "$file")"
             fi
         fi
     done
