@@ -1,4 +1,4 @@
-# Verify Feature
+# (GLaDOS) Verify Feature
 
 **Goal**: Verify the feature against requirements and standards.
 
@@ -20,11 +20,11 @@ Invoke module: `{{MODULES}}/capabilities.md`
 3.  **Trace**: Log results in `README.md`.
 
 ### 3. Persona Verification
-Invoke module: `{{MODULES}}/persona_context.md`
+Invoke module: `{{MODULES}}/persona-context.md`
 -   **Context**: Verifying the **Implementation** and **Test Results**.
 
 ### 4. Standards Gate (Post-Implementation)
-Invoke module: `{{MODULES}}/standards_gate.md`
+Invoke module: `{{MODULES}}/standards-gate.md`
 -   **Context**: Audit the implementation diff against applicable standards.
 -   **Checkpoint**: `post-implementation`
 

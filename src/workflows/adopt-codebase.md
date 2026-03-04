@@ -1,4 +1,4 @@
-# Adopt Codebase
+# (GLaDOS) Adopt Codebase
 
 **Goal**: Comprehensive brownfield onboarding — analyze, document, and integrate an existing codebase into the GLaDOS framework.
 
@@ -9,12 +9,12 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_adopt_codebase/`.
+Create a directory: `specs/[YYYY-MM-DD]_adopt-codebase/`.
 Create a `README.md` inside it.
 Log the start of the adoption session.
 
 ### 2. Structural Analysis
-Run the `/review-codebase` workflow.
+Run the `/glados/review-codebase` workflow.
 -   This populates `{{STATUS}}` with architecture, tech stack, and initial findings.
 -   **Extended analysis** (beyond base review):
     -   **Dependency Graph**: Identify patterns from dependencies (e.g., "Express + Prisma → REST API pattern").
@@ -23,7 +23,7 @@ Run the `/review-codebase` workflow.
     -   **Health Check**: Report on test coverage presence, linter configs, CI/CD setup.
 
 ### 3. Standards Extraction
-Run the `/establish-standards` workflow.
+Run the `/glados/establish-standards` workflow.
 -   Extract discovered patterns into `standards/` files with proper frontmatter.
 -   **Focus Areas**: Suggest areas based on Step 2 findings rather than asking cold.
 
@@ -36,7 +36,7 @@ If `philosophies/` exists:
 -   Create philosophy files with proper frontmatter.
 
 ### 5. Mission Alignment
-Run the `/mission` workflow.
+Run the `/glados/mission` workflow.
 -   Ensure `MISSION.md` exists and aligns with the discovered codebase purpose.
 
 ### 6. Validation Checkpoint
@@ -67,4 +67,4 @@ Ask: "Does this accurately represent your codebase? What should I correct?"
 -   Log final summary in the trace.
 
 ### 8. Handoff
-Suggest: "Your codebase is onboarded. Run `/plan-feature` to start building, or `/recombobulate` periodically to keep things tight."
+Suggest: "Your codebase is onboarded. Run `/glados/plan-feature` to start building, or `/glados/recombobulate` periodically to keep things tight."

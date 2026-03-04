@@ -1,4 +1,4 @@
-# Plan Fix
+# (GLaDOS) Plan Fix
 
 **Goal**: Design a fix that resolves the bug without side effects.
 
@@ -27,4 +27,4 @@
 > **Trace**: Log the chosen strategy in `specs/[...]/README.md`.
 
 ### 5. Handoff
--   Suggest running `/implement-fix` next.
+-   Suggest running `/glados/implement-fix` next.

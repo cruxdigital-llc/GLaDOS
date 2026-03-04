@@ -1,4 +1,4 @@
-# Identify Bug
+# (GLaDOS) Identify Bug
 
 **Goal**: Reproduce and isolate a bug.
 
@@ -29,4 +29,4 @@
 > **Status**: Add to "Known Issues" in `{{STATUS}}`.
 
 ### 5. Handoff
--   Suggest running `/plan-fix` next.
+-   Suggest running `/glados/plan-fix` next.

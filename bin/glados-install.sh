@@ -23,6 +23,7 @@ MODE=""
 TARGET_DIR=""
 OVERLAY=""
 VERBOSE="false"
+IS_UPGRADE="false"
 
 # -----------------------------------------------------------------------------
 # Common Functions
@@ -50,8 +51,8 @@ Options:
     -h, --help          Show this help message
 
 Modes:
-    antigravity   Installs to .agent/workflows with YAML frontmatter
-    claude        Installs to .claude/commands (standard markdown)
+    antigravity   Installs to .agent/workflows/glados with YAML frontmatter
+    claude        Installs to .claude/commands/glados (standard markdown)
     gemini        Installs to .gemini/skills/glados (Agent Skills standard)
     direct        Installs to glados/ in the project root
 EOF
@@ -69,7 +70,7 @@ install_file() {
     local add_frontmatter="$3"
     
     local filename=$(basename "$source")
-    
+
     # 1. Check for LOCAL PROJECT overlay (Highest Priority)
     if [ -n "$OVERLAY" ]; then
         if [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
@@ -109,6 +110,60 @@ install_file() {
     fi
 }
 
+# Remove legacy underscore-named files from a GLaDOS-owned directory.
+# Only removes a file if a corresponding dash-named replacement exists.
+# Safe to use on directories GLaDOS fully owns (glados/personas, glados/observations, etc.).
+cleanup_legacy_files() {
+    local dir="$1"
+    [ -d "$dir" ] || return
+
+    for file in "$dir"/*_*.md; do
+        [ -e "$file" ] || continue
+        local dash_version
+        dash_version="$(echo "$file" | tr '_' '-')"
+        if [ -f "$dash_version" ]; then
+            rm "$file"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Cleaned up legacy file: $(basename "$file")"
+            fi
+        fi
+    done
+}
+
+# Migrate GLaDOS files from an old top-level install to the new glados/ subdirectory.
+# For each file in the glados/ subdirectory, removes the matching file (dash or underscore
+# named) from the parent directory if it exists. No file list needed — we just compare
+# what we installed against what's in the parent.
+cleanup_old_toplevel() {
+    local glados_dir="$1"  # e.g., .claude/commands/glados
+    local parent_dir
+    parent_dir="$(dirname "$glados_dir")"
+    [ -d "$glados_dir" ] || return
+    [ -d "$parent_dir" ] || return
+
+    for file in "$glados_dir"/*.md; do
+        [ -e "$file" ] || continue
+        local filename
+        filename="$(basename "$file")"
+        # Remove dash-named version from parent
+        if [ -f "$parent_dir/$filename" ]; then
+            rm "$parent_dir/$filename"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Migrated from top-level: $filename"
+            fi
+        fi
+        # Remove underscore-named version from parent
+        local underscore_version
+        underscore_version="$(echo "$filename" | tr '-' '_')"
+        if [ "$underscore_version" != "$filename" ] && [ -f "$parent_dir/$underscore_version" ]; then
+            rm "$parent_dir/$underscore_version"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Cleaned up legacy top-level: $underscore_version"
+            fi
+        fi
+    done
+}
+
 # Resolve {{PLACEHOLDER}} variables in an installed file based on MODE.
 # Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
 resolve_placeholders() {
@@ -119,8 +174,8 @@ resolve_placeholders() {
     case "$MODE" in
         antigravity)
             path_status="glados/PROJECT_STATUS.md"
-            path_modules=".agent/modules"
-            path_personas=".agent/personas"
+            path_modules=".agent/modules/glados"
+            path_personas=".agent/personas/glados"
             ;;
         claude)
             path_status="glados/PROJECT_STATUS.md"
@@ -161,7 +216,11 @@ resolve_placeholders() {
 
 scaffold_glados() {
     local target="$1"
-    print_status "Scaffolding GLaDOS structure in $target/glados..."
+    if [ "$IS_UPGRADE" = "true" ]; then
+        print_status "Updating GLaDOS structure in $target/glados..."
+    else
+        print_status "Scaffolding GLaDOS structure in $target/glados..."
+    fi
     
     local glados_dir="$target/glados"
     mkdir -p "$glados_dir"
@@ -188,6 +247,7 @@ scaffold_glados() {
         [ -e "$file" ] || continue
         cp "$file" "$glados_dir/personas/"
     done
+    cleanup_legacy_files "$glados_dir/personas"
     
     # 3. Overlays README
     if [ ! -f "$glados_dir/overlays/README.md" ]; then
@@ -198,15 +258,16 @@ scaffold_glados() {
          fi
     fi
 
-    # 4. Observations (staging area for pattern_observer)
-    if [ ! -f "$glados_dir/observations/observed_standards.md" ]; then
+    # 4. Observations (staging area for pattern-observer)
+    cleanup_legacy_files "$glados_dir/observations"
+    if [ ! -f "$glados_dir/observations/observed-standards.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed_standards.md"
+            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed-standards.md"
         fi
     fi
-    if [ ! -f "$glados_dir/observations/observed_philosophies.md" ]; then
+    if [ ! -f "$glados_dir/observations/observed-philosophies.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed_philosophies.md"
+            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed-philosophies.md"
         fi
     fi
 
@@ -230,8 +291,10 @@ scaffold_glados() {
 # -----------------------------------------------------------------------------
 
 install_antigravity() {
-    local target="$1/.agent/workflows"
-    print_status "Installing for Antigravity at $target..."
+    local target="$1/.agent/workflows/glados"
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Antigravity at $target..."
     mkdir -p "$target"
 
     # Install Workflows
@@ -239,62 +302,79 @@ install_antigravity() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/$(basename "$file")" "true"
     done
-    
+    cleanup_old_toplevel "$target"
+
     # Install Templates (hidden)
     mkdir -p "$1/.agent/templates"
     cp "$SRC_TEMPLATES"/*.md "$1/.agent/templates/" 2>/dev/null || true
 
     # Install Modules (hidden/support)
-    mkdir -p "$1/.agent/modules"
+    local module_target="$1/.agent/modules/glados"
+    mkdir -p "$module_target"
     for file in "$SRC_MODULES"/*.md; do
         [ -e "$file" ] || continue
-        install_file "$file" "$1/.agent/modules/$(basename "$file")" "false"
+        install_file "$file" "$module_target/$(basename "$file")" "false"
     done
-    
+    cleanup_old_toplevel "$module_target"
+
     # Install Personas
     # For Antigravity, we ALSO install to .agent/personas for internal tool use
-    local persona_target="$1/.agent/personas"
+    local persona_target="$1/.agent/personas/glados"
     mkdir -p "$persona_target"
     for file in "$SRC_PERSONAS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$persona_target/$(basename "$file")" "false"
     done
+    cleanup_old_toplevel "$persona_target"
 }
 
 install_claude() {
-    local target="$1/.claude/commands"
-    print_status "Installing for Claude at $target..."
+    local target="$1/.claude/commands/glados"
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Claude at $target..."
     mkdir -p "$target"
 
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/$(basename "$file")" "false"
     done
+
+    # Clean up files from old top-level install
+    cleanup_old_toplevel "$target"
 }
 
 install_direct() {
     local target="$1/glados"
-    print_status "Installing directly to $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action directly to $target..."
     # Reuse scaffold logic somewhat, but direct needs specific subfolders for workflows
     mkdir -p "$target/workflows"
     mkdir -p "$target/modules"
-    
+
     # Workflows
     for file in "$SRC_WORKFLOWS"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/workflows/$(basename "$file")" "false"
     done
-    
+
     # Modules
     for file in "$SRC_MODULES"/*.md; do
         [ -e "$file" ] || continue
         install_file "$file" "$target/modules/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target/workflows"
+    cleanup_legacy_files "$target/modules"
 }
 
 install_gemini() {
     local target="$1/.gemini/skills/glados"
-    print_status "Installing for Gemini at $target..."
+    local action="Installing"
+    [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
+    print_status "$action for Gemini at $target..."
     mkdir -p "$target"
     mkdir -p "$target/workflows"
     mkdir -p "$target/modules"
@@ -326,6 +406,11 @@ install_gemini() {
         [ -e "$file" ] || continue
         install_file "$file" "$target/personas/$(basename "$file")" "false"
     done
+
+    # Clean up legacy underscore-named files
+    cleanup_legacy_files "$target/workflows"
+    cleanup_legacy_files "$target/modules"
+    cleanup_legacy_files "$target/personas"
 }
 
 # -----------------------------------------------------------------------------
@@ -378,6 +463,14 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
+# Detect if this is an upgrade
+if [ -d "$TARGET_DIR/glados" ]; then
+    IS_UPGRADE="true"
+    print_status "Existing GLaDOS installation detected — upgrading..."
+else
+    print_status "Installing GLaDOS..."
+fi
+
 # Always scaffold the glados directory regardless of mode
 # EXCEPT for direct mode, which installs INTO glados/, so we be careful not to double up or conflict.
 # But 'scaffold_glados' handles the extras (PROJECT_STATUS, personas, overlays dir).
@@ -403,5 +496,9 @@ case "$MODE" in
         ;;
 esac
 
-print_status "Installation complete!"
+if [ "$IS_UPGRADE" = "true" ]; then
+    print_status "Upgrade complete!"
+else
+    print_status "Installation complete!"
+fi
 

@@ -1,4 +1,4 @@
-# Review Codebase
+# (GLaDOS) Review Codebase
 
 **Goal**: Analyze an existing codebase to understand its structure and populate `PROJECT_STATUS.md`.
 
@@ -8,9 +8,9 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_review_codebase/`.
+Create a directory: `specs/[YYYY-MM-DD]_review-codebase/`.
 Create a `README.md` inside it.
-Log the start of the session in `specs/[YYYY-MM-DD]_review_codebase/README.md`.
+Log the start of the session in `specs/[YYYY-MM-DD]_review-codebase/README.md`.
 
 ### 2. Exploration
 1.  **Structure**: List files/directories to understand the high-level layout.

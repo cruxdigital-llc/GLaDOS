@@ -1,3 +1,5 @@
+# (GLaDOS) Plan Product
+
 ## Prerequisites
 - [ ] Mission is defined (`MISSION.md`).
 - [ ] `{{STATUS}}` is up to date.
@@ -5,9 +7,9 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_plan_product/`.
+Create a directory: `specs/[YYYY-MM-DD]_plan-product/`.
 Create a `README.md` inside it.
-Log the start of the session in `specs/[YYYY-MM-DD]_plan_product/README.md`.
+Log the start of the session in `specs/[YYYY-MM-DD]_plan-product/README.md`.
 
 ### 2. Roadmap Definition
 Discuss with the user:
@@ -45,7 +47,7 @@ To modify: Edit directly.
 ### 4. Observability Update
 
 > [!IMPORTANT]
-> **Trace**: Log the decisions made and file paths in `specs/[YYYY-MM-DD]_plan_product/README.md`.
+> **Trace**: Log the decisions made and file paths in `specs/[YYYY-MM-DD]_plan-product/README.md`.
 > **Status**: Update `{{STATUS}}`:
 > -   "Architecture": Summarize the Tech Stack.
 > -   "Active Tasks": Add the top items from the MVP roadmap.

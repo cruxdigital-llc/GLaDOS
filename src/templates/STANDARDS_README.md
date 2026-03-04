@@ -20,7 +20,7 @@ keywords: [relevant, matching, terms]
 - **may**: Optional. Noted for awareness only.
 
 ### Scope
-Tags that help the `standards_gate` module match relevant standards to the current work.
+Tags that help the `standards-gate` module match relevant standards to the current work.
 
 ## Index
 

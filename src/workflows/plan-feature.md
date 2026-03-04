@@ -1,4 +1,4 @@
-# Plan Feature
+# (GLaDOS) Plan Feature
 
 **Goal**: Analyze requirements and create a high-level plan for a new feature.
 
@@ -41,4 +41,4 @@ Invoke module: `{{MODULES}}/capabilities.md`
 > -   **Context**: Log decisions in trace, add feature to "Active Tasks" in status.
 
 ### 6. Handoff
--   Suggest running `/spec-feature` next.
+-   Suggest running `/glados/spec-feature` next.
