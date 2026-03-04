@@ -71,6 +71,14 @@ To install (or update) GLaDOS, run the install script and specify your environme
 ```
 *Installs as a skill to `.gemini/skills/glados`.*
 
+**Installing into a different project:**
+
+By default, GLaDOS installs into the current directory. Use `--target` to install into another repo:
+
+```bash
+./bin/glados-install.sh --mode claude --target /path/to/your/project
+```
+
 ### The `glados/` Directory
 
 Every installation scaffolds a `glados/` directory in your project root:
