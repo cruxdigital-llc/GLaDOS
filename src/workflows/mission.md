@@ -5,7 +5,7 @@
 
 ## Process
 
-### 1. Initialize Trace
+### 1. Context Gathering
 Create a directory: `specs/[YYYY-MM-DD]_mission-statement/`.
 Create a `README.md` inside it.
 Log the start of the session in `specs/[YYYY-MM-DD]_mission-statement/README.md`.
