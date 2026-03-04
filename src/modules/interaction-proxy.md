@@ -13,8 +13,8 @@ When the workflow reaches a step that normally requires User Input (e.g., "Appro
 
 ### 1. Decision Making Sources
 Consult these files in order of priority to make decisions:
-1.  **`MISSION.md`**: The North Star. Does this decision align with the ultimate goal?
-2.  **`ROADMAP.md`**: The Strategic Plan. Is this feature described here?
+1.  **`product-knowledge/MISSION.md`**: The North Star. Does this decision align with the ultimate goal?
+2.  **`product-knowledge/ROADMAP.md`**: The Strategic Plan. Is this feature described here?
 3.  **`standards/*.md`**: The Law. Does this adhere to coding/arch standards?
 4.  **`PROJECT_STATUS.md`**: Current Context. What is the state of the app?
 
@@ -28,11 +28,11 @@ Consult these files in order of priority to make decisions:
     -   If Bad: "Rejected. Reason: [Self-Correction]." (Then fix it).
 
 #### Type B: Information Gap ("What needs to happen next?")
--   **Action**: Look at `ROADMAP.md`.
+-   **Action**: Look at `product-knowledge/ROADMAP.md`.
 -   **Response**: Quote the specific requirement from the Roadmap item.
 
 #### Type C: Preference ("Option A or Option B?")
--   **Action**: Evaluate against `MISSION.md`.
+-   **Action**: Evaluate against `product-knowledge/MISSION.md`.
 -   **Response**: "Option A, because it better aligns with [Mission Value]."
 
 ### 3. Fallback

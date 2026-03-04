@@ -29,7 +29,7 @@ This teaches you the GLaDOS rhythm and surfaces any standards you forgot to docu
 
 ### Week 2+: Let Patterns Emerge
 
-By now the `pattern-observer` module is silently logging things to `glados/observations/`. After 3-5 features:
+By now the `pattern-observer` module is silently logging things to `product-knowledge/observations/`. After 3-5 features:
 
 ```
 /recombobulate --scope observations-only
@@ -67,7 +67,7 @@ Review what was captured. Promote the real patterns to `standards/` or `philosop
 | Activity | Purpose |
 |---|---|
 | Standards Pruning | Remove standards nobody follows or that no longer serve the project |
-| Roadmap Alignment | Ensure `ROADMAP.md` and `MISSION.md` still reflect reality |
+| Roadmap Alignment | Ensure `product-knowledge/ROADMAP.md` and `product-knowledge/MISSION.md` still reflect reality |
 
 ---
 
@@ -95,7 +95,7 @@ Expand to a small group. This is where you discover:
 
 #### Stage 3: Team (Full Adoption)
 Once the standards and philosophies feel right:
-- Commit the `glados/` directory to version control.
+- Commit the `product-knowledge/` directory to version control.
 - Add GLaDOS install to your onboarding docs.
 - Use `/glados/adopt-codebase` for any new team member's first session — it's a great way to learn the codebase with guided analysis.
 
@@ -113,7 +113,7 @@ For organizations with multiple repos:
 |---|---|
 | **Developer** | Runs the development loop daily. Owns `specs/` for their features. |
 | **Tech Lead** | Reviews standards and philosophies. Runs `/recombobulate --scope full` periodically. Tunes personas. |
-| **Product Owner** | Maintains `MISSION.md` and `ROADMAP.md`. Reviews `/glados/plan-feature` outputs. |
+| **Product Owner** | Maintains `product-knowledge/MISSION.md` and `product-knowledge/ROADMAP.md`. Reviews `/glados/plan-feature` outputs. |
 | **New Hire** | Runs `/glados/adopt-codebase` as onboarding. Reads `standards/` and `philosophies/` as documentation. |
 
 ---
@@ -122,7 +122,7 @@ For organizations with multiple repos:
 
 ### Adding a Persona
 
-Drop a markdown file into `glados/personas/` or `src/personas/`:
+Drop a markdown file into `product-knowledge/personas/` or `src/personas/`:
 
 ```yaml
 ---
@@ -143,7 +143,7 @@ Common custom personas:
 
 ### Adding a Philosophy
 
-Create a file in `glados/philosophies/`:
+Create a file in `product-knowledge/philosophies/`:
 
 ```yaml
 ---
@@ -162,7 +162,7 @@ Start with `preferred` weight and promote to `core` only after the team has live
 
 For team-specific customizations that shouldn't alter the base GLaDOS:
 
-1. Create `glados/overlays/my-team/`.
+1. Create `product-knowledge/overlays/my-team/`.
 2. Copy any workflow or module you want to customize.
 3. Edit it.
 4. Apply: `./bin/glados-update.sh --ingest-overlays`.
@@ -196,7 +196,7 @@ How to know GLaDOS is working:
 | **Faster onboarding** | New hires use `/glados/adopt-codebase` and read standards instead of asking 50 questions |
 | **Consistent codebase** | `/recombobulate --scope full` finds fewer drift issues over time |
 | **Preserved decisions** | `specs/` traces explain *why* things were built the way they were |
-| **Living standards** | `glados/observations/` regularly produces promotable patterns |
+| **Living standards** | `product-knowledge/observations/` regularly produces promotable patterns |
 
 ---
 

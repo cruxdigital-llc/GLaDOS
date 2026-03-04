@@ -13,7 +13,7 @@ This workflow supports a `--scope` flag to control breadth:
 
 | Scope | What it does |
 |---|---|
-| `observations-only` | Review and promote/discard items from `glados/observations/` *(default)* |
+| `observations-only` | Review and promote/discard items from `product-knowledge/observations/` *(default)* |
 | `standards-only` | Audit codebase against existing `standards/` and `philosophies/` |
 | `dead-code` | Scan for unreferenced files, unused exports, orphan tests |
 | `full` | All of the above plus consistency audit and documentation staleness check |
@@ -25,7 +25,7 @@ If no scope is specified, default to `observations-only` (safest, most common us
 ## Process
 
 ### Phase 1: Observe
-1.  Read `glados/observations/observed-standards.md` and `observed-philosophies.md`.
+1.  Read `product-knowledge/observations/observed-standards.md` and `observed-philosophies.md`.
 2.  Scan recent `specs/` traces for patterns, corrections, and deviations.
 3.  List all current `standards/` and `philosophies/` files.
 4.  Log discovery summary in the trace.
@@ -57,7 +57,7 @@ Based on the selected scope:
 -   Identify divergent approaches to the same problem.
 
 #### Documentation Staleness *(full only)*
--   Are `{{STATUS}}`, `ROADMAP.md`, `MISSION.md` current?
+-   Are `{{STATUS}}`, `product-knowledge/ROADMAP.md`, `product-knowledge/MISSION.md` current?
 -   Are `standards/` files up to date with actual practices?
 
 ### Phase 3: Propose
@@ -103,7 +103,7 @@ For each **user-approved** item:
 -   **Consistency fixes** → Create refactoring plans.
 
 ### Phase 5: Formalize
-1.  **Clear processed items** from `glados/observations/` (mark as `promoted` or `discarded`).
+1.  **Clear processed items** from `product-knowledge/observations/` (mark as `promoted` or `discarded`).
 2.  Update `{{STATUS}}` with a "Recombobulate" entry in "Recent Changes".
 3.  Update `standards/index.yml` if new standards were added.
 4.  Create `philosophies/index.yml` if new philosophies were formalized.

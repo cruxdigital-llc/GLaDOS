@@ -16,7 +16,7 @@ This directory allow you to safely customize GLaDOS workflows, modules, and pers
 ## Structure
 
 ```
-glados/
+product-knowledge/
   overlays/
     README.md
     my-team-standards/        <-- Your overlay name
