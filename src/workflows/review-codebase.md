@@ -41,7 +41,7 @@ Update `{{STATUS}}` with:
 ### 5. Observability Update
 
 > [!IMPORTANT]
-> **Trace**: Log the findings and analysis in `specs/[YYYY-MM-DD]_codebase_review/README.md`.
+> **Trace**: Log the findings and analysis in `specs/[YYYY-MM-DD]_review-codebase/README.md`.
 > **Status**: Ensure `{{STATUS}}` is fully populated based on your findings.
 
 ### 6. Completion

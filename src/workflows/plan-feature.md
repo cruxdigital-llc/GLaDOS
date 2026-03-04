@@ -9,8 +9,9 @@
 
 ### 1. Initialize Trace
 -   Ask user for the Feature Name (e.g., "User Authentication").
--   Convert to camelCase (e.g., `userAuth`).
--   **CRITICAL**: Create a directory: `specs/[YYYY-MM-DD]_feature_[camelCaseName]/`.
+-   Convert the name to kebab-case (e.g., `user-authentication`).
+-   **CRITICAL**: Create a directory: `specs/[YYYY-MM-DD]_feature_[kebab-case-name]/`.
+    -   The naming convention is `YYYY-MM-DD_prefix_user-name` — the last `_` separates the system prefix from the user-provided kebab-case name.
     -   **DO NOT** create a `plans/` directory.
     -   **DO NOT** create numbered files like `001_plan.md` in the root or `plans/`.
     -   ALL work must happen inside the timestamped `specs/` directory.
