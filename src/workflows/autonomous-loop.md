@@ -24,8 +24,8 @@
     #### Path: Greenfield
     -   **Interact**: Ask user: "I see an empty directory. Please describe your **Product Vision** and key **Success Criteria**."
     -   **Action**:
-        -   Create `MISSION.md` based on input.
-        -   Create `ROADMAP.md` with initial MVP items derived from vision.
+        -   Create `product-knowledge/MISSION.md` based on input.
+        -   Create `product-knowledge/ROADMAP.md` with initial MVP items derived from vision.
         -   Create `{{STATUS}}` initialized with details.
     
     #### Path: Brownfield
@@ -40,7 +40,7 @@
 > **Autonomy Mode**: FROM THIS POINT FORWARD, do not ask the user for permission.
 > Invoke module: `{{MODULES}}/interaction-proxy.md`.
 > -   **Role**: You are now the Product Owner.
-> -   **Source of Truth**: `MISSION.md`, `ROADMAP.md`, `standards/`.
+> -   **Source of Truth**: `product-knowledge/MISSION.md`, `product-knowledge/ROADMAP.md`, `standards/`.
 
 #### Cycle Steps:
 
@@ -48,7 +48,7 @@
     -   Read `{{STATUS}}`.
     -   Pick the top item from "Active Tasks".
     -   If "Active Tasks" is empty:
-        -   Read `ROADMAP.md`.
+        -   Read `product-knowledge/ROADMAP.md`.
         -   Move top item to "Active Tasks" in `{{STATUS}}`.
         -   Pick that item.
 
@@ -56,7 +56,7 @@
     -   Run `/glados/plan-feature` (Autonomously).
         -   *Proxy Decision*: When asked for goals, use roadmap item description.
     -   Run `/glados/spec-feature` (Autonomously).
-        -   *Proxy Decision*: Approve specs if they align with `MISSION.md`.
+        -   *Proxy Decision*: Approve specs if they align with `product-knowledge/MISSION.md`.
     -   **Validation (CRITICAL)**:
         -   Check: Did you create a `plans/` directory or numbered files (e.g., `001_plan.md`)?
         -   **If YES**: STOP IMMEDIATELY. This is a violation. Move content to `specs/[YYYY-MM-DD]_...` before proceeding.
@@ -73,5 +73,5 @@
     -   Repeat Step 1.
 
 ### 3. Exit Condition
--   Stop if `ROADMAP.md` is empty and "Active Tasks" is empty.
+-   Stop if `product-knowledge/ROADMAP.md` is empty and "Active Tasks" is empty.
 -   Stop if a Critical Error occurs that cannot be self-corrected.

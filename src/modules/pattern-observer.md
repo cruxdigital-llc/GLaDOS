@@ -21,9 +21,9 @@ For each detected pattern, determine:
 -   **Philosophy** (directional, guiding): "We prefer composition over inheritance."
 
 ### 3. Log
-Append to the appropriate file in `glados/observations/`:
+Append to the appropriate file in `product-knowledge/observations/`:
 
-#### For Standards → `glados/observations/observed-standards.md`
+#### For Standards → `product-knowledge/observations/observed-standards.md`
 ```markdown
 ### [Date] - [Short Title]
 - **Source**: [How it was detected — user correction, repeated pattern, explicit statement]
@@ -34,7 +34,7 @@ Append to the appropriate file in `glados/observations/`:
 - **Status**: pending
 ```
 
-#### For Philosophies → `glados/observations/observed-philosophies.md`
+#### For Philosophies → `product-knowledge/observations/observed-philosophies.md`
 ```markdown
 ### [Date] - [Short Title]
 - **Source**: [How it was detected]

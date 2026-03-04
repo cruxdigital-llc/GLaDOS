@@ -37,7 +37,7 @@ If `philosophies/` exists:
 
 ### 5. Mission Alignment
 Run the `/glados/mission` workflow.
--   Ensure `MISSION.md` exists and aligns with the discovered codebase purpose.
+-   Ensure `product-knowledge/MISSION.md` exists and aligns with the discovered codebase purpose.
 
 ### 6. Validation Checkpoint
 

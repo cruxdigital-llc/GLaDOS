@@ -5,7 +5,7 @@
 Run this workflow to systematically clean up "vibe debt" — tighten the codebase, formalize implicit patterns, and resolve standards drift.
 
 ## Quick Usage
-- `observations-only` (default): Review and promote items from `glados/observations/`.
+- `observations-only` (default): Review and promote items from `product-knowledge/observations/`.
 - `standards-only`: Audit codebase against standards and philosophies.
 - `dead-code`: Scan for unreferenced files and orphan tests.
 - `full`: Everything above plus consistency and documentation checks.

@@ -1,7 +1,7 @@
 # (GLaDOS) Plan Product
 
 ## Prerequisites
-- [ ] Mission is defined (`MISSION.md`).
+- [ ] Mission is defined (`product-knowledge/MISSION.md`).
 - [ ] `{{STATUS}}` is up to date.
 
 ## Process
@@ -16,7 +16,7 @@ Discuss with the user:
 -   **MVP Features**: What must be in the first release?
 -   **Future Horizons**: What comes later?
 
-Create/Update `ROADMAP.md` in the project root.
+Create/Update `product-knowledge/ROADMAP.md`.
 **Include Header**:
 ```markdown
 <!--
@@ -34,7 +34,7 @@ If none, ask the user to define:
 -   Database/Storage
 -   Infrastructure
 
-Create/Update `TECH_STACK.md` in the project root.
+Create/Update `product-knowledge/TECH_STACK.md`.
 **Include Header**:
 ```markdown
 <!--

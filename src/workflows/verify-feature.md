@@ -31,4 +31,4 @@ Invoke module: `{{MODULES}}/standards-gate.md`
 ### 5. Completion
 Invoke module: `{{MODULES}}/observability.md`
 -   **Context**: Close trace, move status to "Recent Changes".
--   **Extras**: Update `ROADMAP.md`.
+-   **Extras**: Update `product-knowledge/ROADMAP.md`.

@@ -12,7 +12,7 @@ Ask the user the following questions (one by one or grouped, depending on comple
 3.  **Solution**: What is the core solution and what makes it unique?
 
 ### 2. Document Creation
-Create or update `MISSION.md` in the project root.
+Create or update `product-knowledge/MISSION.md` in the project root.
 
 **Header Requirement**:
 Top of file must include:
@@ -35,7 +35,7 @@ To modify: Edit this file directly. GLaDOS will read the current state before ma
 ### 3. Observability Update
 
 > [!IMPORTANT]
-> **Status**: Update the "Project Overview" section in `{{STATUS}}` with a link to `MISSION.md`.
+> **Status**: Update the "Project Overview" section in `{{STATUS}}` with a link to `product-knowledge/MISSION.md`.
 
 ### 4. User Verification
-Ask the user to review `MISSION.md`.
+Ask the user to review `product-knowledge/MISSION.md`.

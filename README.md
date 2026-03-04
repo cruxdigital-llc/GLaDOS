@@ -9,7 +9,7 @@ It transforms vague instructions into a rigorous, verifiable process by enforcin
 ## Features
 
 ### 🔍 Strict Observability (`specs/`)
-Every unit of work (Feature, Bugfix, Plan) creates a dedicated directory in `specs/[YYYY-MM-DD]_[Name]/`. It acts as a "Flight Recorder," logging every decision, prompt, and file change. The high-level state is maintained in `PROJECT_STATUS.md`, while long-term artifacts (`MISSION.md`, `ROADMAP.md`) live in the root.
+Every unit of work (Feature, Bugfix, Plan) creates a dedicated directory in `specs/[YYYY-MM-DD]_[Name]/`. It acts as a "Flight Recorder," logging every decision, prompt, and file change. The high-level state is maintained in `PROJECT_STATUS.md`, while long-term artifacts (`MISSION.md`, `ROADMAP.md`, `TECH_STACK.md`) live in `product-knowledge/`.
 
 ### 🎭 Dynamic Personas
 GLaDOS forces the agent to adopt specific viewpoints during planning and verification.
@@ -34,7 +34,7 @@ Documented standards are enforced automatically at pre- and post-implementation 
 Beyond standards (the *what*), GLaDOS tracks **philosophies** (the *why*) — high-level design principles like "All APIs should be RESTful" or "Zero-downtime deployments are non-negotiable." Core philosophies are enforced as blocking constraints.
 
 ### 👁️ Silent Capture
-The `pattern-observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `glados/observations/` for later review.
+The `pattern-observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `product-knowledge/observations/` for later review.
 
 ### 🧩 Modular Architecture
 Logic is shared across workflows using Modules (`src/modules/`).
@@ -47,7 +47,7 @@ Logic is shared across workflows using Modules (`src/modules/`).
 ---
 
 
-GLaDOS installs directly into your project, creating a `glados/` directory for configuration and command scripts.
+GLaDOS installs directly into your project, creating a `product-knowledge/` directory for configuration and product knowledge.
 
 ### Basic Installation
 
@@ -79,19 +79,22 @@ By default, GLaDOS installs into the current directory. Use `--target` to instal
 ./bin/glados-install.sh --mode claude --target /path/to/your/project
 ```
 
-### The `glados/` Directory
+### The `product-knowledge/` Directory
 
-Every installation scaffolds a `glados/` directory in your project root:
--   `glados/PROJECT_STATUS.md`: The high-level state of your project.
--   `glados/personas/`: Custom personas (add your own here!).
--   `glados/overlays/`: Directory for local overlays to customize workflows.
--   `glados/standards/`: Documented coding and architectural standards.
--   `glados/philosophies/`: High-level design principles and agreements.
--   `glados/observations/`: Staging area for implicitly detected patterns.
+Every installation scaffolds a `product-knowledge/` directory in your project root:
+-   `product-knowledge/PROJECT_STATUS.md`: The high-level state of your project.
+-   `product-knowledge/MISSION.md`: The product mission and north star.
+-   `product-knowledge/ROADMAP.md`: The strategic roadmap.
+-   `product-knowledge/TECH_STACK.md`: Technology stack decisions.
+-   `product-knowledge/personas/`: Custom personas (add your own here!).
+-   `product-knowledge/overlays/`: Directory for local overlays to customize workflows.
+-   `product-knowledge/standards/`: Documented coding and architectural standards.
+-   `product-knowledge/philosophies/`: High-level design principles and agreements.
+-   `product-knowledge/observations/`: Staging area for implicitly detected patterns.
 
 ### Updates & Overlays
 
-To update your commands or ingest new local overlays from `glados/overlays/`, run:
+To update your commands or ingest new local overlays from `product-knowledge/overlays/`, run:
 
 ```bash
 ./bin/glados-update.sh --ingest-overlays
@@ -108,9 +111,9 @@ Choose the path that matches your project state.
 *Best for starting from scratch.*
 
 1.  **Define the Mission**:
-    Run `/glados/mission` to create `MISSION.md`. Establishing the "Why" and "Who" ensures all future agents align with your goals.
+    Run `/glados/mission` to create `product-knowledge/MISSION.md`. Establishing the "Why" and "Who" ensures all future agents align with your goals.
 2.  **Plan the Product**:
-    Run `/glados/plan-product` to create `ROADMAP.md` and `TECH_STACK.md`.
+    Run `/glados/plan-product` to create `product-knowledge/ROADMAP.md` and `product-knowledge/TECH_STACK.md`.
 3.  **Start Building**:
     Run `/glados/plan-feature` to pick an item from your roadmap and begin the development loop.
 
@@ -133,7 +136,7 @@ Choose the path that matches your project state.
     Run `autonomous-loop`.
 2.  **Bootstrap**:
     -   **Empty Repo**: It will ask for your Vision and Success Criteria once, then take over.
-    -   **Existing Repo**: It will read your `ROADMAP.md` and start executing the next active task.
+    -   **Existing Repo**: It will read your `product-knowledge/ROADMAP.md` and start executing the next active task.
 3.  **Sit Back**:
     The agent will Plan, Spec, Implement, and Verify features in a continuous loop, answering its own questions based on your defined Mission and Standards.
 
@@ -146,8 +149,8 @@ Once installed, use these workflows to drive development.
 ### 1. Strategy & Setup
 | Command | Description |
 | :--- | :--- |
-| `/glados/mission` | Creates/Updates `MISSION.md` (North Star). |
-| `/glados/plan-product` | Generates `ROADMAP.md` & `TECH_STACK.md`. |
+| `/glados/mission` | Creates/Updates `product-knowledge/MISSION.md` (North Star). |
+| `/glados/plan-product` | Generates `product-knowledge/ROADMAP.md` & `product-knowledge/TECH_STACK.md`. |
 | `/glados/establish-standards` | Interactive interview to create `standards/*.md`. |
 | `/glados/review-codebase` | Spider the directory to build `PROJECT_STATUS.md`. |
 | `/glados/adopt-codebase` | Full brownfield onboarding sequence. |
@@ -178,7 +181,7 @@ Here is what a typical GLaDOS interaction looks like.
 
 **1. User runs `/glados/plan-feature`**
 > User: "We need a login page for the admin panel."
-> Agent: Creates `specs/2024-10-24_admin_login/`. Reads `MISSION.md`. Checks `ROADMAP.md`.
+> Agent: Creates `specs/2024-10-24_admin_login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
 > **Output**: `specs/.../implementation_plan.md` outlining the Auth0 integration.
 
 **2. User runs `/glados/spec-feature`**

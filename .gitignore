@@ -26,6 +26,7 @@ node_modules/
 
 # GLaDOS Framework Generated Artifacts
 # Installation targets (when running installers locally)
+product-knowledge/
 glados/
 .agent/
 

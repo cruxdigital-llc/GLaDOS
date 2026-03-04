@@ -54,7 +54,7 @@ Modes:
     antigravity   Installs to .agent/workflows/glados with YAML frontmatter
     claude        Installs to .claude/commands/glados (standard markdown)
     gemini        Installs to .gemini/skills/glados (Agent Skills standard)
-    direct        Installs to glados/ in the project root
+    direct        Installs to product-knowledge/ in the project root
 EOF
     exit 0
 }
@@ -68,15 +68,21 @@ install_file() {
     local source="$1"
     local dest="$2"
     local add_frontmatter="$3"
-    
+
     local filename=$(basename "$source")
 
     # 1. Check for LOCAL PROJECT overlay (Highest Priority)
     if [ -n "$OVERLAY" ]; then
-        if [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
-             source="$TARGET_DIR/glados/overlays/$OVERLAY/$filename"
+        if [ -f "$TARGET_DIR/product-knowledge/overlays/$OVERLAY/$filename" ]; then
+             source="$TARGET_DIR/product-knowledge/overlays/$OVERLAY/$filename"
              if [ "$VERBOSE" = "true" ]; then
                  echo "  (Local Overlay) Using $source"
+             fi
+        elif [ -f "$TARGET_DIR/glados/overlays/$OVERLAY/$filename" ]; then
+             # Legacy fallback
+             source="$TARGET_DIR/glados/overlays/$OVERLAY/$filename"
+             if [ "$VERBOSE" = "true" ]; then
+                 echo "  (Local Overlay, legacy path) Using $source"
              fi
         elif [ -f "$SRC_OVERLAYS/$OVERLAY/$filename" ]; then
             source="$SRC_OVERLAYS/$OVERLAY/$filename"
@@ -92,7 +98,7 @@ install_file() {
     if [ "$add_frontmatter" = "true" ]; then
         # Extract title from the first line (assuming # Title format)
         title=$(head -n 1 "$source" | sed 's/^# //')
-        
+
         echo "---" > "$dest"
         echo "description: $title" >> "$dest"
         echo "---" >> "$dest"
@@ -104,7 +110,7 @@ install_file() {
 
     # 2. Resolve path placeholders based on install mode
     resolve_placeholders "$dest"
-    
+
     if [ "$VERBOSE" = "true" ]; then
         echo "  Installed $filename to $dest"
     fi
@@ -112,7 +118,7 @@ install_file() {
 
 # Remove legacy underscore-named files from a GLaDOS-owned directory.
 # Only removes a file if a corresponding dash-named replacement exists.
-# Safe to use on directories GLaDOS fully owns (glados/personas, glados/observations, etc.).
+# Safe to use on directories GLaDOS fully owns (product-knowledge/personas, etc.).
 cleanup_legacy_files() {
     local dir="$1"
     [ -d "$dir" ] || return
@@ -131,17 +137,17 @@ cleanup_legacy_files() {
 }
 
 # Migrate GLaDOS files from an old top-level install to the new glados/ subdirectory.
-# For each file in the glados/ subdirectory, removes the matching file (dash or underscore
+# For each file in the subdirectory, removes the matching file (dash or underscore
 # named) from the parent directory if it exists. No file list needed — we just compare
 # what we installed against what's in the parent.
 cleanup_old_toplevel() {
-    local glados_dir="$1"  # e.g., .claude/commands/glados
+    local cmd_dir="$1"  # e.g., .claude/commands/glados
     local parent_dir
-    parent_dir="$(dirname "$glados_dir")"
-    [ -d "$glados_dir" ] || return
+    parent_dir="$(dirname "$cmd_dir")"
+    [ -d "$cmd_dir" ] || return
     [ -d "$parent_dir" ] || return
 
-    for file in "$glados_dir"/*.md; do
+    for file in "$cmd_dir"/*.md; do
         [ -e "$file" ] || continue
         local filename
         filename="$(basename "$file")"
@@ -168,29 +174,29 @@ cleanup_old_toplevel() {
 # Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
 resolve_placeholders() {
     local file="$1"
-    
+
     # Determine mode-specific paths
     local path_status path_modules path_personas
     case "$MODE" in
         antigravity)
-            path_status="glados/PROJECT_STATUS.md"
+            path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules=".agent/modules/glados"
             path_personas=".agent/personas/glados"
             ;;
         claude)
-            path_status="glados/PROJECT_STATUS.md"
-            path_modules="glados/modules"
-            path_personas="glados/personas"
+            path_status="product-knowledge/PROJECT_STATUS.md"
+            path_modules="product-knowledge/modules"
+            path_personas="product-knowledge/personas"
             ;;
         gemini)
-            path_status="glados/PROJECT_STATUS.md"
+            path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules="modules"
             path_personas="personas"
             ;;
         direct)
-            path_status="glados/PROJECT_STATUS.md"
-            path_modules="glados/modules"
-            path_personas="glados/personas"
+            path_status="product-knowledge/PROJECT_STATUS.md"
+            path_modules="product-knowledge/modules"
+            path_personas="product-knowledge/personas"
             ;;
     esac
 
@@ -211,77 +217,103 @@ resolve_placeholders() {
 }
 
 # -----------------------------------------------------------------------------
+# Migration
+# -----------------------------------------------------------------------------
+
+# Migrate from legacy glados/ directory to product-knowledge/.
+# Also moves root-level MISSION.md, ROADMAP.md, TECH_STACK.md into product-knowledge/.
+migrate_to_product_knowledge() {
+    local target="$1"
+    local old_dir="$target/glados"
+    local new_dir="$target/product-knowledge"
+
+    # Rename glados/ → product-knowledge/ if old dir exists and new doesn't
+    if [ -d "$old_dir" ] && [ ! -d "$new_dir" ]; then
+        mv "$old_dir" "$new_dir"
+        print_status "Migrated $old_dir → $new_dir"
+    fi
+
+    # Move root-level docs into product-knowledge/
+    for doc in MISSION.md ROADMAP.md TECH_STACK.md; do
+        if [ -f "$target/$doc" ] && [ ! -f "$new_dir/$doc" ]; then
+            mv "$target/$doc" "$new_dir/$doc"
+            print_status "Moved $doc → product-knowledge/$doc"
+        fi
+    done
+}
+
+# -----------------------------------------------------------------------------
 # Scaffolding
 # -----------------------------------------------------------------------------
 
-scaffold_glados() {
+scaffold_product_knowledge() {
     local target="$1"
     if [ "$IS_UPGRADE" = "true" ]; then
-        print_status "Updating GLaDOS structure in $target/glados..."
+        print_status "Updating product knowledge structure in $target/product-knowledge..."
     else
-        print_status "Scaffolding GLaDOS structure in $target/glados..."
+        print_status "Scaffolding product knowledge structure in $target/product-knowledge..."
     fi
-    
-    local glados_dir="$target/glados"
-    mkdir -p "$glados_dir"
-    mkdir -p "$glados_dir/personas"
-    mkdir -p "$glados_dir/overlays"
-    mkdir -p "$glados_dir/observations"
-    mkdir -p "$glados_dir/philosophies"
-    mkdir -p "$glados_dir/standards"
-    
+
+    local pk_dir="$target/product-knowledge"
+    mkdir -p "$pk_dir"
+    mkdir -p "$pk_dir/personas"
+    mkdir -p "$pk_dir/overlays"
+    mkdir -p "$pk_dir/observations"
+    mkdir -p "$pk_dir/philosophies"
+    mkdir -p "$pk_dir/standards"
+
     # 1. PROJECT_STATUS.md
-    if [ ! -f "$glados_dir/PROJECT_STATUS.md" ]; then
+    if [ ! -f "$pk_dir/PROJECT_STATUS.md" ]; then
         if [ -f "$SRC_TEMPLATES/PROJECT_STATUS.md" ]; then
-            cp "$SRC_TEMPLATES/PROJECT_STATUS.md" "$glados_dir/PROJECT_STATUS.md"
-            print_status "Created $glados_dir/PROJECT_STATUS.md"
+            cp "$SRC_TEMPLATES/PROJECT_STATUS.md" "$pk_dir/PROJECT_STATUS.md"
+            print_status "Created $pk_dir/PROJECT_STATUS.md"
         fi
     else
         if [ "$VERBOSE" = "true" ]; then
             echo "  Skipping PROJECT_STATUS.md (already exists)"
         fi
     fi
-    
+
     # 2. Personas (copy standard personas, updates propagate on reinstall)
     for file in "$SRC_PERSONAS"/*.md; do
         [ -e "$file" ] || continue
-        cp "$file" "$glados_dir/personas/"
+        cp "$file" "$pk_dir/personas/"
     done
-    cleanup_legacy_files "$glados_dir/personas"
-    
+    cleanup_legacy_files "$pk_dir/personas"
+
     # 3. Overlays README
-    if [ ! -f "$glados_dir/overlays/README.md" ]; then
+    if [ ! -f "$pk_dir/overlays/README.md" ]; then
          if [ -f "$SRC_TEMPLATES/OVERLAYS_README.md" ]; then
-            cp "$SRC_TEMPLATES/OVERLAYS_README.md" "$glados_dir/overlays/README.md"
+            cp "$SRC_TEMPLATES/OVERLAYS_README.md" "$pk_dir/overlays/README.md"
          else
-            echo "# GLaDOS Overlays" > "$glados_dir/overlays/README.md"
+            echo "# GLaDOS Overlays" > "$pk_dir/overlays/README.md"
          fi
     fi
 
     # 4. Observations (staging area for pattern-observer)
-    cleanup_legacy_files "$glados_dir/observations"
-    if [ ! -f "$glados_dir/observations/observed-standards.md" ]; then
+    cleanup_legacy_files "$pk_dir/observations"
+    if [ ! -f "$pk_dir/observations/observed-standards.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$glados_dir/observations/observed-standards.md"
+            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$pk_dir/observations/observed-standards.md"
         fi
     fi
-    if [ ! -f "$glados_dir/observations/observed-philosophies.md" ]; then
+    if [ ! -f "$pk_dir/observations/observed-philosophies.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$glados_dir/observations/observed-philosophies.md"
+            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$pk_dir/observations/observed-philosophies.md"
         fi
     fi
 
     # 5. Philosophies README
-    if [ ! -f "$glados_dir/philosophies/README.md" ]; then
+    if [ ! -f "$pk_dir/philosophies/README.md" ]; then
         if [ -f "$SRC_TEMPLATES/PHILOSOPHIES_README.md" ]; then
-            cp "$SRC_TEMPLATES/PHILOSOPHIES_README.md" "$glados_dir/philosophies/README.md"
+            cp "$SRC_TEMPLATES/PHILOSOPHIES_README.md" "$pk_dir/philosophies/README.md"
         fi
     fi
 
     # 6. Standards README
-    if [ ! -f "$glados_dir/standards/README.md" ]; then
+    if [ ! -f "$pk_dir/standards/README.md" ]; then
         if [ -f "$SRC_TEMPLATES/STANDARDS_README.md" ]; then
-            cp "$SRC_TEMPLATES/STANDARDS_README.md" "$glados_dir/standards/README.md"
+            cp "$SRC_TEMPLATES/STANDARDS_README.md" "$pk_dir/standards/README.md"
         fi
     fi
 }
@@ -345,7 +377,7 @@ install_claude() {
 }
 
 install_direct() {
-    local target="$1/glados"
+    local target="$1/product-knowledge"
     local action="Installing"
     [ "$IS_UPGRADE" = "true" ] && action="Upgrading"
     print_status "$action directly to $target..."
@@ -463,19 +495,22 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-# Detect if this is an upgrade
-if [ -d "$TARGET_DIR/glados" ]; then
+# Detect if this is an upgrade (check both legacy and current paths)
+if [ -d "$TARGET_DIR/product-knowledge" ] || [ -d "$TARGET_DIR/glados" ]; then
     IS_UPGRADE="true"
     print_status "Existing GLaDOS installation detected — upgrading..."
 else
     print_status "Installing GLaDOS..."
 fi
 
-# Always scaffold the glados directory regardless of mode
-# EXCEPT for direct mode, which installs INTO glados/, so we be careful not to double up or conflict.
-# But 'scaffold_glados' handles the extras (PROJECT_STATUS, personas, overlays dir).
+# Migrate legacy glados/ → product-knowledge/ and move root docs
+migrate_to_product_knowledge "$TARGET_DIR"
+
+# Always scaffold the product-knowledge directory regardless of mode
+# EXCEPT for direct mode, which installs INTO product-knowledge/, so we be careful not to double up or conflict.
+# But 'scaffold_product_knowledge' handles the extras (PROJECT_STATUS, personas, overlays dir).
 # Direct mode function mainly handles workflows/modules.
-scaffold_glados "$TARGET_DIR"
+scaffold_product_knowledge "$TARGET_DIR"
 
 case "$MODE" in
     antigravity)
@@ -501,4 +536,3 @@ if [ "$IS_UPGRADE" = "true" ]; then
 else
     print_status "Installation complete!"
 fi
-
