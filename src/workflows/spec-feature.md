@@ -3,7 +3,7 @@
 **Goal**: Create a detailed technical specification for the feature.
 
 ## Prerequisites
-- [ ] Feature directory exists (`specs/[YYYY-MM-DD]_feature_[name]/`).
+- [ ] Feature directory exists (`specs/[YYYY-MM-DD]_feature_[kebab-case-name]/`).
 - [ ] **CRITICAL**: Ensure you are NOT working in a `plans/` directory. If `plans/` exists, ignore it and use `specs/`.
 
 ## Process

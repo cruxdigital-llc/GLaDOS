@@ -181,7 +181,7 @@ Here is what a typical GLaDOS interaction looks like.
 
 **1. User runs `/glados/plan-feature`**
 > User: "We need a login page for the admin panel."
-> Agent: Creates `specs/2024-10-24_admin_login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
+> Agent: Creates `specs/2024-10-24_feature_admin-login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
 > **Output**: `specs/.../implementation_plan.md` outlining the Auth0 integration.
 
 **2. User runs `/glados/spec-feature`**

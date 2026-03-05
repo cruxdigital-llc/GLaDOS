@@ -9,7 +9,8 @@
 
 ### 1. Initialize Trace
 -   Ask for a Bug Name/ID (e.g., "Login Timeout").
--   Create `specs/[YYYY-MM-DD]_bugfix_[slug]/`.
+-   Convert the name to kebab-case (e.g., `login-timeout`).
+-   Create `specs/[YYYY-MM-DD]_bugfix_[kebab-case-name]/`.
 -   Create `README.md`.
 -   Log session start.
 

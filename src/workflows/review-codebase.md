@@ -8,9 +8,9 @@
 ## Process
 
 ### 1. Initialize Trace
-Create a directory: `specs/[YYYY-MM-DD]_review-codebase/`.
+Create a directory: `specs/[YYYY-MM-DD]_codebase-review/`.
 Create a `README.md` inside it.
-Log the start of the session in `specs/[YYYY-MM-DD]_review-codebase/README.md`.
+Log the start of the session in `specs/[YYYY-MM-DD]_codebase-review/README.md`.
 
 ### 2. Exploration
 1.  **Structure**: List files/directories to understand the high-level layout.
@@ -41,7 +41,7 @@ Update `{{STATUS}}` with:
 ### 5. Observability Update
 
 > [!IMPORTANT]
-> **Trace**: Log the findings and analysis in `specs/[YYYY-MM-DD]_codebase_review/README.md`.
+> **Trace**: Log the findings and analysis in `specs/[YYYY-MM-DD]_review-codebase/README.md`.
 > **Status**: Ensure `{{STATUS}}` is fully populated based on your findings.
 
 ### 6. Completion
