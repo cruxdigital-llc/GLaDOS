@@ -8,10 +8,10 @@ It transforms vague instructions into a rigorous, verifiable process by enforcin
 
 ## Features
 
-### 🔍 Strict Observability (`specs/`)
+### Strict Observability (`specs/`)
 Every unit of work (Feature, Bugfix, Plan) creates a dedicated directory in `specs/[YYYY-MM-DD]_[Name]/`. It acts as a "Flight Recorder," logging every decision, prompt, and file change. The high-level state is maintained in `PROJECT_STATUS.md`, while long-term artifacts (`MISSION.md`, `ROADMAP.md`, `TECH_STACK.md`) live in `product-knowledge/`.
 
-### 🎭 Dynamic Personas
+### Dynamic Personas
 GLaDOS forces the agent to adopt specific viewpoints during planning and verification.
 -   **Product Manager**: "Is this valuable?"
 -   **Architect**: "Is this scalable?"
@@ -19,24 +19,27 @@ GLaDOS forces the agent to adopt specific viewpoints during planning and verific
 
 Personas support three modes: **review** (critique during gates), **operating** (drive session behavior), and **hybrid** (both). Add your own by dropping files into `src/personas`.
 
-### ⚡ Split Lifecycles
+### Split Lifecycles
 Development is broken into discrete, verifying steps:
 **Plan** → **Spec** → **Implement** → **Verify**.
 This prevents "hallucination spirals" by validating state at each checkpoint.
 
-### 🛡️ Standards Gate
+### DSPy-Powered Structured Specs
+Spec artifacts (`requirements`, `plan`, `spec`, `tasks`) are defined as **Pydantic domain models** in `src/models/` and generated via **DSPy pipeline modules** in `src/pipeline/`. Workflows call the `bin/glados-dspy` CLI to run DSPy's `ChainOfThought` against your configured LM, producing validated JSON artifacts stored in each `specs/` directory. All spec data is stored as DSPy-native JSON — module state (`.json`) plus extracted data (`_data.json`) — enabling future optimization via DSPy's `BootstrapFewShot`, `MIPROv2`, and other optimizers.
+
+### Standards Gate
 Documented standards are enforced automatically at pre- and post-implementation checkpoints using three severity tiers:
 -   **must**: Blocks the workflow.
 -   **should**: Warning in the trace.
 -   **may**: Informational.
 
-### 🧭 Philosophies
+### Philosophies
 Beyond standards (the *what*), GLaDOS tracks **philosophies** (the *why*) — high-level design principles like "All APIs should be RESTful" or "Zero-downtime deployments are non-negotiable." Core philosophies are enforced as blocking constraints.
 
-### 👁️ Silent Capture
+### Silent Capture
 The `pattern-observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `product-knowledge/observations/` for later review.
 
-### 🧩 Modular Architecture
+### Modular Architecture
 Logic is shared across workflows using Modules (`src/modules/`).
 -   **Observability**: Standardized logging.
 -   **Persona Context**: Review and operating persona management.
@@ -79,6 +82,22 @@ By default, GLaDOS installs into the current directory. Use `--target` to instal
 ./bin/glados-install.sh --mode claude --target /path/to/your/project
 ```
 
+### DSPy Engine Setup
+
+The installer copies the DSPy engine (models, pipeline, CLI script) into your project. To use it, install the Python dependencies:
+
+```bash
+pip install dspy-ai pydantic
+```
+
+Then set the `GLADOS_LM` environment variable to tell DSPy which LM to use:
+
+```bash
+export GLADOS_LM="openai/gpt-4o"           # or anthropic/claude-sonnet-4-20250514, etc.
+```
+
+The matching API key must also be set (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+
 ### The `product-knowledge/` Directory
 
 Every installation scaffolds a `product-knowledge/` directory in your project root:
@@ -86,6 +105,7 @@ Every installation scaffolds a `product-knowledge/` directory in your project ro
 -   `product-knowledge/MISSION.md`: The product mission and north star.
 -   `product-knowledge/ROADMAP.md`: The strategic roadmap.
 -   `product-knowledge/TECH_STACK.md`: Technology stack decisions.
+-   `product-knowledge/bin/glados-dspy`: The DSPy CLI engine.
 -   `product-knowledge/personas/`: Custom personas (add your own here!).
 -   `product-knowledge/overlays/`: Directory for local overlays to customize workflows.
 -   `product-knowledge/standards/`: Documented coding and architectural standards.
@@ -158,10 +178,10 @@ Once installed, use these workflows to drive development.
 ### 2. The Development Loop
 For every feature, follow this 4-step cycle:
 
-1.  **`/glados/plan-feature`**: Analyzes requirements, consults the Roadmap, drafts a high-level approach.
-2.  **`/glados/spec-feature`**: Refines the plan into a detailed `spec.md`. Triggers **Persona Review**.
-3.  **`/glados/implement-feature`**: Writes code based on the spec. Updates traces in `specs/`.
-4.  **`/glados/verify-feature`**: Runs tests, verifies against the spec, and updates the `walkthrough.md`.
+1.  **`/glados/plan-feature`**: Gathers requirements, runs the DSPy engine to generate `requirements_data.json` and `plan_data.json`.
+2.  **`/glados/spec-feature`**: Runs DSPy to generate `spec_data.json` from the plan. Triggers **Persona Review**.
+3.  **`/glados/implement-feature`**: Runs DSPy to generate `tasks_data.json`, writes code based on the spec. Updates traces in `specs/`.
+4.  **`/glados/verify-feature`**: Runs tests, verifies against `spec_data.json` and `tasks_data.json`, updates the `walkthrough.md`.
 
 ### 3. Maintenance
 | Command | Description |
@@ -175,27 +195,62 @@ For every feature, follow this 4-step cycle:
 
 ---
 
+## DSPy CLI Reference
+
+The `glados-dspy` script is the engine behind structured spec generation:
+
+```bash
+# Generate requirements and plan from a feature description
+python3 product-knowledge/bin/glados-dspy plan \
+  --feature "User authentication with Auth0" \
+  --context-dir product-knowledge/ \
+  --output-dir specs/2024-03-08_feature_user-auth/
+
+# Generate spec from requirements + plan
+python3 product-knowledge/bin/glados-dspy spec \
+  --input-dir specs/2024-03-08_feature_user-auth/ \
+  --context-dir product-knowledge/ \
+  --output-dir specs/2024-03-08_feature_user-auth/
+
+# Generate task breakdown from spec
+python3 product-knowledge/bin/glados-dspy tasks \
+  --input-dir specs/2024-03-08_feature_user-auth/ \
+  --context-dir product-knowledge/ \
+  --output-dir specs/2024-03-08_feature_user-auth/
+
+# View a saved artifact
+python3 product-knowledge/bin/glados-dspy show \
+  --input-dir specs/2024-03-08_feature_user-auth/ \
+  --artifact spec
+```
+
+**Options:**
+- `--lm <provider/model>`: Override `GLADOS_LM` env var (e.g. `openai/gpt-4o`)
+- `--format json|text`: Output format (default: `json`)
+
+---
+
 ## Example Scenario: "Adding a Login Page"
 
 Here is what a typical GLaDOS interaction looks like.
 
 **1. User runs `/glados/plan-feature`**
 > User: "We need a login page for the admin panel."
-> Agent: Creates `specs/2024-10-24_feature_admin-login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
-> **Output**: `specs/.../implementation_plan.md` outlining the Auth0 integration.
+> Agent: Creates `specs/2024-10-24_feature_admin-login/`. Runs `glados-dspy plan` with project context.
+> **Output**: `requirements_data.json` and `plan_data.json` — structured, validated specs stored as DSPy artifacts.
 
 **2. User runs `/glados/spec-feature`**
-> Agent: Reads the plan. Simulates strict reviews.
+> Agent: Runs `glados-dspy spec` which reads the plan and generates a detailed spec. Simulates strict reviews.
 > *Persona (Security)*: "Ensure we use Rotation Tokens."
 > *Persona (Product)*: "Don't forget the 'Forgot Password' flow."
-> **Output**: A comprehensive `spec.md` approved by simulated stakeholders.
+> **Output**: `spec_data.json` — validated specification approved by simulated stakeholders.
 
 **3. User runs `/glados/implement-feature`**
-> Agent: Writes code in `src/auth/`. Updates `specs/.../trace.md` with every file change.
-> **Output**: The actual code changes.
+> Agent: Runs `glados-dspy tasks` to generate a task breakdown. Writes code in `src/auth/`. Updates `specs/.../README.md` trace with every file change.
+> **Output**: The actual code changes, with each task marked `done` in `tasks_data.json`.
 
 **4. User runs `/glados/verify-feature`**
-> Agent: Runs `npm test`. Clicks through the browser (if available).
+> Agent: Reads `spec_data.json` and `tasks_data.json`. Runs `npm test`. Clicks through the browser (if available).
 > **Output**: `walkthrough.md` with screenshots/logs proving it works.
 
 ---
@@ -232,6 +287,8 @@ See **[PLAYBOOK.md](PLAYBOOK.md)** for comprehensive guidance on:
 
 1.  **Workflows** in `src/workflows/` define the high-level steps.
 2.  **Modules** in `src/modules/` contain shared logic.
-3.  **Personas** in `src/personas/` define agent roles.
+3.  **Models** in `src/models/` define structured Pydantic domain models for spec artifacts.
+4.  **Pipeline** in `src/pipeline/` contains DSPy modules that compose models into generation pipelines.
+5.  **Personas** in `src/personas/` define agent roles.
 
 Please ensure any new feature includes a corresponding Module or Persona if applicable to keep workflows DRY.

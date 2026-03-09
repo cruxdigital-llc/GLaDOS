@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+"""GLaDOS DSPy CLI — Structured spec generation engine.
+
+Usage:
+    glados-dspy plan  --feature "..." --context-dir product-knowledge/ --output-dir specs/.../
+    glados-dspy spec  --input-dir specs/.../ --context-dir product-knowledge/ --output-dir specs/.../
+    glados-dspy tasks --input-dir specs/.../ --context-dir product-knowledge/ --output-dir specs/.../
+    glados-dspy show  --input-dir specs/.../ --artifact requirements
+
+Environment:
+    GLADOS_LM   DSPy LM identifier (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514")
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Resolve imports: works both in-repo (bin/glados-dspy) and when installed
+# to a target project (product-knowledge/bin/glados-dspy alongside
+# product-knowledge/glados_models/ and product-knowledge/glados_pipeline/).
+# ---------------------------------------------------------------------------
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _SCRIPT_DIR.parent
+
+# In-repo: src/models and src/pipeline live under repo root
+if (_REPO_ROOT / "src" / "models").is_dir():
+    sys.path.insert(0, str(_REPO_ROOT))
+    _MODELS_PKG = "src.models"
+    _PIPELINE_PKG = "src.pipeline"
+# Installed: glados_models/ and glados_pipeline/ are siblings of bin/
+else:
+    sys.path.insert(0, str(_SCRIPT_DIR.parent))
+    _MODELS_PKG = "glados_models"
+    _PIPELINE_PKG = "glados_pipeline"
+
+try:
+    import dspy
+except ImportError:
+    print(
+        "ERROR: dspy is not installed.\n"
+        "Install it with:  pip install dspy-ai pydantic\n"
+        "Or in a venv:     python3 -m venv .venv && .venv/bin/pip install dspy-ai pydantic",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Late imports after path setup
+import importlib
+
+models = importlib.import_module(_MODELS_PKG)
+pipeline = importlib.import_module(_PIPELINE_PKG)
+pipeline_mod = importlib.import_module(f"{_PIPELINE_PKG}.feature_pipeline")
+
+# ---------------------------------------------------------------------------
+# Context builder
+# ---------------------------------------------------------------------------
+
+_CONTEXT_FILES = [
+    "MISSION.md",
+    "ROADMAP.md",
+    "TECH_STACK.md",
+    "PROJECT_STATUS.md",
+]
+
+
+def build_context(context_dir: Path) -> str:
+    """Read key product-knowledge files into a single context string."""
+    parts: list[str] = []
+    for name in _CONTEXT_FILES:
+        p = context_dir / name
+        if p.is_file():
+            parts.append(f"=== {name} ===\n{p.read_text()}")
+
+    # Include standards if present
+    standards_dir = context_dir / "standards"
+    if standards_dir.is_dir():
+        for f in sorted(standards_dir.glob("*.md")):
+            if f.name == "README.md":
+                continue
+            parts.append(f"=== standards/{f.name} ===\n{f.read_text()}")
+
+    return "\n\n".join(parts) if parts else "(no project context found)"
+
+
+# ---------------------------------------------------------------------------
+# Save helpers
+# ---------------------------------------------------------------------------
+
+
+def save_module_and_data(
+    module: dspy.Module,
+    data: dict,
+    output_dir: Path,
+    prefix: str,
+) -> tuple[Path, Path]:
+    """Save DSPy module state and extracted Pydantic data as JSON."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    module_path = output_dir / f"{prefix}.json"
+    module.save(str(module_path))
+
+    data_path = output_dir / f"{prefix}_data.json"
+    data_path.write_text(json.dumps(data, indent=2))
+
+    return module_path, data_path
+
+
+def load_data(input_dir: Path, prefix: str) -> dict:
+    """Load a previously saved _data.json artifact."""
+    data_path = input_dir / f"{prefix}_data.json"
+    if not data_path.is_file():
+        print(f"ERROR: {data_path} not found. Run the previous step first.", file=sys.stderr)
+        sys.exit(1)
+    return json.loads(data_path.read_text())
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_plan(args: argparse.Namespace) -> None:
+    """Generate Requirements + Plan from a feature description."""
+    context = build_context(Path(args.context_dir))
+    output_dir = Path(args.output_dir)
+
+    mod = pipeline_mod.PlanFeature()
+    result = mod(feature_description=args.feature, project_context=context)
+
+    req_data = result.requirements.model_dump()
+    plan_data = result.plan.model_dump()
+
+    # Save DSPy module state + extracted data
+    save_module_and_data(mod, {"requirements": req_data, "plan": plan_data}, output_dir, "plan")
+
+    # Also save individual data files for downstream steps
+    (output_dir / "requirements_data.json").write_text(json.dumps(req_data, indent=2))
+    (output_dir / "plan_data.json").write_text(json.dumps(plan_data, indent=2))
+
+    output = {"requirements": req_data, "plan": plan_data}
+    if args.format == "json":
+        print(json.dumps(output, indent=2))
+    else:
+        print(f"Feature: {req_data.get('feature_name', 'unknown')}")
+        print(f"Goal: {req_data.get('goal', '')}")
+        print(f"\nApproach: {plan_data.get('approach', '')}")
+        print(f"Phases: {len(plan_data.get('phases', []))}")
+        for phase in plan_data.get("phases", []):
+            print(f"  - {phase['name']}: {phase['description']}")
+
+    print(f"\nSaved to {output_dir}/", file=sys.stderr)
+
+
+def cmd_spec(args: argparse.Namespace) -> None:
+    """Generate Spec from previously saved Requirements + Plan."""
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
+    context = build_context(Path(args.context_dir))
+
+    req_data = load_data(input_dir, "requirements")
+    plan_data = load_data(input_dir, "plan")
+
+    mod = pipeline_mod.SpecFeature()
+    result = mod(
+        requirements_json=json.dumps(req_data),
+        plan_json=json.dumps(plan_data),
+        project_context=context,
+    )
+
+    spec_data = result.spec.model_dump()
+    save_module_and_data(mod, spec_data, output_dir, "spec")
+    (output_dir / "spec_data.json").write_text(json.dumps(spec_data, indent=2))
+
+    if args.format == "json":
+        print(json.dumps(spec_data, indent=2))
+    else:
+        print(f"Data Models: {len(spec_data.get('data_models', []))}")
+        print(f"API Endpoints: {len(spec_data.get('api_endpoints', []))}")
+        print(f"Edge Cases: {len(spec_data.get('edge_cases', []))}")
+
+    print(f"\nSaved to {output_dir}/", file=sys.stderr)
+
+
+def cmd_tasks(args: argparse.Namespace) -> None:
+    """Generate TaskBreakdown from previously saved Spec."""
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
+    context = build_context(Path(args.context_dir))
+
+    spec_data = load_data(input_dir, "spec")
+
+    mod = pipeline_mod.ImplementFeature()
+    result = mod(
+        spec_json=json.dumps(spec_data),
+        project_context=context,
+    )
+
+    tasks_data = result.task_breakdown.model_dump()
+    save_module_and_data(mod, tasks_data, output_dir, "tasks")
+    (output_dir / "tasks_data.json").write_text(json.dumps(tasks_data, indent=2))
+
+    if args.format == "json":
+        print(json.dumps(tasks_data, indent=2))
+    else:
+        for t in tasks_data.get("tasks", []):
+            print(f"  [{t['status']}] {t['id']}: {t['title']}")
+
+    print(f"\nSaved to {output_dir}/", file=sys.stderr)
+
+
+def cmd_show(args: argparse.Namespace) -> None:
+    """Display a saved artifact."""
+    input_dir = Path(args.input_dir)
+    artifact = args.artifact
+
+    data = load_data(input_dir, artifact)
+    if args.format == "json":
+        print(json.dumps(data, indent=2))
+    else:
+        print(json.dumps(data, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def configure_lm(lm_id: str | None) -> None:
+    """Configure DSPy's LM from CLI arg or environment."""
+    lm_id = lm_id or os.environ.get("GLADOS_LM")
+    if not lm_id:
+        print(
+            "ERROR: No LM configured.\n"
+            "Set GLADOS_LM env var (e.g. 'openai/gpt-4o') or pass --lm.\n"
+            "The matching API key must also be set (e.g. OPENAI_API_KEY).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    dspy.configure(lm=dspy.LM(lm_id))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="glados-dspy",
+        description="GLaDOS DSPy engine — generate structured specs",
+    )
+    parser.add_argument("--lm", help="DSPy LM identifier (overrides GLADOS_LM env var)")
+    parser.add_argument("--format", choices=["json", "text"], default="json", help="Output format")
+
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # plan
+    p_plan = sub.add_parser("plan", help="Generate Requirements + Plan")
+    p_plan.add_argument("--feature", required=True, help="Feature description")
+    p_plan.add_argument("--context-dir", required=True, help="Path to product-knowledge/")
+    p_plan.add_argument("--output-dir", required=True, help="Path to specs/[...]/")
+
+    # spec
+    p_spec = sub.add_parser("spec", help="Generate Spec from Requirements + Plan")
+    p_spec.add_argument("--input-dir", required=True, help="Directory with requirements + plan data")
+    p_spec.add_argument("--context-dir", required=True, help="Path to product-knowledge/")
+    p_spec.add_argument("--output-dir", required=True, help="Path to specs/[...]/")
+
+    # tasks
+    p_tasks = sub.add_parser("tasks", help="Generate TaskBreakdown from Spec")
+    p_tasks.add_argument("--input-dir", required=True, help="Directory with spec data")
+    p_tasks.add_argument("--context-dir", required=True, help="Path to product-knowledge/")
+    p_tasks.add_argument("--output-dir", required=True, help="Path to specs/[...]/")
+
+    # show
+    p_show = sub.add_parser("show", help="Display a saved artifact")
+    p_show.add_argument("--input-dir", required=True, help="Directory with saved data")
+    p_show.add_argument("--artifact", required=True, help="Artifact name (requirements, plan, spec, tasks)")
+
+    args = parser.parse_args()
+
+    if args.command != "show":
+        configure_lm(args.lm)
+
+    dispatch = {
+        "plan": cmd_plan,
+        "spec": cmd_spec,
+        "tasks": cmd_tasks,
+        "show": cmd_show,
+    }
+    dispatch[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

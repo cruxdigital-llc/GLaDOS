@@ -18,6 +18,8 @@ SRC_MODULES="$ROOT_DIR/src/modules"
 SRC_PERSONAS="$ROOT_DIR/src/personas"
 SRC_TEMPLATES="$ROOT_DIR/src/templates"
 SRC_OVERLAYS="$ROOT_DIR/src/overlays"
+SRC_MODELS="$ROOT_DIR/src/models"
+SRC_PIPELINE="$ROOT_DIR/src/pipeline"
 
 MODE=""
 TARGET_DIR=""
@@ -176,7 +178,8 @@ resolve_placeholders() {
     local file="$1"
 
     # Determine mode-specific paths
-    local path_status path_modules path_personas
+    local path_status path_modules path_personas path_glados_dspy
+    path_glados_dspy="product-knowledge/bin/glados-dspy"
     case "$MODE" in
         antigravity)
             path_status="product-knowledge/PROJECT_STATUS.md"
@@ -206,12 +209,14 @@ resolve_placeholders() {
             -e "s|{{STATUS}}|${path_status}|g" \
             -e "s|{{MODULES}}|${path_modules}|g" \
             -e "s|{{PERSONAS}}|${path_personas}|g" \
+            -e "s|{{GLADOS_DSPY}}|${path_glados_dspy}|g" \
             "$file"
     else
         sed -i \
             -e "s|{{STATUS}}|${path_status}|g" \
             -e "s|{{MODULES}}|${path_modules}|g" \
             -e "s|{{PERSONAS}}|${path_personas}|g" \
+            -e "s|{{GLADOS_DSPY}}|${path_glados_dspy}|g" \
             "$file"
     fi
 }
@@ -240,6 +245,53 @@ migrate_to_product_knowledge() {
             print_status "Moved $doc → product-knowledge/$doc"
         fi
     done
+}
+
+# -----------------------------------------------------------------------------
+# Python Models
+# -----------------------------------------------------------------------------
+
+# Install the DSPy engine: models, pipeline, and CLI script.
+# Creates glados_models/, glados_pipeline/, and product-knowledge/bin/glados-dspy.
+install_dspy_engine() {
+    local target="$1"
+
+    # 1. Models → glados_models/
+    if [ -d "$SRC_MODELS" ]; then
+        local models_dest="$target/glados_models"
+        mkdir -p "$models_dest"
+        for file in "$SRC_MODELS"/*.py; do
+            [ -e "$file" ] || continue
+            cp "$file" "$models_dest/"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Installed model: $(basename "$file") → $models_dest/"
+            fi
+        done
+        print_status "Installed Python models to $models_dest/"
+    fi
+
+    # 2. Pipeline → glados_pipeline/
+    if [ -d "$SRC_PIPELINE" ]; then
+        local pipeline_dest="$target/glados_pipeline"
+        mkdir -p "$pipeline_dest"
+        for file in "$SRC_PIPELINE"/*.py; do
+            [ -e "$file" ] || continue
+            cp "$file" "$pipeline_dest/"
+            if [ "$VERBOSE" = "true" ]; then
+                echo "  Installed pipeline: $(basename "$file") → $pipeline_dest/"
+            fi
+        done
+        print_status "Installed DSPy pipeline to $pipeline_dest/"
+    fi
+
+    # 3. CLI script → product-knowledge/bin/glados-dspy
+    local bin_dest="$target/product-knowledge/bin"
+    mkdir -p "$bin_dest"
+    if [ -f "$ROOT_DIR/bin/glados-dspy" ]; then
+        cp "$ROOT_DIR/bin/glados-dspy" "$bin_dest/glados-dspy"
+        chmod +x "$bin_dest/glados-dspy"
+        print_status "Installed DSPy CLI to $bin_dest/glados-dspy"
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -310,7 +362,10 @@ scaffold_product_knowledge() {
         fi
     fi
 
-    # 6. Standards README
+    # 6. DSPy engine (models, pipeline, CLI script)
+    install_dspy_engine "$target"
+
+    # 7. Standards README
     if [ ! -f "$pk_dir/standards/README.md" ]; then
         if [ -f "$SRC_TEMPLATES/STANDARDS_README.md" ]; then
             cp "$SRC_TEMPLATES/STANDARDS_README.md" "$pk_dir/standards/README.md"

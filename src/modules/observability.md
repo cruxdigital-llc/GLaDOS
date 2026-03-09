@@ -8,7 +8,7 @@
 -   **Target**: The active `specs/[YYYY-MM-DD]_[name]/README.md`.
 -   **Action**: Log the following:
     -   Key decisions made.
-    -   Files created or modified (with links).
+    -   Files created or modified (with links) — includes DSPy artifacts (`requirements_data.json`, `plan_data.json`, `spec_data.json`, `tasks_data.json`).
     -   Test results (if applicable).
     -   Persona feedback (if applicable).
 

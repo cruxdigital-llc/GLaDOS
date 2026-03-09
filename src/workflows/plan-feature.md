@@ -4,6 +4,7 @@
 
 ## Prerequisites
 - [ ] `{{STATUS}}` exists.
+- [ ] DSPy engine is installed (`{{GLADOS_DSPY}}` exists). If not, run the GLaDOS installer.
 
 ## Process
 
@@ -27,19 +28,24 @@ Invoke module: `{{MODULES}}/capabilities.md`
 -   **Select**: Ask: "Which Personas should assist with this feature?" (e.g., Security Expert, Accessibility Lead).
 -   **Log**: Record the list of **Active Personas** in `specs/[...]/README.md`.
 
-### 3. Requirements Analysis
+### 3. Requirements & Plan Generation
 -   Ask: "What is the goal of this feature?"
 -   Ask: "What are the success criteria?"
--   Create `specs/[...]/requirements.md`.
+-   Gather the user's answers into a clear feature description.
+-   Run the DSPy engine to generate structured requirements and plan:
+    ```
+    python3 {{GLADOS_DSPY}} plan \
+      --feature "<feature description from user>" \
+      --context-dir product-knowledge/ \
+      --output-dir specs/[YYYY-MM-DD]_feature_[name]/
+    ```
+-   Review the generated `requirements_data.json` and `plan_data.json` with the user.
+-   If revisions are needed, re-run with a refined feature description.
 
-### 4. High-Level Plan
--   Draft a plan: "How will we approach this?"
--   Create `specs/[...]/plan.md`.
-
-### 5. Observability Update
+### 4. Observability Update
 > [!IMPORTANT]
 > Invoke module: `{{MODULES}}/observability.md`
 > -   **Context**: Log decisions in trace, add feature to "Active Tasks" in status.
 
-### 6. Handoff
+### 5. Handoff
 -   Suggest running `/glados/spec-feature` next.

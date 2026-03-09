@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "glados-models"
+version = "0.1.0"
+description = "Structured Pydantic domain models and DSPy engine for GLaDOS"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "dspy-ai>=2.0",
+]
+
+[project.scripts]
+glados-dspy = "pipeline.feature_pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["models*", "pipeline*"]

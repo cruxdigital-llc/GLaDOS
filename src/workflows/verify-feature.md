@@ -9,6 +9,7 @@
 
 ### 1. Resume Trace
 -   Select the feature directory.
+-   Read `spec_data.json` and `tasks_data.json` for verification context.
 -   Log session resumption.
 
 ### 2. Automated Verification
