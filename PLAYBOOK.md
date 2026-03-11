@@ -158,6 +158,29 @@ When designing new features, prefer conventions...
 
 Start with `preferred` weight and promote to `core` only after the team has lived with it.
 
+### Spec Lifecycle & Ephemerality
+
+Specs in GLaDOS are **ephemeral by default**. They serve their purpose during feature development — capturing requirements, decisions, and rationale — but they are not maintained as the codebase evolves. Once a feature is implemented and verified, the spec has done its job.
+
+This is intentional. Specs that linger without updates become stale, and stale specs are worse than no specs — they mislead future readers into trusting outdated decisions, constraints, or implementation details that no longer reflect reality.
+
+**Teams choose their own spec lifecycle.** The spectrum looks like:
+
+| Strategy | Description | Trade-off |
+|---|---|---|
+| **Fully ephemeral** | Delete or archive specs after implementation is verified. The code is the source of truth. | Cleanest, but loses decision history. |
+| **Archive after verify** | Move completed specs to an `archive/` directory. Searchable but clearly not current. | Preserves history without implying currency. |
+| **Maintain actively** | Keep specs updated as code evolves. Treat them as living documentation. | Most informative, but highest maintenance cost — and rarely sustained. |
+
+Most teams land on **archive after verify** as a pragmatic middle ground. The key principle: *a spec should never be in a state where someone might trust it but shouldn't.*
+
+When deciding your approach, consider:
+- **Solo/small teams** often prefer fully ephemeral — the developer *is* the context.
+- **Larger teams** benefit from archiving, since specs capture *why* decisions were made, which helps onboarding.
+- **Regulated environments** may require maintained specs for compliance — but be honest about the maintenance burden.
+
+Whatever you choose, make it explicit. Add your team's spec lifecycle policy to your standards so GLaDOS workflows respect it.
+
 ### Creating Overlays
 
 For team-specific customizations that shouldn't alter the base GLaDOS:
@@ -182,6 +205,7 @@ Things that will undermine GLaDOS adoption:
 | **Skipping `/glados/retrospect`** | Vibe debt accumulates silently. | Make it a ritual — even 10 minutes after a sprint. |
 | **Never running `/glados/recombobulate`** | Observations pile up, standards drift unnoticed. | Schedule monthly at minimum. |
 | **Treating philosophies like standards** | Philosophies guide; they don't prescribe syntax. | Keep philosophies high-level. If it has a code example, it's a standard. |
+| **Keeping specs without maintaining them** | Stale specs mislead future readers into trusting outdated context. | Choose a spec lifecycle policy — ephemeral, archived, or maintained — and follow it. See *Spec Lifecycle & Ephemerality*. |
 | **Mandating GLaDOS top-down** | Resistance and resentment. | Let champions demonstrate value first. |
 
 ---
