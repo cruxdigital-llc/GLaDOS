@@ -1,0 +1,8 @@
+{
+  "name": "glados",
+  "version": "1.0.0",
+  "description": "GLaDOS — agentic development framework with structured workflows, modules, and personas",
+  "author": {
+    "name": "The Crux Digital Team"
+  }
+}
