@@ -33,3 +33,4 @@ glados/
 # Observability & Logs
 specs/
 *.log
+.claude/commands/
