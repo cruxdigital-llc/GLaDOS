@@ -175,28 +175,32 @@ cleanup_old_toplevel() {
 resolve_placeholders() {
     local file="$1"
 
-    # Determine mode-specific paths
-    local path_status path_modules path_personas
+    # Determine mode-specific paths and command prefix
+    local path_status path_modules path_personas cmd_prefix
     case "$MODE" in
         antigravity)
             path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules=".agent/modules/glados"
             path_personas=".agent/personas/glados"
+            cmd_prefix="/glados/"
             ;;
         claude)
             path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules="product-knowledge/modules"
             path_personas="product-knowledge/personas"
+            cmd_prefix="/glados:"
             ;;
         gemini)
             path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules="modules"
             path_personas="personas"
+            cmd_prefix="glados "
             ;;
         direct)
             path_status="product-knowledge/PROJECT_STATUS.md"
             path_modules="product-knowledge/modules"
             path_personas="product-knowledge/personas"
+            cmd_prefix="glados/"
             ;;
     esac
 
@@ -206,12 +210,14 @@ resolve_placeholders() {
             -e "s|{{STATUS}}|${path_status}|g" \
             -e "s|{{MODULES}}|${path_modules}|g" \
             -e "s|{{PERSONAS}}|${path_personas}|g" \
+            -e "s|{{CMD}}|${cmd_prefix}|g" \
             "$file"
     else
         sed -i \
             -e "s|{{STATUS}}|${path_status}|g" \
             -e "s|{{MODULES}}|${path_modules}|g" \
             -e "s|{{PERSONAS}}|${path_personas}|g" \
+            -e "s|{{CMD}}|${cmd_prefix}|g" \
             "$file"
     fi
 }

@@ -42,4 +42,4 @@ Invoke module: `{{MODULES}}/capabilities.md`
 > -   **Context**: Log decisions in trace, add feature to "Active Tasks" in status.
 
 ### 6. Handoff
--   Suggest running `/glados/spec-feature` next.
+-   Suggest running `{{CMD}}spec-feature` next.

@@ -2,7 +2,7 @@
 
 **Goal**: Systematically clean up "vibe debt" — tighten the codebase, formalize implicit patterns, resolve standards drift, and retire dead code.
 
-> **Alias**: `/glados/consolidate`
+> **Alias**: `{{CMD}}consolidate`
 
 ## Prerequisites
 - [ ] `{{STATUS}}` exists.
