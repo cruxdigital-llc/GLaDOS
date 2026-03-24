@@ -171,7 +171,16 @@ cleanup_old_toplevel() {
 }
 
 # Resolve {{PLACEHOLDER}} variables in an installed file based on MODE.
-# Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{STANDARDS}}, {{SPECS}}
+# Placeholders: {{STATUS}}, {{MODULES}}, {{PERSONAS}}, {{CMD}}
+#
+# NOTE on substitution order: these sed expressions run left-to-right on the
+# same file.  None of the replacement values currently contain other placeholder
+# tokens, so ordering is safe.  If a future value could contain a placeholder,
+# move it to a second pass.
+#
+# NOTE on {{CMD}}: the Gemini prefix includes a trailing space ("glados "), so
+# {{CMD}} must always be immediately followed by a command name — never used
+# standalone or at the end of a line.  All current usages follow this pattern.
 resolve_placeholders() {
     local file="$1"
 
@@ -297,15 +306,16 @@ scaffold_product_knowledge() {
     fi
 
     # 4. Observations (staging area for pattern-observer)
+    #    Use install_file so {{CMD}} and other placeholders are resolved.
     cleanup_legacy_files "$pk_dir/observations"
     if [ ! -f "$pk_dir/observations/observed-standards.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$pk_dir/observations/observed-standards.md"
+            install_file "$SRC_TEMPLATES/OBSERVED_STANDARDS.md" "$pk_dir/observations/observed-standards.md" "false"
         fi
     fi
     if [ ! -f "$pk_dir/observations/observed-philosophies.md" ]; then
         if [ -f "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" ]; then
-            cp "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$pk_dir/observations/observed-philosophies.md"
+            install_file "$SRC_TEMPLATES/OBSERVED_PHILOSOPHIES.md" "$pk_dir/observations/observed-philosophies.md" "false"
         fi
     fi
 
@@ -536,6 +546,15 @@ case "$MODE" in
         show_help
         ;;
 esac
+
+# Validate no unresolved placeholders remain in installed files
+unresolved=$(grep -r '{{STATUS}}\|{{MODULES}}\|{{PERSONAS}}\|{{CMD}}' "$TARGET_DIR/product-knowledge" "$TARGET_DIR/.claude" "$TARGET_DIR/.agent" "$TARGET_DIR/.gemini" 2>/dev/null || true)
+if [ -n "$unresolved" ]; then
+    echo ""
+    print_error "Unresolved placeholders found in installed files:"
+    echo "$unresolved"
+    exit 1
+fi
 
 if [ "$IS_UPGRADE" = "true" ]; then
     print_status "Upgrade complete!"
