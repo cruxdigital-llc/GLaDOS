@@ -2,8 +2,10 @@
 
 **Goal**: Spawn a fresh agent with a clean context window to evaluate work, ensuring the evaluator has no knowledge of the implementation journey.
 
-## Usage
-Invoked by `verify-feature.md` and `verify-fix.md` after the evaluation brief has been assembled.
+## Contract
+This module requires two invariants:
+1. **Context isolation**: The evaluator must start with no implementation context. It must not inherit conversation history, reasoning, or decisions from the agent that wrote the code.
+2. **Filesystem-only communication**: The generator and evaluator communicate exclusively through filesystem artifacts — `evaluation-brief.md` (input) and `evaluation.md` (output). No in-memory state is shared.
 
 ## Why This Exists
 An agent that implemented the code is predisposed to approve it. A fresh agent that only sees what was supposed to be built and what was actually built will catch problems the implementer is blind to.
@@ -11,7 +13,7 @@ An agent that implemented the code is predisposed to approve it. A fresh agent t
 ## Instructions
 
 ### 1. Spawn the Evaluator
-Use the **Agent tool** (or equivalent subprocess mechanism) to launch a new agent with the following prompt structure:
+Spawn a fresh agent with a clean context window. Pass it the following prompt:
 
 ```
 You are a QA evaluator. Your job is to find problems, not confirm success.
