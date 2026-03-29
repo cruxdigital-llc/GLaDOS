@@ -1,0 +1,63 @@
+name: Version Bump Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for functional changes without version bump
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Paths that constitute functional changes
+          FUNCTIONAL_PATHS=(
+            'src/'
+            'skills/'
+            '.claude/commands/'
+            '.claude-plugin/plugin.json'
+          )
+
+          # Check if plugin.json version changed
+          BASE_VERSION=$(git show "$BASE_SHA:.claude-plugin/plugin.json" 2>/dev/null | jq -r '.version // empty')
+          HEAD_VERSION=$(git show "$HEAD_SHA:.claude-plugin/plugin.json" | jq -r '.version')
+
+          VERSION_CHANGED=false
+          if [ "$BASE_VERSION" != "$HEAD_VERSION" ]; then
+            VERSION_CHANGED=true
+          fi
+
+          # Check if any functional files changed
+          FUNCTIONAL_CHANGED=false
+          for path in "${FUNCTIONAL_PATHS[@]}"; do
+            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -q "^${path}"; then
+              FUNCTIONAL_CHANGED=true
+              break
+            fi
+          done
+
+          if [ "$FUNCTIONAL_CHANGED" = true ] && [ "$VERSION_CHANGED" = false ]; then
+            echo "::warning::Functional files changed without a version bump in .claude-plugin/plugin.json"
+            echo ""
+            echo "Changed functional files:"
+            for path in "${FUNCTIONAL_PATHS[@]}"; do
+              git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep "^${path}" || true
+            done
+            echo ""
+            echo "Current version: $HEAD_VERSION"
+            echo "Please bump the version in .claude-plugin/plugin.json"
+            exit 1
+          fi
+
+          if [ "$FUNCTIONAL_CHANGED" = true ] && [ "$VERSION_CHANGED" = true ]; then
+            echo "Version bumped from $BASE_VERSION to $HEAD_VERSION"
+          fi
+
+          echo "Version check passed."
