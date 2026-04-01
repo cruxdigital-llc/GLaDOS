@@ -92,6 +92,7 @@ Phase flow: unclaimed -> planning -> speccing -> implementing -> verifying -> do
 | File | When Used | Purpose |
 |---|---|---|
 | repro_steps.md | Bugfix work units | Reproduction steps (QA-authored) |
+| SPEC_LOG.md | project-level | Historical record of completed specs (SDA Work Unit Log) |
 
 ### 5.3 File Formats
 
@@ -186,6 +187,7 @@ Phase flow: unclaimed -> planning -> speccing -> implementing -> verifying -> do
 | Roadmap | product-knowledge/ROADMAP.md |
 | Status document | product-knowledge/PROJECT_STATUS.md |
 | Claims | claims.md (repo root) |
+| Work Unit Log | product-knowledge/SPEC_LOG.md |
 
 ---
 
@@ -204,6 +206,7 @@ These are additional artifacts not defined by the SDA standard but part of the G
 | product-knowledge/observations/ | Implicitly detected patterns (staging for promotion) |
 | product-knowledge/personas/ | Role-based review personas (PM, Architect, QA, custom) |
 | product-knowledge/overlays/ | Local workflow customizations |
+| product-knowledge/SPEC_LOG.md | Historical record of completed work units with merge commits |
 
 ### 7.2 Standards Gate
 

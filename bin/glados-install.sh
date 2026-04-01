@@ -382,8 +382,19 @@ scaffold_sda() {
         fi
     fi
 
-    # 2. ROADMAP.md — create from SDA template if missing, inject header if exists
+    # 2. SPEC_LOG.md (create only if missing)
+    if [ ! -f "$target/product-knowledge/SPEC_LOG.md" ]; then
+        cp "$SRC_TEMPLATES/SPEC_LOG.md" "$target/product-knowledge/SPEC_LOG.md"
+        print_status "Created SPEC_LOG.md"
+    else
+        if [ "$VERBOSE" = "true" ]; then
+            echo "  Skipping SPEC_LOG.md (already exists)"
+        fi
+    fi
+
     local pk_dir="$target/product-knowledge"
+
+    # 4. ROADMAP.md — create from SDA template if missing, inject header if exists
     if [ ! -f "$pk_dir/ROADMAP.md" ]; then
         cp "$SRC_TEMPLATES/SDA_ROADMAP.md" "$pk_dir/ROADMAP.md"
         if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -396,12 +407,12 @@ scaffold_sda() {
         inject_sda_header "$pk_dir/ROADMAP.md"
     fi
 
-    # 3. PROJECT_STATUS.md — inject header if not present
+    # 5. PROJECT_STATUS.md — inject header if not present
     if [ -f "$pk_dir/PROJECT_STATUS.md" ]; then
         inject_sda_header "$pk_dir/PROJECT_STATUS.md"
     fi
 
-    # 4. Copy SDA standard and profile docs (always overwrite — reference material)
+    # 6. Copy SDA standard and profile docs (always overwrite — reference material)
     mkdir -p "$pk_dir/standards"
     cp "$ROOT_DIR/docs/standards/sda-standard-v1.md" "$pk_dir/standards/"
     cp "$ROOT_DIR/docs/standards/sda-profile-glados-v1.md" "$pk_dir/standards/"

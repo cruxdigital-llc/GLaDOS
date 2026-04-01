@@ -104,6 +104,19 @@ Any file in a work unit MAY include YAML frontmatter for machine-readable metada
 
 The standard defines no required frontmatter keys. Profiles MAY define required or recognized keys. Consumers MUST ignore unrecognized frontmatter keys.
 
+### 3.6 Work Unit Log
+
+A project MAY maintain a **work unit log** — a project-level markdown file that records a summary entry for each completed work unit. It serves as a lightweight audit trail that survives work unit deletion or archival.
+
+When present, a work unit log:
+
+- MUST include for each entry: the date, the work unit identifier, and a human-readable summary
+- SHOULD include a merge commit hash or equivalent reference for traceability
+- MUST order entries reverse-chronologically (newest first)
+- SHOULD use a markdown table format for machine-parseability
+
+A profile defines the file name, location, and any additional columns. The standard does not mandate when entries are written — profiles or operators choose whether to append entries automatically (e.g., at the verify/done phase) or manually.
+
 ---
 
 ## 4. Roadmap
