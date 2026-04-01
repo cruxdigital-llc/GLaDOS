@@ -24,6 +24,7 @@ TARGET_DIR=""
 OVERLAY=""
 VERBOSE="false"
 IS_UPGRADE="false"
+SDA="false"
 
 # -----------------------------------------------------------------------------
 # Common Functions
@@ -47,6 +48,7 @@ Options:
     --mode <mode>       Installation mode: 'antigravity', 'claude', 'direct' (required)
     --target <path>     Target project directory (default: current directory)
     --overlay <name>    Apply a specific overlay from src/overlays/<name>
+    --sda               Enable SDA (Structured Development Artifacts) conformance
     --verbose           Show detailed output
     -h, --help          Show this help message
 
@@ -55,6 +57,13 @@ Modes:
     claude        Installs to .claude/commands/glados (standard markdown)
     gemini        Installs to .gemini/skills/glados (Agent Skills standard)
     direct        Installs to product-knowledge/ in the project root
+
+SDA:
+    When --sda is passed, additional SDA-conformant artifacts are scaffolded:
+    - claims.md at repo root (coordination file for multi-agent work)
+    - SDA-conformant ROADMAP.md template in product-knowledge/
+    - SDA version headers injected into existing documents
+    - SDA standard and GLaDOS profile docs copied to product-knowledge/standards/
 EOF
     exit 0
 }
@@ -335,6 +344,71 @@ scaffold_product_knowledge() {
 }
 
 # -----------------------------------------------------------------------------
+# SDA (Structured Development Artifacts) Scaffolding
+# -----------------------------------------------------------------------------
+
+# Inject an SDA version header into an existing markdown file (idempotent).
+inject_sda_header() {
+    local file="$1"
+    if ! grep -q "SDA: v1.0" "$file"; then
+        local tmp
+        tmp=$(mktemp)
+        printf '<!--\nSDA: v1.0\nLast Updated: %s\n-->\n\n' "$(date +%Y-%m-%d)" > "$tmp"
+        cat "$file" >> "$tmp"
+        mv "$tmp" "$file"
+        if [ "$VERBOSE" = "true" ]; then
+            echo "  Injected SDA header into $(basename "$file")"
+        fi
+    fi
+}
+
+scaffold_sda() {
+    local target="$1"
+    print_status "Scaffolding SDA conformance artifacts..."
+
+    # 1. claims.md at repo root (create only if missing)
+    if [ ! -f "$target/claims.md" ]; then
+        cp "$SRC_TEMPLATES/CLAIMS.md" "$target/claims.md"
+        # Replace YYYY-MM-DD placeholder with today's date
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s/YYYY-MM-DD/$(date +%Y-%m-%d)/g" "$target/claims.md"
+        else
+            sed -i "s/YYYY-MM-DD/$(date +%Y-%m-%d)/g" "$target/claims.md"
+        fi
+        print_status "Created claims.md"
+    else
+        if [ "$VERBOSE" = "true" ]; then
+            echo "  Skipping claims.md (already exists)"
+        fi
+    fi
+
+    # 2. ROADMAP.md — create from SDA template if missing, inject header if exists
+    local pk_dir="$target/product-knowledge"
+    if [ ! -f "$pk_dir/ROADMAP.md" ]; then
+        cp "$SRC_TEMPLATES/SDA_ROADMAP.md" "$pk_dir/ROADMAP.md"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s/YYYY-MM-DD/$(date +%Y-%m-%d)/g" "$pk_dir/ROADMAP.md"
+        else
+            sed -i "s/YYYY-MM-DD/$(date +%Y-%m-%d)/g" "$pk_dir/ROADMAP.md"
+        fi
+        print_status "Created SDA-conformant ROADMAP.md"
+    else
+        inject_sda_header "$pk_dir/ROADMAP.md"
+    fi
+
+    # 3. PROJECT_STATUS.md — inject header if not present
+    if [ -f "$pk_dir/PROJECT_STATUS.md" ]; then
+        inject_sda_header "$pk_dir/PROJECT_STATUS.md"
+    fi
+
+    # 4. Copy SDA standard and profile docs (always overwrite — reference material)
+    mkdir -p "$pk_dir/standards"
+    cp "$ROOT_DIR/docs/standards/sda-standard-v1.md" "$pk_dir/standards/"
+    cp "$ROOT_DIR/docs/standards/sda-profile-glados-v1.md" "$pk_dir/standards/"
+    print_status "Installed SDA standard and GLaDOS profile to product-knowledge/standards/"
+}
+
+# -----------------------------------------------------------------------------
 # Adapters
 # -----------------------------------------------------------------------------
 
@@ -483,6 +557,10 @@ while [[ $# -gt 0 ]]; do
             OVERLAY="$2"
             shift 2
             ;;
+        --sda)
+            SDA="true"
+            shift
+            ;;
         --verbose)
             VERBOSE="true"
             shift
@@ -527,6 +605,11 @@ migrate_to_product_knowledge "$TARGET_DIR"
 # But 'scaffold_product_knowledge' handles the extras (PROJECT_STATUS, personas, overlays dir).
 # Direct mode function mainly handles workflows/modules.
 scaffold_product_knowledge "$TARGET_DIR"
+
+# Scaffold SDA artifacts if --sda flag was passed
+if [ "$SDA" = "true" ]; then
+    scaffold_sda "$TARGET_DIR"
+fi
 
 case "$MODE" in
     antigravity)
