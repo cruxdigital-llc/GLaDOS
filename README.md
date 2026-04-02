@@ -43,6 +43,17 @@ Logic is shared across workflows using Modules (`src/modules/`).
 -   **Standards Gate**: Automated enforcement at checkpoints.
 -   **Pattern Observer**: Passive implicit-pattern detection.
 -   **Capabilities**: Introspects available tools (Browser, DB, MCPs).
+-   **Interaction Proxy**: Autonomous decision-making from project context.
+
+### 📐 SDA Conformance (Optional)
+GLaDOS can optionally conform to the **Structured Development Artifacts (SDA) Standard** — a tool-agnostic markdown format for tracking phased work. Enable SDA at install time to scaffold:
+-   `claims.md`: Multi-agent/developer coordination file.
+-   `product-knowledge/SPEC_LOG.md`: Historical log of archived specs with commit hashes and summaries.
+-   SDA-conformant `ROADMAP.md` template with hierarchical item IDs.
+-   SDA version headers on existing documents.
+-   Reference copies of the SDA standard and GLaDOS profile in `product-knowledge/standards/`.
+
+See `docs/standards/sda-standard-v1.md` and `docs/standards/sda-profile-glados-v1.md` for the full specification.
 
 ---
 
@@ -70,6 +81,12 @@ To install (or update) GLaDOS, run the install script and specify your environme
 ./bin/glados-install.sh --mode gemini
 ```
 *Installs as a skill to `.gemini/skills/glados`.*
+
+**With SDA conformance:**
+```bash
+./bin/glados-install.sh --mode claude --sda
+```
+*Adds `claims.md`, `SPEC_LOG.md`, SDA-conformant `ROADMAP.md`, and reference docs.*
 
 **Installing into a different project:**
 
