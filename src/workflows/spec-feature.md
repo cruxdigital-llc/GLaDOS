@@ -36,4 +36,4 @@ Invoke module: `{{MODULES}}/standards-gate.md`
 > -   **Context**: Log spec creation, review results, and standards gate report.
 
 ### 6. Handoff
--   Suggest running `/glados/implement-feature` next.
+-   Suggest running `{{CMD}}implement-feature` next.

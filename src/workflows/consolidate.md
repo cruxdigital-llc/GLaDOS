@@ -1,6 +1,6 @@
 # (GLaDOS) Consolidate
 
-> **Alias for `/glados/recombobulate`**. See `recombobulate.md` for full documentation.
+> **Alias for `{{CMD}}recombobulate`**. See `recombobulate.md` for full documentation.
 
 Run this workflow to systematically clean up "vibe debt" — tighten the codebase, formalize implicit patterns, and resolve standards drift.
 

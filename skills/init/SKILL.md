@@ -18,4 +18,4 @@ Bootstrap the GLaDOS framework in the current project directory.
 
 2. Confirm to the user that GLaDOS has been initialized and explain the directory structure.
 
-3. Suggest running `/adopt-codebase` or `/review-codebase` as a next step.
+3. Suggest running the `adopt-codebase` or `review-codebase` workflow as a next step.

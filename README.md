@@ -107,27 +107,29 @@ To update your commands or ingest new local overlays from `product-knowledge/ove
 
 Choose the path that matches your project state.
 
+> **Note**: Command syntax varies by agent. For example, `mission` is invoked as `/glados:mission` in Claude Code, `/glados/mission` in Antigravity, and `glados mission` in Gemini CLI.
+
 ### Path A: Information Greenfield (New Project)
 *Best for starting from scratch.*
 
 1.  **Define the Mission**:
-    Run `/glados/mission` to create `product-knowledge/MISSION.md`. Establishing the "Why" and "Who" ensures all future agents align with your goals.
+    Run `mission` to create `product-knowledge/MISSION.md`. Establishing the "Why" and "Who" ensures all future agents align with your goals.
 2.  **Plan the Product**:
-    Run `/glados/plan-product` to create `product-knowledge/ROADMAP.md` and `product-knowledge/TECH_STACK.md`.
+    Run `plan-product` to create `product-knowledge/ROADMAP.md` and `product-knowledge/TECH_STACK.md`.
 3.  **Start Building**:
-    Run `/glados/plan-feature` to pick an item from your roadmap and begin the development loop.
+    Run `plan-feature` to pick an item from your roadmap and begin the development loop.
 
 ### Path B: Brownfield (Existing Codebase)
 *Best for integrating GLaDOS into an active repo.*
 
 1.  **Full Onboarding** (recommended):
-    Run `/glados/adopt-codebase`. This orchestrates the full brownfield sequence: structural analysis, standards extraction, philosophy discovery, and mission alignment.
+    Run `adopt-codebase`. This orchestrates the full brownfield sequence: structural analysis, standards extraction, philosophy discovery, and mission alignment.
 2.  **Or, Step by Step**:
-    1.  Run `/glados/review-codebase` to analyze your file structure and populate `PROJECT_STATUS.md`.
-    2.  Run `/glados/establish-standards` to extract tribal knowledge into `standards/` files.
-    3.  Run `/glados/mission` to ensure the agent understands the project's purpose.
+    1.  Run `review-codebase` to analyze your file structure and populate `PROJECT_STATUS.md`.
+    2.  Run `establish-standards` to extract tribal knowledge into `standards/` files.
+    3.  Run `mission` to ensure the agent understands the project's purpose.
 3.  **Resume Work**:
-    Run `/glados/identify-bug` or `/glados/plan-feature` to start contributing.
+    Run `identify-bug` or `plan-feature` to start contributing.
 
 ### Path C: Autonomous Mode
 *Best for hands-off development.*
@@ -149,29 +151,29 @@ Once installed, use these workflows to drive development.
 ### 1. Strategy & Setup
 | Command | Description |
 | :--- | :--- |
-| `/glados/mission` | Creates/Updates `product-knowledge/MISSION.md` (North Star). |
-| `/glados/plan-product` | Generates `product-knowledge/ROADMAP.md` & `product-knowledge/TECH_STACK.md`. |
-| `/glados/establish-standards` | Interactive interview to create `standards/*.md`. |
-| `/glados/review-codebase` | Spider the directory to build `PROJECT_STATUS.md`. |
-| `/glados/adopt-codebase` | Full brownfield onboarding sequence. |
+| `mission` | Creates/Updates `product-knowledge/MISSION.md` (North Star). |
+| `plan-product` | Generates `product-knowledge/ROADMAP.md` & `product-knowledge/TECH_STACK.md`. |
+| `establish-standards` | Interactive interview to create `standards/*.md`. |
+| `review-codebase` | Spider the directory to build `PROJECT_STATUS.md`. |
+| `adopt-codebase` | Full brownfield onboarding sequence. |
 
 ### 2. The Development Loop
 For every feature, follow this 4-step cycle:
 
-1.  **`/glados/plan-feature`**: Analyzes requirements, consults the Roadmap, drafts a high-level approach.
-2.  **`/glados/spec-feature`**: Refines the plan into a detailed `spec.md`. Triggers **Persona Review**.
-3.  **`/glados/implement-feature`**: Writes code based on the spec. Updates traces in `specs/`.
-4.  **`/glados/verify-feature`**: Runs tests, verifies against the spec, and updates the `walkthrough.md`.
+1.  **`plan-feature`**: Analyzes requirements, consults the Roadmap, drafts a high-level approach.
+2.  **`spec-feature`**: Refines the plan into a detailed `spec.md`. Triggers **Persona Review**.
+3.  **`implement-feature`**: Writes code based on the spec. Updates traces in `specs/`.
+4.  **`verify-feature`**: Runs tests, verifies against the spec, and updates the `walkthrough.md`.
 
 ### 3. Maintenance
 | Command | Description |
 | :--- | :--- |
-| `/glados/identify-bug` | Creates a reproduction plan before touching code. |
-| `/glados/plan-fix` | Lightweight planning for smaller issues. |
-| `/glados/implement-fix` | Targeted code changes. |
-| `/glados/retrospect` | Review recent work to improve `standards/` or process. |
-| `/glados/recombobulate` | Systematically clean up vibe debt, formalize patterns, audit standards. |
-| `/glados/consolidate` | Alias for `/glados/recombobulate`. |
+| `identify-bug` | Creates a reproduction plan before touching code. |
+| `plan-fix` | Lightweight planning for smaller issues. |
+| `implement-fix` | Targeted code changes. |
+| `retrospect` | Review recent work to improve `standards/` or process. |
+| `recombobulate` | Systematically clean up vibe debt, formalize patterns, audit standards. |
+| `consolidate` | Alias for `recombobulate`. |
 
 ---
 
@@ -179,22 +181,22 @@ For every feature, follow this 4-step cycle:
 
 Here is what a typical GLaDOS interaction looks like.
 
-**1. User runs `/glados/plan-feature`**
+**1. User runs `plan-feature`**
 > User: "We need a login page for the admin panel."
 > Agent: Creates `specs/2024-10-24_feature_admin-login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
 > **Output**: `specs/.../implementation_plan.md` outlining the Auth0 integration.
 
-**2. User runs `/glados/spec-feature`**
+**2. User runs `spec-feature`**
 > Agent: Reads the plan. Simulates strict reviews.
 > *Persona (Security)*: "Ensure we use Rotation Tokens."
 > *Persona (Product)*: "Don't forget the 'Forgot Password' flow."
 > **Output**: A comprehensive `spec.md` approved by simulated stakeholders.
 
-**3. User runs `/glados/implement-feature`**
+**3. User runs `implement-feature`**
 > Agent: Writes code in `src/auth/`. Updates `specs/.../trace.md` with every file change.
 > **Output**: The actual code changes.
 
-**4. User runs `/glados/verify-feature`**
+**4. User runs `verify-feature`**
 > Agent: Runs `npm test`. Clicks through the browser (if available).
 > **Output**: `walkthrough.md` with screenshots/logs proving it works.
 

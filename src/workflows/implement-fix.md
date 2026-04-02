@@ -25,4 +25,4 @@
 > **Trace**: Log the code changes and test result in `specs/[...]/README.md`.
 
 ### 5. Handoff
--   Suggest running `/glados/verify-fix` next.
+-   Suggest running `{{CMD}}verify-fix` next.

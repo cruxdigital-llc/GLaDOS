@@ -14,7 +14,7 @@ Create a `README.md` inside it.
 Log the start of the adoption session.
 
 ### 2. Structural Analysis
-Run the `/glados/review-codebase` workflow.
+Run the `{{CMD}}review-codebase` workflow.
 -   This populates `{{STATUS}}` with architecture, tech stack, and initial findings.
 -   **Extended analysis** (beyond base review):
     -   **Dependency Graph**: Identify patterns from dependencies (e.g., "Express + Prisma → REST API pattern").
@@ -23,7 +23,7 @@ Run the `/glados/review-codebase` workflow.
     -   **Health Check**: Report on test coverage presence, linter configs, CI/CD setup.
 
 ### 3. Standards Extraction
-Run the `/glados/establish-standards` workflow.
+Run the `{{CMD}}establish-standards` workflow.
 -   Extract discovered patterns into `standards/` files with proper frontmatter.
 -   **Focus Areas**: Suggest areas based on Step 2 findings rather than asking cold.
 
@@ -36,7 +36,7 @@ If `philosophies/` exists:
 -   Create philosophy files with proper frontmatter.
 
 ### 5. Mission Alignment
-Run the `/glados/mission` workflow.
+Run the `{{CMD}}mission` workflow.
 -   Ensure `product-knowledge/MISSION.md` exists and aligns with the discovered codebase purpose.
 
 ### 6. Validation Checkpoint
@@ -67,4 +67,4 @@ Ask: "Does this accurately represent your codebase? What should I correct?"
 -   Log final summary in the trace.
 
 ### 8. Handoff
-Suggest: "Your codebase is onboarded. Run `/glados/plan-feature` to start building, or `/glados/recombobulate` periodically to keep things tight."
+Suggest: "Your codebase is onboarded. Run `{{CMD}}plan-feature` to start building, or `{{CMD}}recombobulate` periodically to keep things tight."
