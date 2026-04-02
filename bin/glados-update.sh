@@ -13,6 +13,7 @@ SRC_Overlays="$ROOT_DIR/src/overlays"
 
 TARGET_DIR=""
 INGEST_OVERLAYS="false"
+SDA="false"
 MODE="antigravity" # Default, or try to detect?
 # Detection is hard without state. Better to ask user or default to AG if uncertain.
 # Or we can look for .agent/workflows .claude, etc.
@@ -38,6 +39,10 @@ while [[ $# -gt 0 ]]; do
             INGEST_OVERLAYS="true"
             shift
             ;;
+        --sda)
+            SDA="true"
+            shift
+            ;;
         --target)
             TARGET_DIR="$2"
             shift 2
@@ -47,7 +52,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [--ingest-overlays] [--target <dir>] [--mode <mode>]"
+            echo "Usage: $0 [--ingest-overlays] [--sda] [--target <dir>] [--mode <mode>]"
             exit 0
             ;;
         *)
@@ -76,6 +81,12 @@ echo "Updating GLaDOS in $TARGET_DIR (Mode: $MODE)..."
 # Using 'antigravity' as default if we just detected it.
 # We re-run install script.
 
+# Build SDA flag for passthrough
+SDA_FLAG=""
+if [ "$SDA" = "true" ]; then
+    SDA_FLAG="--sda"
+fi
+
 # If Ingest Overlays is ON, we find all directories in product-knowledge/overlays
 # (with fallback to legacy glados/overlays) and run install for each one as an overlay.
 
@@ -94,7 +105,7 @@ if [ "$INGEST_OVERLAYS" = "true" ]; then
             if [ -d "$overlay_dir" ]; then
                 overlay_name=$(basename "$overlay_dir")
                 echo "Applying overlay: $overlay_name"
-                "$SCRIPT_DIR/glados-install.sh" --mode "$MODE" --target "$TARGET_DIR" --overlay "$overlay_name"
+                "$SCRIPT_DIR/glados-install.sh" --mode "$MODE" --target "$TARGET_DIR" --overlay "$overlay_name" $SDA_FLAG
             fi
         done
     else
@@ -102,7 +113,7 @@ if [ "$INGEST_OVERLAYS" = "true" ]; then
     fi
 else
     # Just a standard refresh
-    "$SCRIPT_DIR/glados-install.sh" --mode "$MODE" --target "$TARGET_DIR"
+    "$SCRIPT_DIR/glados-install.sh" --mode "$MODE" --target "$TARGET_DIR" $SDA_FLAG
 fi
 
 echo "Update complete."

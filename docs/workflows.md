@@ -5,9 +5,11 @@ Workflows are the entry points for Agent interaction. They define the high-level
 ## Categories
 
 ### Greenfield / Setup
--   **`mission.md`**: define the product mission.
+-   **`mission.md`**: Define the product mission.
 -   **`plan-product.md`**: Establish the roadmap and tech stack.
 -   **`establish-standards.md`**: Extract tribal knowledge into written standards.
+-   **`review-codebase.md`**: Spider the directory to build `PROJECT_STATUS.md`.
+-   **`adopt-codebase.md`**: Full brownfield onboarding sequence (orchestrates review, standards, mission).
 
 ### Feature Lifecycle (Split)
 -   **`plan-feature.md`**: Analyze requirements and select personas.
@@ -22,5 +24,9 @@ Workflows are the entry points for Agent interaction. They define the high-level
 -   **`verify-fix.md`**: Verify resolution.
 
 ### Maintenance
--   **`review-codebase.md`**: Analyze legacy code.
--   **`retrospect.md`**: Improve processes.
+-   **`retrospect.md`**: Review recent work to improve standards or process.
+-   **`recombobulate.md`**: Systematically clean up vibe debt, formalize patterns, audit standards.
+-   **`consolidate.md`**: Alias for `recombobulate.md`.
+
+### Autonomous Mode
+-   **`autonomous-loop.md`**: Continuous feature delivery without user intervention. Reads the roadmap and executes Plan → Spec → Implement → Verify in a loop, answering its own questions via the interaction proxy.
