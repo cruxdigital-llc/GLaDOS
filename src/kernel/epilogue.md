@@ -26,5 +26,7 @@ the record rather than omitting it.
    `progress` always lands in the ledger at minimum. If a sink is unreachable,
    record the failure in the run record and emit an `escalation` — do not
    silently drop an outcome.
-5. **Release** anything held: leases (when enabled), in-flight markers, and
-   the run's `.glados/runs/current` pointer if one was set.
+5. **Release** anything held: leases (when enabled) and other in-flight
+   markers — and delete `.glados/runs/current` unconditionally (the preamble
+   always sets it; a leftover marker makes the run-record guard hooks block
+   the next session).

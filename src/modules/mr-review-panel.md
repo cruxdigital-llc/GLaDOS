@@ -13,8 +13,8 @@ requires: []
 
 Run one adversarial, parallel, multi-persona review panel over the open merge
 request. Every panelist is a fresh agent with no authoring context; each
-returns a structured verdict object, and each validated object becomes a
-`verdict` outcome.
+returns a structured verdict object; the validated objects feed one composed
+`verdict` outcome emitted by the workflow this panel serves.
 
 Two invariants govern the panel:
 
@@ -69,6 +69,7 @@ Validation happens at the tally, not on trust in the panelist prompt:
 - Check each object against the composition rules: recompute the verdict its
   findings imply. Where a panelist's self-declared verdict disagrees with its
   own findings, the composition rules win.
-- The validated objects are the panel's output — this step produces a
-  `verdict` outcome per persona. Tallying the panel-level result and the
+- The validated objects are the panel's output. They do not become outcomes
+  one per persona: tallying them into the single composed `verdict` outcome —
+  the per-persona verdicts plus the cycle's composed result — and making the
   approve/loop decision happen downstream in the workflow this panel serves.

@@ -67,6 +67,13 @@ workflows:
   run-epic:       [mr-review-panel, standards-gate]
   brunch:         [mr-review-panel]
 
+# Structurally remove workflows (lane 1 — recompile to apply). Layered like
+# the other keys (baseline < phase < explicit): the sunset preset sets
+# [build-feature]; an explicit list here replaces the preset list wholesale,
+# so [] re-enables everything a preset disabled. Disabled cores are not
+# installed; their alias shims say so instead of vanishing.
+disabled-workflows: []
+
 # Module parameters (lane 2). `review-panel` parameterizes the
 # mr-review-panel module; `evaluator` parameterizes evaluator-spawn.
 params:

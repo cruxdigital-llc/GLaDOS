@@ -33,7 +33,7 @@ The full rationale, audit evidence, and release sequencing live in
 2. Compile and install for your runtime:
 
    ```bash
-   python bin/glados.py install --mode claude
+   python bin/glados.py install --mode claude --target /path/to/your/project
    # modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
    ```
 

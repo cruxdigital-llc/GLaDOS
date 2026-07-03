@@ -17,5 +17,5 @@ supported v2 customization surface is:
   the standards gate and review panels at run time.
 
 A structural change to a core's text still means editing the source (in a
-fork or checkout) and re-running `python bin/glados.py install`.
-`src/overlays/test-overlay/` remains in the tree as a fixture only.
+fork or checkout) and re-running `python bin/glados.py install --mode <mode>
+--target /path/to/your/project`.

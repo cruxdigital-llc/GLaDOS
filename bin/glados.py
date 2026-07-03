@@ -25,7 +25,7 @@ Sections, in order:
     3.  SOURCE MODEL      — read cores/modules/kernel/registry/presets/aliases
     4.  MANIFEST          — load + phase-preset merge with provenance
     5.  COMPILE           — assemble one compiled core from the sources
-    6.  TYPE CHECKS       — the seven fatal install-time checks
+    6.  TYPE CHECKS       — the eight fatal install-time checks
     7.  ASSEMBLY REPORT
     8.  ADAPTERS          — six emitters over the SAME compiled artifacts
     9.  VENDOR + SCAFFOLD
@@ -123,6 +123,76 @@ INCLUDE_RE = re.compile(r"<!--\s*glados:include\s+(\S+?)\s*-->")
 
 # Forbidden substrings in COMPILED core output (lint check 5).
 FORBIDDEN_TOKENS = ["{{", "<!-- glados:include", "Invoke module", "OPTIMIZE_FOR"]
+
+# Backticked `params.<ns>.<key>` literals in compiled text must resolve in the
+# resolved manifest (type check 8) — a dangling literal is an unbounded loop.
+PARAMS_LITERAL_RE = re.compile(r"`(params\.[a-z][a-z-]*\.[a-z][a-z-]*)`")
+
+# The marker every generated claude-plugin SKILL.md stub carries. Skill pruning
+# is marker-based: only a dir whose SKILL.md contains this string is ours to
+# remove — user-authored skills are structurally untouchable.
+PLUGIN_STUB_MARKER = "${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/"
+
+# Prepended to every claude-plugin compiled core. The plugin surface compiles
+# from glados.yaml.example (there is no consuming repo at compile time), so
+# these artifacts must never present the example's phase-resolved policy as
+# the consumer's own: the compiler stamps the phase-neutral baseline
+# optimize-for instead, and this guard makes the consuming repo's manifest
+# govern at run time.
+PLUGIN_BOOTSTRAP_GUARD = (
+    "<!-- claude-plugin bootstrap guard — this artifact was compiled from\n"
+    "     glados.yaml.example, not from the repo it runs in. -->\n"
+    "**Bootstrap guard.** This workflow was compiled from `glados.yaml.example`,\n"
+    "not this repo's manifest. Before step 1: if this repo has a `glados.yaml`,\n"
+    "read it now — its `phase:`, decision rights, channels, merge authority, and\n"
+    "params govern this run wherever they differ from the text below. If it has\n"
+    "no `glados.yaml`, copy `glados.yaml.example` to `glados.yaml` (or run\n"
+    "`/glados:init`) and set `phase:` before doing consequential work — do not\n"
+    "guess a phase.\n\n"
+)
+
+# The complete v1 name sets, for legacy-cleanup and v1-detection only. v1's
+# direct mode installed these under product-knowledge/{workflows,modules}/;
+# only files matching these names (or their underscore variants) may be
+# removed from those shared directories — never unmatched user files.
+KNOWN_V1_WORKFLOWS = frozenset({
+    "address-review", "adopt-codebase", "autonomous-loop", "build-feature",
+    "consolidate", "establish-standards", "identify-bug", "implement-feature",
+    "implement-fix", "mission", "plan-feature", "plan-fix", "plan-product",
+    "recombobulate", "retrospect", "review-codebase", "review-mr", "run-epic",
+    "spec-feature", "verify-feature", "verify-fix",
+})
+KNOWN_V1_MODULES = frozenset({
+    "capabilities", "evaluator-handoff", "evaluator-spawn", "interaction-proxy",
+    "mr-review-panel", "observability", "pattern-observer", "persona-context",
+    "persona-review", "standards-gate",
+})
+
+# Advisory (never blocking) checklists printed when an install crosses a phase
+# boundary relative to the previously vendored assembly report.
+PHASE_TRANSITION_CHECKLISTS = {
+    "nascent": [
+        "confirm there are no users left to harm — nascent relaxes nearly "
+        "every default",
+    ],
+    "evolving": [
+        "standards tree seeded (product-knowledge/standards/) so the "
+        "standards-gate has teeth",
+        "review cadence agreed — verdicts land on MRs and someone reads them",
+    ],
+    "production": [
+        "smoke suite seeded and green before the first production run",
+        "CI check made blocking (drop --report-only in the .glados/ci/ job)",
+        "escalation sink human-visible (channels.escalation reaches a queue "
+        "a human triages)",
+    ],
+    "sunset": [
+        "build-feature is disabled by the sunset preset — confirm no epic "
+        "still depends on it",
+        "every removal lands with a `decision` outcome visible on its "
+        "MR/issue",
+    ],
+}
 
 
 class Fatal(Exception):
@@ -476,16 +546,37 @@ class Source:
         fm, body = split_frontmatter(read_text(path), f"{name}.md")
         if fm is None:
             raise Fatal(f"{path}: no YAML frontmatter (needs reads/writes/emits)")
+        # Type-validate the frontmatter fields the compiler consumes. A wrong
+        # shape here otherwise surfaces as a raw AttributeError deep inside an
+        # adapter (or, worse, a str silently list()-ed into characters).
+        desc = fm.get("description", name)
+        if not isinstance(desc, str):
+            raise Fatal(f"{path}: frontmatter field 'description' must be a "
+                        f"one-line string, got {type(desc).__name__} — quote it")
+        lists: dict[str, list] = {}
+        for field in ("reads", "writes", "emits", "requires"):
+            val = fm.get(field)
+            if val is None:
+                lists[field] = []
+            elif isinstance(val, str):
+                raise Fatal(f"{path}: frontmatter field '{field}' must be a "
+                            f"list of strings, got the bare string '{val}' — "
+                            f"write [{val}] or a '- item' block list")
+            elif isinstance(val, list) and all(isinstance(x, str) for x in val):
+                lists[field] = list(val)
+            else:
+                raise Fatal(f"{path}: frontmatter field '{field}' must be a "
+                            f"list of strings — got {val!r}")
         return {
             "name": name,
             "path": path,
             "frontmatter": fm,
             "body": body,
-            "reads": list(fm.get("reads") or []),
-            "writes": list(fm.get("writes") or []),
-            "emits": list(fm.get("emits") or []),
-            "requires": list(fm.get("requires") or []),
-            "description": fm.get("description", name),
+            "reads": lists["reads"],
+            "writes": lists["writes"],
+            "emits": lists["emits"],
+            "requires": lists["requires"],
+            "description": desc,
         }
 
     # -- registry helpers -----------------------------------------------------
@@ -508,7 +599,12 @@ def include_fragment(source: Source, rel: str, _stack: tuple = ()) -> str:
     if len(_stack) > 16:
         raise Fatal(f"glados:include recursion too deep at '{rel}' (chain: "
                     f"{' -> '.join(_stack)}) — flatten the fragment nesting")
-    path = source.src / rel
+    root = source.src.resolve()
+    path = (source.src / rel).resolve()
+    if not path.is_relative_to(root):
+        raise Fatal(f"glados:include escapes the source tree: '{rel}' resolves "
+                    f"to {path}, outside {root} — includes must stay within "
+                    f"src/")
     if not path.exists():
         raise Fatal(f"dangling glados:include '{rel}' — no file at {path}; add "
                     f"the fragment or remove the directive")
@@ -575,7 +671,11 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
         r.values[key] = val
         r.provenance[key] = prov
 
-    for key in ("optimize-for", "merge-authority", "default-modules"):
+    # disabled-workflows layers like the scalars (an explicit list replaces the
+    # preset list wholesale — [] re-enables everything a preset disabled), so a
+    # phase preset CAN flip workflow existence (sunset unloads build-feature).
+    for key in ("optimize-for", "merge-authority", "default-modules",
+                "disabled-workflows"):
         layer_scalar(key)
 
     # channels + decisions: per-leaf layering
@@ -605,7 +705,7 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
 
     # pass-through explicit-only keys
     for key in ("platform", "phase", "branching", "workflows", "visibility-acknowledged",
-                "relaxation-acknowledged", "disabled-workflows"):
+                "relaxation-acknowledged"):
         if key in raw:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
@@ -711,7 +811,7 @@ def compile_all(source: Source, r: Resolved, manifest_hash: str) -> Compilation:
 
 
 # =============================================================================
-# 6. TYPE CHECKS — the seven fatal install-time checks
+# 6. TYPE CHECKS — the eight fatal install-time checks
 # =============================================================================
 
 
@@ -856,6 +956,20 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
             errors.append(f"aliases.yaml: alias '{alias}' -> '{target}' is not a "
                           f"real core — fix the target or add the core")
 
+    # ---- (8) dotted params literals resolve ---------------------------------
+    # Compiled text tells the agent to resolve `params.<ns>.<key>` from
+    # glados.yaml at run time; a literal with no resolved value is a safety
+    # bound that resolves to nothing (an unbounded loop, a missing roster).
+    params = r.values.get("params") or {}
+    for c, text in comp.cores.items():
+        for lit in sorted(set(PARAMS_LITERAL_RE.findall(text))):
+            _, ns, key = lit.split(".")
+            if (params.get(ns) or {}).get(key) is None:
+                errors.append(f"compiled {c}: references `{lit}` but the "
+                              f"resolved manifest has no value for it — set it "
+                              f"under params: in glados.yaml or a phase-preset "
+                              f"baseline")
+
     return errors
 
 
@@ -923,8 +1037,8 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
     out.append("| Key | Value | Provenance |")
     out.append("|-----|-------|------------|")
     for key in ("phase", "platform", "merge-authority", "optimize-for",
-                "default-modules"):
-        if key in r.values:
+                "default-modules", "disabled-workflows"):
+        if key in r.values and r.values[key] is not None:
             out.append(f"| {key} | {_fmt(r.values[key])} | "
                        f"({r.provenance.get(key, 'baseline')}) |")
     for group in ("channels", "decisions"):
@@ -997,9 +1111,21 @@ def _fmt(val) -> str:
 # directory-scoped cleanup; check recomputes the plan and diffs it.
 
 
-def _alias_targets(source: Source, comp: "Compilation") -> dict[str, str]:
-    """Alias -> target, skipping any alias whose target core is disabled."""
-    return {a: t for a, t in source.aliases.items() if t in comp.cores}
+def _alias_targets(source: Source, comp: "Compilation") -> dict[str, tuple[str, bool]]:
+    """Alias -> (target, enabled). Every alias is always emitted: a shim whose
+    target is disabled must SAY so — a silently vanished alias makes the model
+    reconstruct the v1 workflow from training data, the exact ungoverned ghost
+    the aliases exist to prevent. (Alias-map integrity guarantees every target
+    is a real core name.)"""
+    return {a: (t, t in comp.cores) for a, t in source.aliases.items()}
+
+
+def _disabled_alias_body(alias: str, target: str) -> str:
+    """Shim body for an alias whose target core is disabled in the manifest."""
+    return (f"The `{alias}` workflow was renamed to `{target}`, which is "
+            f"disabled in this project's glados.yaml (`disabled-workflows:`). "
+            f"Do not reconstruct it from memory — ask a maintainer to "
+            f"re-enable it or pick a different workflow.\n")
 
 
 # ---- claude -----------------------------------------------------------------
@@ -1009,9 +1135,10 @@ def adapter_claude(source: Source, comp: Compilation) -> dict:
     base = ".claude/commands/glados"
     for c in comp.enabled:
         plan[f"{base}/{c}.md"] = ("text", comp.cores[c])
-    for alias, target in _alias_targets(source, comp).items():
-        plan[f"{base}/{alias}.md"] = ("text",
-            f"The `{alias}` workflow was renamed. Run `/glados:{target}` instead.\n")
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        body = (f"The `{alias}` workflow was renamed. Run `/glados:{target}` "
+                f"instead.\n" if enabled else _disabled_alias_body(alias, target))
+        plan[f"{base}/{alias}.md"] = ("text", body)
     return plan
 
 
@@ -1025,13 +1152,24 @@ def adapter_claude_plugin(source: Source, comp: Compilation) -> dict:
         plan[f"skills/{c}/SKILL.md"] = ("text",
             f"---\ndescription: {desc}\n---\n\n"
             f"Read and follow the compiled workflow at "
-            f"`${{CLAUDE_PLUGIN_ROOT}}/compiled/claude-plugin/{c}.md`.\n")
-    for alias, target in _alias_targets(source, comp).items():
-        desc = _yaml_quote(f"(renamed) the '{alias}' workflow is now '{target}'")
+            f"`{PLUGIN_STUB_MARKER}{c}.md`.\n")
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        if enabled:
+            desc = _yaml_quote(f"(renamed) the '{alias}' workflow is now '{target}'")
+            body = (f"`{alias}` was renamed to `{target}`. Read and follow "
+                    f"`{PLUGIN_STUB_MARKER}{target}.md`.\n")
+        else:
+            desc = _yaml_quote(f"(renamed) the '{alias}' workflow is now "
+                               f"'{target}', which is disabled in this project")
+            # Still a generated stub: carries the marker (as the not-installed
+            # compiled path) so marker-based pruning can retire it later.
+            body = (f"`{alias}` was renamed to `{target}`, which is disabled "
+                    f"in this project's glados.yaml (`disabled-workflows:`) — "
+                    f"`{PLUGIN_STUB_MARKER}{target}.md` is not installed. Do "
+                    f"not reconstruct it from memory; ask a maintainer to "
+                    f"re-enable it or pick a different workflow.\n")
         plan[f"skills/{alias}/SKILL.md"] = ("text",
-            f"---\ndescription: {desc}\n---\n\n"
-            f"`{alias}` was renamed to `{target}`. Read and follow "
-            f"`${{CLAUDE_PLUGIN_ROOT}}/compiled/claude-plugin/{target}.md`.\n")
+            f"---\ndescription: {desc}\n---\n\n{body}")
     return plan
 
 
@@ -1041,6 +1179,12 @@ def adapter_direct(source: Source, comp: Compilation) -> dict:
     plan: dict = {}
     for c in comp.enabled:
         plan[f"product-knowledge/glados/{c}.md"] = ("text", comp.cores[c])
+    # Direct mode has no invocation syntax — shims point at the target FILE.
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        body = (f"The `{alias}` workflow was renamed. Read and follow "
+                f"`product-knowledge/glados/{target}.md` instead.\n"
+                if enabled else _disabled_alias_body(alias, target))
+        plan[f"product-knowledge/glados/{alias}.md"] = ("text", body)
     return plan
 
 
@@ -1086,9 +1230,13 @@ def adapter_gemini(source: Source, comp: Compilation) -> dict:
         toml = (f"description = {_toml_basic(desc)}\n"
                 f"prompt = {_toml_multiline(comp.cores[c])}\n")
         plan[f"{base}/{c}.toml"] = ("text", toml)
-    for alias, target in _alias_targets(source, comp).items():
-        desc = f"(renamed) {alias} is now {target}"
-        body = f"The `{alias}` workflow was renamed. Run `/glados:{target}` instead.\n"
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        if enabled:
+            desc = f"(renamed) {alias} is now {target}"
+            body = f"The `{alias}` workflow was renamed. Run `/glados:{target}` instead.\n"
+        else:
+            desc = f"(renamed) {alias} is now {target} — disabled here"
+            body = _disabled_alias_body(alias, target)
         toml = (f"description = {_toml_basic(desc)}\n"
                 f"prompt = {_toml_multiline(body)}\n")
         plan[f"{base}/{alias}.toml"] = ("text", toml)
@@ -1110,29 +1258,17 @@ def adapter_antigravity(source: Source, comp: Compilation) -> dict:
         desc = _yaml_quote(_agy_description(source.cores[c]["description"]))
         body = f"---\ndescription: {desc}\n---\n\n{comp.cores[c]}"
         plan[f"{base}/glados-{c}.md"] = ("text", body)
-    for alias, target in _alias_targets(source, comp).items():
-        desc = _yaml_quote(_agy_description(f"(renamed) {alias} is now {target}"))
-        body = (f"---\ndescription: {desc}\n---\n\n"
-                f"The `{alias}` workflow was renamed. Run `/glados-{target}` instead.\n")
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        if enabled:
+            desc = _yaml_quote(_agy_description(f"(renamed) {alias} is now {target}"))
+            shim = f"The `{alias}` workflow was renamed. Run `/glados-{target}` instead.\n"
+        else:
+            desc = _yaml_quote(_agy_description(
+                f"(renamed) {alias} is now {target} — disabled here"))
+            shim = _disabled_alias_body(alias, target)
+        body = f"---\ndescription: {desc}\n---\n\n{shim}"
         plan[f"{base}/glados-{alias}.md"] = ("text", body)
     return plan
-
-
-AGY_HOOKS_BLOCK = {
-    "hooks": {
-        "glados-run-record-guard": {
-            "Stop": {
-                "matcher": "",
-                "hooks": [{
-                    "type": "command",
-                    # Reuses the shared run-record guard vendored into .glados/hooks/.
-                    "command": "python .glados/hooks/gemini-afteragent-guard.py",
-                    "timeout": 30,
-                }],
-            }
-        }
-    }
-}
 
 
 # ---- aistudio ---------------------------------------------------------------
@@ -1336,6 +1472,29 @@ def adapter_aistudio(source: Source, comp: Compilation) -> dict:
     emit_bundle("fix-bug-advisory", "fix-bug",
                 "Fix Bug (plan/triage only)", advisory=True)
 
+    # Alias shims are pointer stubs, not bundles (they never join MANIFEST.md).
+    # AI Studio has no invocation syntax, so bodies point at bundle FILES.
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        rel = f"{base}/bundles/{alias}.aistudio.md"
+        if not enabled:
+            plan[rel] = ("text", _disabled_alias_body(alias, target))
+            continue
+        if target in AISTUDIO_CORES:
+            bundle_target = target
+        elif target == "fix-bug":
+            bundle_target = "fix-bug-advisory"
+        else:
+            bundle_target = None
+        if bundle_target:
+            body = (f"The `{alias}` workflow was renamed. Paste "
+                    f"`bundles/{bundle_target}.aistudio.md` instead.\n")
+        else:
+            body = (f"The `{alias}` workflow was renamed to `{target}`, which "
+                    f"is execution-heavy and ships no AI Studio bundle — run "
+                    f"it from a full install mode (claude / gemini / direct) "
+                    f"instead.\n")
+        plan[rel] = ("text", body)
+
     plan[f"{base}/README.md"] = ("text", AISTUDIO_README)
 
     manifest_md = ["# GLaDOS AI Studio bundles", "",
@@ -1375,26 +1534,65 @@ OWNED_DIRS = {
     "aistudio": ["glados/adapters/aistudio/bundles"],
 }
 
+# Vendored subtrees EVERY mode owns. Cleaned like OWNED_DIRS so a renamed
+# source/persona/hook does not linger and skew the self-contained vendored
+# checker. Deliberately excludes .glados/runs/ (run records are user history)
+# and the .glados/ root files (always re-planned).
+VENDOR_OWNED_DIRS = [".glados/src", ".glados/ci", ".glados/hooks",
+                     ".glados/personas"]
+
 
 # =============================================================================
 # 9. VENDOR + SCAFFOLD
 # =============================================================================
 
 
-VENDORED_HOOKS = ["claude-stop-hook.py", "gemini-afteragent-guard.py"]
+VENDORED_HOOKS = ["claude-stop-hook.py", "gemini-afteragent-guard.py",
+                  "agy-hooks.json"]
+
+# The two CI backstop templates, vendored to .glados/ci/ by every install mode
+# (decision 9c: the backstop exists everywhere; platform: only selects which
+# enable stanza the installer prints).
+CI_TEMPLATES = ["glados-check.gitlab-ci.yml", "glados-check.github-actions.yml"]
 
 
 def vendor_plan(source: Source, manifest_hash: str, report: str) -> dict:
     """Files vendored into <target>/.glados/, identical for every mode. The
-    self-copy and presets must byte-match their sources."""
+    self-copy, presets and source tree must byte-match their sources; vendoring
+    src/ makes the vendored checker self-contained (`.glados/glados.py check`
+    needs no --source — _resolve_source finds `.glados/src/`)."""
     plan: dict = {}
-    self_bytes = (source.root / "bin" / "glados.py").read_bytes()
+    self_path = source.root / "bin" / "glados.py"
+    if not self_path.exists():
+        # A vendored .glados/ source tree carries the compiler at its root.
+        self_path = source.root / "glados.py"
+    if not self_path.exists():
+        raise Fatal(f"cannot find glados.py under {source.root} (tried bin/ "
+                    f"and the root) — the source tree is incomplete; pass "
+                    f"--source <a full glados checkout>")
     presets_bytes = (source.kernel / "presets" / "phases.yaml").read_bytes()
-    plan[".glados/glados.py"] = ("bytes", self_bytes)
+    plan[".glados/glados.py"] = ("bytes", self_path.read_bytes())
     plan[".glados/presets.yaml"] = ("bytes", presets_bytes)
     plan[".glados/manifest-hash"] = ("text", manifest_hash + "\n")
     plan[".glados/assembly-report.md"] = ("text", report)
-    # Vendor the run-record guard scripts so emitted hook references resolve.
+    # Vendor the full source tree so the CI backstop can recompute the compile
+    # from the repo alone (self-contained check), plus the manifest example the
+    # anti-inflation cap reads.
+    for f in sorted(source.src.rglob("*")):
+        if f.is_file():
+            rel = f.relative_to(source.src).as_posix()
+            plan[f".glados/src/{rel}"] = ("bytes", f.read_bytes())
+    example = source.root / "glados.yaml.example"
+    if example.exists():
+        plan[".glados/glados.yaml.example"] = ("bytes", example.read_bytes())
+    # Vendor the CI templates so MIGRATION step 5's "add the include" has a
+    # real, repo-local file to include/copy.
+    for name in CI_TEMPLATES:
+        src = source.root / "ci" / name
+        if src.exists():
+            plan[f".glados/ci/{name}"] = ("bytes", src.read_bytes())
+    # Vendor the run-record guard scripts (and the agy hooks block of record)
+    # so emitted hook references resolve.
     for name in VENDORED_HOOKS:
         src = source.root / "hooks" / name
         if src.exists():
@@ -1413,7 +1611,7 @@ def scaffold_product_knowledge(target: Path, source: Source) -> list[str]:
     """Create-only product-knowledge skeleton; NEVER deletes user content."""
     created: list[str] = []
     pk = target / "product-knowledge"
-    for sub in ("observations", "standards", "philosophies"):
+    for sub in ("observations", "standards", "philosophies", "personas"):
         d = pk / sub
         keep = d / ".gitkeep"
         if not keep.exists():
@@ -1483,7 +1681,7 @@ def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
     removed: list[str] = []
     planned = {str(Path(rel)) for rel in plan}
 
-    for owned in OWNED_DIRS.get(mode, []):
+    for owned in OWNED_DIRS.get(mode, []) + VENDOR_OWNED_DIRS:
         d = target / owned
         if not d.is_dir():
             continue
@@ -1491,7 +1689,8 @@ def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
             if not f.is_file():
                 continue
             rel = str(f.relative_to(target))
-            if mode == "antigravity" and not f.name.startswith("glados-"):
+            if mode == "antigravity" and owned == ".agents/workflows" \
+                    and not f.name.startswith("glados-"):
                 continue  # only glados-*.md are ours under .agents/workflows
             if rel not in planned:
                 _force_unlink(f)
@@ -1509,6 +1708,48 @@ def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
                 if stale.is_file():
                     _force_unlink(stale)
                     removed.append(str(stale.relative_to(target)))
+    return removed
+
+
+def _cleanup_v1_legacy(target: Path, mode: str) -> list[str]:
+    """Per-mode removal of v1-era layouts the current mode supersedes.
+
+    - gemini: v1's install_gemini fully owned `.gemini/skills/glados/`; the
+      whole tree goes.
+    - direct: v1 shared `product-knowledge/{workflows,modules}/` with user
+      content, so only files whose basenames (or underscore variants) match
+      the known v1 workflow/module name sets are removed — never unmatched
+      user files. The dirs are removed only if that leaves them empty.
+    """
+    removed: list[str] = []
+    if mode == "gemini":
+        root = target / ".gemini" / "skills" / "glados"
+        if root.is_dir():
+            entries = sorted(root.rglob("*"), reverse=True)
+            for f in entries:
+                if f.is_file():
+                    _force_unlink(f)
+                    removed.append(str(f.relative_to(target)))
+            for d in entries + [root]:
+                if d.is_dir():
+                    try:
+                        d.rmdir()
+                    except OSError:
+                        pass
+    if mode == "direct":
+        for sub, names in (("workflows", KNOWN_V1_WORKFLOWS),
+                           ("modules", KNOWN_V1_MODULES)):
+            d = target / "product-knowledge" / sub
+            if not d.is_dir():
+                continue
+            for f in sorted(d.glob("*.md")):
+                if f.stem in names or f.stem.replace("_", "-") in names:
+                    _force_unlink(f)
+                    removed.append(str(f.relative_to(target)))
+            try:
+                d.rmdir()  # only succeeds when nothing user-owned remains
+            except OSError:
+                pass
     return removed
 
 
@@ -1533,8 +1774,19 @@ def _prepare_compilation(source: Source, target: Path, mode: str):
         manifest_path = target / "glados.yaml"
     raw = load_manifest(manifest_path)
     resolved = resolve_manifest(raw, source.presets, manifest_path.name)
+    if mode == "claude-plugin":
+        # Never bake the example manifest's phase-resolved optimize-for into
+        # artifacts every plugin consumer runs: stamp the phase-neutral
+        # baseline sentence, and prepend the bootstrap guard to every core so
+        # the consuming repo's own glados.yaml governs at run time.
+        resolved.values["optimize-for"] = (
+            source.presets.get("baseline") or {}).get("optimize-for")
+        resolved.provenance["optimize-for"] = "baseline (claude-plugin is phase-neutral)"
     manifest_hash = manifest_hash_of(manifest_path)
     comp = compile_all(source, resolved, manifest_hash)
+    if mode == "claude-plugin":
+        for name in list(comp.cores):
+            comp.cores[name] = PLUGIN_BOOTSTRAP_GUARD + comp.cores[name]
     errors = run_type_checks(source, comp)
     if errors:
         raise Fatal("install checks failed:\n  - " + "\n  - ".join(errors))
@@ -1550,13 +1802,33 @@ def cmd_install(args) -> int:
     if not target.is_dir():
         raise Fatal(f"target directory does not exist: {target}")
 
+    # A target full of v1 leftovers but no manifest is a migration half-start:
+    # hint at the prefilled path before load_manifest raises its Fatal.
+    if mode != "claude-plugin" and not (target / "glados.yaml").exists() \
+            and _has_v1_leftovers(target):
+        print("glados: v1 GLaDOS files detected but no glados.yaml — this "
+              "looks like a v1 -> v2 migration; copy glados.yaml.example into "
+              "the repo root as glados.yaml, set phase:, and re-run install "
+              "(MIGRATION.md walks every step)", file=sys.stderr)
+
     comp, manifest_hash = _prepare_compilation(source, target, mode)
     report = build_assembly_report(source, comp)
+
+    # Read the previously vendored report BEFORE the plan overwrites it, so a
+    # phase change can print its advisory transition checklist.
+    prev_report = None
+    prev_report_path = target / ".glados" / "assembly-report.md"
+    if prev_report_path.exists():
+        try:
+            prev_report = read_text(prev_report_path)
+        except Fatal:
+            prev_report = None
 
     plan = ADAPTERS[mode](source, comp)
     plan.update(vendor_plan(source, manifest_hash, report))
     _write_plan(target, plan)
     removed = _cleanup_owned(target, mode, plan, source, comp)
+    removed += _cleanup_v1_legacy(target, mode)
 
     scaffolded: list[str] = []
     if mode not in ("claude-plugin",):
@@ -1566,7 +1838,7 @@ def cmd_install(args) -> int:
         _regenerate_plugin_skills(target, source, comp)
 
     if mode == "antigravity":
-        _emit_agy_hooks(target)
+        _emit_agy_hooks(target, source)
 
     print(f"glados: installed mode '{mode}' into {target}")
     print(f"glados: {len(comp.enabled)} cores, manifest {manifest_hash[:12]}…")
@@ -1574,41 +1846,131 @@ def cmd_install(args) -> int:
         print(f"glados: cleaned {len(removed)} stale file(s): {', '.join(removed)}")
     if scaffolded:
         print(f"glados: scaffolded {len(scaffolded)} product-knowledge file(s)")
+    advisory = _phase_transition_advisory(prev_report, comp.resolved.phase)
+    if advisory:
+        print(advisory)
+    try:
+        ci_wired = _ci_check_wired(target)
+    except Fatal:
+        ci_wired = False
+    if not ci_wired:
+        print(_ci_enable_stanza(comp.resolved.values.get("platform")))
     print()
     print(report)
     print(f"glados: assembly report written to .glados/assembly-report.md")
     return 0
 
 
+def _has_v1_leftovers(target: Path) -> bool:
+    """Cheap detection of a v1 GLaDOS install in the target tree."""
+    if (target / ".gemini" / "skills" / "glados").is_dir():
+        return True
+    for sub, names in (("workflows", KNOWN_V1_WORKFLOWS),
+                       ("modules", KNOWN_V1_MODULES)):
+        d = target / "product-knowledge" / sub
+        if d.is_dir():
+            for f in d.glob("*.md"):
+                if f.stem in names or f.stem.replace("_", "-") in names:
+                    return True
+    cmds = target / ".claude" / "commands"
+    if cmds.is_dir():
+        for name in KNOWN_V1_WORKFLOWS:
+            if (cmds / f"{name}.md").is_file() or \
+                    (cmds / f"{name.replace('-', '_')}.md").is_file():
+                return True
+    return False
+
+
+def _phase_transition_advisory(prev_report, new_phase: str):
+    """Advisory-only checklist when the phase differs from the previously
+    vendored assembly report. Never blocks; returns None when not a transition."""
+    if not prev_report:
+        return None
+    m = re.search(r"^- phase: `([a-z]+)`", prev_report, re.M)
+    if not m:
+        return None
+    old = m.group(1)
+    if old == new_phase or old not in PHASES or new_phase not in PHASES:
+        return None
+    lines = [f"glados: phase transition {old} -> {new_phase} — advisory "
+             f"checklist (nothing here blocks the install):"]
+    for item in PHASE_TRANSITION_CHECKLISTS.get(new_phase, []):
+        lines.append(f"  [ ] {item}")
+    if PHASES.index(new_phase) < PHASES.index(old):
+        lines.append("  [ ] backward move — say why in the MR that changes "
+                     "glados.yaml")
+    return "\n".join(lines)
+
+
+def _ci_enable_stanza(platform) -> str:
+    """The one-paste instruction wiring the vendored CI backstop, selected by
+    the manifest's platform: key (both templates are always vendored)."""
+    gitlab = ("glados: CI backstop vendored to .glados/ci/ — enable it in "
+              ".gitlab-ci.yml:\n"
+              "    include:\n"
+              "      - local: '.glados/ci/glados-check.gitlab-ci.yml'")
+    github = ("glados: CI backstop vendored to .glados/ci/ — enable it with:\n"
+              "    cp .glados/ci/glados-check.github-actions.yml "
+              ".github/workflows/glados-check.yml")
+    if platform == "github":
+        return github
+    if platform == "gitlab":
+        return gitlab
+    return gitlab + "\n" + github
+
+
 def _regenerate_plugin_skills(target: Path, source: Source, comp: Compilation) -> None:
-    """Prune stale skills/ dirs (keeping init), leave user skills untouched."""
+    """Prune stale skills/ dirs (keeping init), leave user skills untouched.
+
+    Pruning is marker-based, not name-based: a dir is ours to remove only when
+    its SKILL.md contains the generated-stub marker every stub emitted by
+    adapter_claude_plugin carries. User skills lack the marker, so they are
+    structurally untouchable — no name list to maintain, and a retired core or
+    alias is pruned automatically."""
     skills = target / "skills"
     if not skills.is_dir():
         return
     keep = set(comp.enabled) | set(source.aliases) | {"init"}
-    # Known GLaDOS names we are allowed to remove (v1 + v2), never user skills.
-    known = keep | {
-        "mission", "plan-product", "autonomous-loop", "identify-bug", "plan-fix",
-        "implement-fix", "verify-fix", "consolidate", "establish-standards",
-        "recombobulate", "implement-feature", "verify-feature", "spec-feature",
-        "review-mr", "review-codebase", "run-epic", "build-feature",
-        "address-review", "adopt-codebase", "retrospect",
-    }
     for d in sorted(skills.iterdir()):
-        if d.is_dir() and d.name not in keep and d.name in known:
-            for f in sorted(d.rglob("*"), reverse=True):
-                if f.is_file():
-                    _force_unlink(f)
-            try:
-                d.rmdir()
-            except OSError:
-                pass
+        if not d.is_dir() or d.name in keep:
+            continue
+        skill_md = d / "SKILL.md"
+        if not skill_md.is_file():
+            continue  # not a stub layout — leave it alone
+        try:
+            text = read_text(skill_md)
+        except Fatal:
+            continue  # unreadable = not provably ours — leave it alone
+        if PLUGIN_STUB_MARKER not in text:
+            continue  # user-authored skill — never touch
+        for f in sorted(d.rglob("*"), reverse=True):
+            if f.is_file():
+                _force_unlink(f)
+        try:
+            d.rmdir()
+        except OSError:
+            pass
 
 
-def _emit_agy_hooks(target: Path) -> None:
+def _read_agy_hooks_block(source: Source) -> str:
+    """hooks/agy-hooks.json is the single file of record for the antigravity
+    hooks block (vendored to .glados/hooks/ with the guard scripts). Missing
+    or invalid is a broken source tree, never a silent skip."""
+    path = source.root / "hooks" / "agy-hooks.json"
+    if not path.exists():
+        raise Fatal(f"missing {path} — hooks/agy-hooks.json is the file of "
+                    f"record for the antigravity hooks block; restore it")
+    try:
+        data = json.loads(read_text(path))
+    except ValueError as exc:
+        raise Fatal(f"{path}: invalid JSON ({exc}) — fix the file of record")
+    return json.dumps(data, indent=2) + "\n"
+
+
+def _emit_agy_hooks(target: Path, source: Source) -> None:
     """Write .agents/hooks.json ONLY if absent; never clobber a user's file."""
     hooks = target / ".agents" / "hooks.json"
-    block = json.dumps(AGY_HOOKS_BLOCK, indent=2) + "\n"
+    block = _read_agy_hooks_block(source)
     if hooks.exists():
         print("glados: .agents/hooks.json exists — add this glados block manually:\n"
               + block)
@@ -1636,10 +1998,17 @@ def _detect_modes(target: Path) -> list[str]:
 
 
 def cmd_check(args) -> int:
-    source = _resolve_source(args)
     target = Path(args.target).resolve()
     report_only = args.report_only
     problems: list[str] = []
+
+    # An unreadable/unresolvable source must not hard-exit a --report-only run:
+    # it becomes a reported problem, and enforcing mode still fails cleanly.
+    source = None
+    try:
+        source = _resolve_source(args)
+    except Fatal as exc:
+        problems.append(f"cannot resolve the GLaDOS source tree: {exc}")
 
     modes = _detect_modes(target)
     if not modes:
@@ -1648,18 +2017,21 @@ def cmd_check(args) -> int:
         return 0 if report_only else 1
 
     # manifest hash: recompute vs vendored
-    hash_path = target / ".glados" / "manifest-hash"
-    manifest_path = target / "glados.yaml"
-    if not manifest_path.exists() and modes == ["claude-plugin"]:
-        manifest_path = target / "glados.yaml.example"
-    if hash_path.exists() and manifest_path.exists():
-        vendored = read_text(hash_path).strip()
-        current = manifest_hash_of(manifest_path)
-        if vendored != current:
-            problems.append(f"stale compile: manifest-hash {vendored[:12]}… != "
-                            f"current {current[:12]}… — re-run glados install")
+    try:
+        hash_path = target / ".glados" / "manifest-hash"
+        manifest_path = target / "glados.yaml"
+        if not manifest_path.exists() and modes == ["claude-plugin"]:
+            manifest_path = target / "glados.yaml.example"
+        if hash_path.exists() and manifest_path.exists():
+            vendored = read_text(hash_path).strip()
+            current = manifest_hash_of(manifest_path)
+            if vendored != current:
+                problems.append(f"stale compile: manifest-hash {vendored[:12]}… != "
+                                f"current {current[:12]}… — re-run glados install")
+    except Fatal as exc:
+        problems.append(f"cannot compare manifest hash: {exc}")
 
-    for mode in modes:
+    for mode in (modes if source is not None else []):
         try:
             comp, manifest_hash = _prepare_compilation(source, target, mode)
         except Fatal as exc:
@@ -1708,19 +2080,25 @@ def cmd_doctor(args) -> int:
     manifest_path = target / "glados.yaml"
     if not manifest_path.exists():
         manifest_path = target / "glados.yaml.example"
-    if hash_path.exists() and manifest_path.exists():
-        vendored = read_text(hash_path).strip()
-        current = manifest_hash_of(manifest_path)
-        state = "current" if vendored == current else "STALE — re-run install"
-        print(f"  manifest hash: {state} ({current[:12]}…)")
-    else:
-        print("  manifest hash: not vendored (no .glados/manifest-hash)")
+    try:
+        if hash_path.exists() and manifest_path.exists():
+            vendored = read_text(hash_path).strip()
+            current = manifest_hash_of(manifest_path)
+            state = "current" if vendored == current else "STALE — re-run install"
+            print(f"  manifest hash: {state} ({current[:12]}…)")
+        else:
+            print("  manifest hash: not vendored (no .glados/manifest-hash)")
+    except Fatal as exc:
+        print(f"  manifest hash: UNREADABLE — {exc}")
 
-    if _ci_check_wired(target):
-        print("  CI check wired: yes")
-    else:
-        print("  CI check wired: no — add the glados-check CI template and "
-              "reference it (see ci/)")
+    try:
+        if _ci_check_wired(target):
+            print("  CI check wired: yes")
+        else:
+            print("  CI check wired: no — enable the vendored template under "
+                  ".glados/ci/ (see the install output)")
+    except Fatal as exc:
+        print(f"  CI check wired: UNREADABLE — {exc}")
 
     hooks = []
     if (target / ".claude" / "settings.json").exists():
@@ -1728,7 +2106,7 @@ def cmd_doctor(args) -> int:
             data = json.loads(read_text(target / ".claude" / "settings.json"))
             if "hooks" in data:
                 hooks.append("claude")
-        except (ValueError, OSError):
+        except (ValueError, OSError, Fatal):
             pass
     if (target / ".agents" / "hooks.json").exists():
         hooks.append("antigravity")
@@ -1736,14 +2114,39 @@ def cmd_doctor(args) -> int:
         hooks.append("gemini")
     print(f"  run-record hooks: {', '.join(hooks) if hooks else '(none installed)'}")
 
+    # CODEOWNERS on glados.yaml — informational: agents propose phase changes,
+    # humans approve them; a covered manifest makes that structural.
+    found = None
+    for rel in ("CODEOWNERS", ".github/CODEOWNERS", ".gitlab/CODEOWNERS",
+                "docs/CODEOWNERS"):
+        if (target / rel).is_file():
+            found = rel
+            break
+    if found is None:
+        print("  CODEOWNERS: none found — consider one covering glados.yaml "
+              "(agents propose phase changes; humans approve)")
+    else:
+        try:
+            mentions = "glados.yaml" in read_text(target / found)
+        except Fatal:
+            mentions = False
+        print(f"  CODEOWNERS: {found} "
+              + ("covers glados.yaml" if mentions else
+                 "does not mention glados.yaml — consider protecting phase "
+                 "changes"))
+
     if manifest_path.exists():
-        raw = load_manifest(manifest_path)
-        declared = raw.get("phase-declared")
-        print(f"  phase: {raw.get('phase')} "
-              f"(declared: {declared or 'undated — add phase-declared:'})")
-        for key in ("visibility-acknowledged", "relaxation-acknowledged"):
-            if key in raw:
-                print(f"  confession restated: {key}: {_fmt(raw[key])}")
+        try:
+            raw = load_manifest(manifest_path)
+        except Fatal as exc:
+            print(f"  phase: UNREADABLE — {exc}")
+        else:
+            declared = raw.get("phase-declared")
+            print(f"  phase: {raw.get('phase')} "
+                  f"(declared: {declared or 'undated — add phase-declared:'})")
+            for key in ("visibility-acknowledged", "relaxation-acknowledged"):
+                if key in raw:
+                    print(f"  confession restated: {key}: {_fmt(raw[key])}")
 
     print("glados doctor: informational only — never fails")
     return 0

@@ -83,17 +83,32 @@ keys deserve attention:
   code. Greenfield with no users is `nascent`; opted-in early adopters is
   `evolving`; a system you intend to leave is `sunset`. **The initial
   declaration is ungated** — you are describing reality, not claiming
-  progress. Only later *transitions* between phases carry checklists.
+  progress. Only later *transitions* between phases carry checklists: when a
+  later install sees the declared phase differ from the previously installed
+  one, it prints an advisory transition checklist to carry into the
+  transition MR.
 - **`channels:`** — the defaults (`verdict: mr-comment`,
   `escalation`/`bug`: `issue`) are the ones that fix v1's trace-only-outcome
   failures. Weaken them only with the explicit
   `visibility-acknowledged: ledger-only` confession line.
 
+Then protect the manifest with CODEOWNERS, so a phase change is always a
+human-approved MR — agents may *propose* a phase change, never merge one:
+
+```
+# .gitlab/CODEOWNERS (GitLab) or .github/CODEOWNERS (GitHub)
+/glados.yaml @your-team-leads
+```
+
+`glados doctor` reports whether a CODEOWNERS file exists and covers
+`glados.yaml` (informational — it never fails the doctor run).
+
 ### 2. Run install
 
-Run the v2 installer for your runtime — `python bin/glados.py install --mode
-<mode>`, where mode is one of `claude | claude-plugin | direct | gemini |
-antigravity | aistudio`. It compiles cores + modules + vocabulary against
+Run the v2 installer for your runtime from a GLaDOS checkout — `python
+bin/glados.py install --mode <mode> --target /path/to/your/project`, where
+mode is one of `claude | claude-plugin | direct | gemini | antigravity |
+aistudio`. It compiles cores + modules + vocabulary against
 your manifest, runs the registry and sink checks, stamps the manifest hash,
 and prints the assembly report — read it; it shows the provenance of every
 resolved value and flags any phase-derived relaxations. This replaces the v1
@@ -125,8 +140,20 @@ survives deletion; the run ledger is the living record.
 
 ### 5. Enable the CI template
 
-The installer writes the CI include (`verify-ledger` and friends) but the
-project owns turning it on — add the include to your CI configuration and push.
+The installer vendors the CI check templates (`verify-ledger` and friends)
+into `.glados/ci/` — both the GitLab and GitHub variants — and prints the
+enable stanza. The project owns turning the check on:
+
+- **GitLab** — add the include to your `.gitlab-ci.yml`:
+
+  ```yaml
+  include:
+    - local: .glados/ci/glados-check.gitlab-ci.yml
+  ```
+
+- **GitHub** — copy `.glados/ci/glados-check.github-actions.yml` into
+  `.github/workflows/` and commit it.
+
 All rules start `report-only`; promote individual rules to `blocking` in the
 manifest once they've proven quiet. Then run `glados doctor` to confirm the
 check actually executes — a check that's declared but never runs is exactly

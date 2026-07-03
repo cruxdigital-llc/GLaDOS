@@ -20,6 +20,14 @@ keys:
   run.record:
     home: ledger
     doc: The current run's record file. Written by every core's compiled epilogue.
+  run.current:
+    home: ledger
+    doc: >
+      The in-flight marker at .glados/runs/current, holding the current run
+      record's filename. Written by every core's compiled preamble at run
+      start; deleted unconditionally by the compiled epilogue's release step;
+      read by the host-agent run-record guard hooks (.glados/hooks/). Transient
+      run state — never committed.
   run.active-personas:
     home: run-record
     doc: >

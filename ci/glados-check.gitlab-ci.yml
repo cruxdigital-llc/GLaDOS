@@ -1,24 +1,38 @@
 # GLaDOS drift + type check for GitLab CI.
 #
-# Include it from your .gitlab-ci.yml:
+# `glados.py install` vendors this file to `.glados/ci/` together with the full
+# source tree (`.glados/src/`), so the vendored checker is self-contained — no
+# --source needed. Enable it from your .gitlab-ci.yml:
 #
 #   include:
-#     - local: 'ci/glados-check.gitlab-ci.yml'   # or a remote/project include
+#     - local: '.glados/ci/glados-check.gitlab-ci.yml'
 #
 # It runs the vendored compiler in check mode: recompute the compile in-memory
-# from the sources + manifest, diff against the installed files, run every type
-# check, and verify the vendored manifest hash. Drift, a failed check, or a
-# stale compile fail the job.
-#
-# The compiler needs the GLaDOS source tree to recompute. Point --source at it:
-# vendor src/ alongside .glados/, or clone the GLaDOS repo in a before_script and
-# pass --source. The rules ship report-only first; drop --report-only to enforce.
+# from the vendored sources + manifest, diff against the installed files, run
+# every type check, and verify the vendored manifest hash. Drift, a failed
+# check, or a stale compile fail the job. The job ships report-only first;
+# drop --report-only to enforce (recommended when entering production).
 
 glados-check:
   stage: test
   image: python:3.12-slim
   script:
-    - python .glados/glados.py check --target . --source . --report-only
+    - python .glados/glados.py check --target . --report-only
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# Universal run-record backstop: scans git history for silent-loss candidates.
+# Report-only in v2.0.0 and kept a separate, non-blocking job so its output is
+# visible without ever gating a merge.
+glados-verify-ledger:
+  stage: test
+  image: python:3.12-slim
+  allow_failure: true
+  variables:
+    GIT_DEPTH: 0   # the scan needs real history, not a shallow clone
+  script:
+    - python .glados/glados.py verify-ledger --target . --report-only
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'

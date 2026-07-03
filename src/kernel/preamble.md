@@ -11,9 +11,12 @@
 
 1. **Create the run record now** at
    `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work.
-   Note the workflow, start time, and goal. A run that dies early with a
-   record beats one that succeeded invisibly; the epilogue finalizes this
-   file, but it must exist from the first minute.
+   Note the workflow, start time, and goal. Then write the record's filename
+   into `.glados/runs/current` — the in-flight marker the run-record guard
+   hooks key on. The marker is transient run state: it must NOT be committed
+   (the epilogue deletes it). A run that dies early with a record beats one
+   that succeeded invisibly; the epilogue finalizes this file, but it must
+   exist from the first minute.
 2. **Record `work.base-sha`** — the current base commit — in the record
    before mutating anything (branch, board, or shared files). The end-of-run
    yield check compares against it; without it, an external edit is

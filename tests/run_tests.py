@@ -9,7 +9,9 @@ stops shipping modules — v1's flagship bug — fails this build.
 """
 
 import importlib.util
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -87,6 +89,7 @@ def make_doctored_source():
                     ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO / "hooks", d / "hooks",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(REPO / "ci", d / "ci")
     shutil.copyfile(EXAMPLE, d / "glados.yaml.example")
     return d
 
@@ -152,6 +155,23 @@ class TestCompile(unittest.TestCase):
         alias = t / ".gemini" / "commands" / "glados" / "plan-fix.toml"
         adata = tomllib.loads(read(alias))
         self.assertIn("fix-bug", adata["prompt"])
+
+    def test_plugin_cores_phase_neutral_with_bootstrap_guard(self):
+        """claude-plugin compiles from glados.yaml.example, so its cores must
+        not bake the example's phase-resolved optimize-for: they carry the
+        phase-neutral baseline sentence plus a bootstrap guard deferring to
+        the consuming repo's own glados.yaml."""
+        t = make_plugin_target()
+        rc, out = install("claude-plugin", t)
+        self.assertEqual(rc, 0, out)
+        for core in (t / "compiled" / "claude-plugin").glob("*.md"):
+            text = read(core)
+            self.assertTrue(text.startswith("<!-- claude-plugin bootstrap guard"),
+                            f"{core.name}: missing bootstrap guard")
+            self.assertIn("Optimize for doing no harm", text, core.name)
+            # the example's evolving-phase sentence must NOT be baked in
+            self.assertNotIn("Optimize for velocity with a memory", text,
+                             f"{core.name}: example's phase leaked into plugin")
 
     def test_determinism(self):
         """Two installs of the same mode produce byte-identical trees."""
@@ -326,6 +346,117 @@ class TestVendor(unittest.TestCase):
         # manifest-hash file matches the recomputed hash
         vend = read(t / ".glados" / "manifest-hash").strip()
         self.assertEqual(vend, glados.manifest_hash_of(t / "glados.yaml"))
+        # the FULL src/ tree is vendored byte-identically (the CI backstop
+        # recomputes the compile from it), plus the manifest example
+        src_files = sorted(p for p in (REPO / "src").rglob("*") if p.is_file())
+        self.assertGreater(len(src_files), 0)
+        for s in src_files:
+            v = t / ".glados" / "src" / s.relative_to(REPO / "src")
+            self.assertTrue(v.exists(), f"missing vendored source {v}")
+            self.assertEqual(v.read_bytes(), s.read_bytes(),
+                             f"vendored {v.name} must byte-match")
+        self.assertEqual((t / ".glados" / "glados.yaml.example").read_bytes(),
+                         EXAMPLE.read_bytes())
+
+    def test_vendored_checker_self_contained(self):
+        """`python .glados/glados.py check --target .` works with NO --source:
+        the vendored src/ tree makes the CI backstop self-contained, and a
+        clean install passes it in enforcing mode."""
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        proc = subprocess.run(
+            [sys.executable, str(t / ".glados" / "glados.py"),
+             "check", "--target", str(t)],
+            capture_output=True, text=True)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("glados check: OK", out)
+
+    def test_vendored_tree_stale_files_cleaned(self):
+        """A leftover file in a vendored .glados/ subtree (e.g. a renamed
+        source after an upgrade) is cleaned on reinstall — it would otherwise
+        skew the self-contained checker's recompute forever."""
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        stale_src = t / ".glados" / "src" / "vocabulary" / "old-fragment.md"
+        write(stale_src, "renamed away two versions ago\n")
+        stale_persona = t / ".glados" / "personas" / "retired.md"
+        write(stale_persona, "retired persona\n")
+        run_marker = t / ".glados" / "runs" / "2026-07-03-run.md"
+        write(run_marker, "# run record — user history, never touched\n")
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(stale_src.exists(), "stale vendored source lingers")
+        self.assertFalse(stale_persona.exists(), "stale persona lingers")
+        self.assertTrue(run_marker.exists(), ".glados/runs/ must never be touched")
+        # antigravity's glados-* name scoping applies to .agents/workflows
+        # only, never to the vendored subtrees
+        t2 = make_target()
+        self.assertEqual(install("antigravity", t2)[0], 0)
+        stale2 = t2 / ".glados" / "src" / "vocabulary" / "old-fragment.md"
+        write(stale2, "stale\n")
+        self.assertEqual(install("antigravity", t2)[0], 0)
+        self.assertFalse(stale2.exists(),
+                         "antigravity must clean vendored subtrees too")
+
+    def test_ci_templates_vendored_and_sourceless(self):
+        """Both CI templates are vendored to .glados/ci/, run the vendored
+        checker without --source, and carry the separate non-blocking
+        verify-ledger step; the install prints the enable stanza."""
+        for name in ("glados-check.gitlab-ci.yml",
+                     "glados-check.github-actions.yml"):
+            tmpl = read(REPO / "ci" / name)
+            self.assertIn("python .glados/glados.py check --target . "
+                          "--report-only", tmpl, name)
+            self.assertNotIn("--source .", tmpl,
+                             f"{name} must not need a source checkout")
+            self.assertIn("verify-ledger --target . --report-only", tmpl, name)
+        gitlab = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        self.assertIn("allow_failure: true", gitlab,
+                      "verify-ledger job must be non-blocking")
+        github = read(REPO / "ci" / "glados-check.github-actions.yml")
+        self.assertIn("continue-on-error: true", github,
+                      "verify-ledger step must be non-blocking")
+        t = make_target()
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        for name in ("glados-check.gitlab-ci.yml",
+                     "glados-check.github-actions.yml"):
+            self.assertEqual((t / ".glados" / "ci" / name).read_bytes(),
+                             (REPO / "ci" / name).read_bytes(),
+                             f"vendored {name} must byte-match")
+        # example manifest says platform: gitlab -> the GitLab stanza prints
+        self.assertIn(".glados/ci/glados-check.gitlab-ci.yml", out)
+        self.assertIn("include:", out)
+
+    def test_agy_hooks_single_source(self):
+        """hooks/agy-hooks.json is the one source of the agy hooks block: it
+        stays dumps(indent=2)-normalized, the README fenced block matches it,
+        the antigravity install emits it verbatim, and it is vendored."""
+        record_path = REPO / "hooks" / "agy-hooks.json"
+        record = record_path.read_text(encoding="utf-8")
+        data = json.loads(record)
+        self.assertEqual(
+            record, json.dumps(data, indent=2) + "\n",
+            "hooks/agy-hooks.json must stay json.dumps(..., indent=2)-"
+            "normalized — _emit_agy_hooks re-emits it through json.dumps")
+        readme = (REPO / "hooks" / "README.md").read_text(encoding="utf-8")
+        blocks = [b for b in re.findall(r"```json\n(.*?)```", readme, re.S)
+                  if "glados-run-record-guard" in b]
+        self.assertEqual(len(blocks), 1,
+                         "hooks/README.md must show exactly one agy block")
+        self.assertEqual(json.loads(blocks[0]), data,
+                         "hooks/README.md fenced agy block drifted from "
+                         "hooks/agy-hooks.json — update the README from the "
+                         "file of record")
+        t = make_target()
+        rc, out = install("antigravity", t)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(t / ".agents" / "hooks.json"), record,
+                         "emitted .agents/hooks.json must match the record")
+        self.assertEqual(
+            (t / ".glados" / "hooks" / "agy-hooks.json").read_bytes(),
+            record_path.read_bytes(), "agy-hooks.json must be vendored")
 
     def test_personas_vendored(self):
         """Every install mode vendors the full src/personas/ library into
@@ -380,6 +511,160 @@ class TestCleanup(unittest.TestCase):
         self.assertTrue((owned / "plan-feature.md").exists())
         self.assertTrue((owned / "fix-bug.md").exists())
         self.assertTrue((owned / "mission.md").exists(), "alias shim expected")
+
+    def test_v1_legacy_cleanup_gemini(self):
+        # The gemini install removes the fully v1-owned .gemini/skills/glados/
+        # tree; a claude install (above) leaves it alone.
+        t = tmpdir("glados-v1-gem-")
+        shutil.copytree(LEGACY, t, dirs_exist_ok=True)
+        rc, out = install("gemini", t)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse((t / ".gemini" / "skills" / "glados").exists(),
+                         "v1 gemini tree must be removed by the gemini install")
+        self.assertTrue(
+            (t / ".gemini" / "commands" / "glados" / "intent.toml").exists())
+        self.assertIn(".gemini/skills/glados", out.replace("\\", "/"),
+                      "removed v1 files must be reported")
+
+    def test_v1_legacy_cleanup_direct(self):
+        # The direct install removes ONLY known-v1-named files from the shared
+        # product-knowledge/{workflows,modules}/ dirs — never user files.
+        t = tmpdir("glados-v1-dir-")
+        shutil.copytree(LEGACY, t, dirs_exist_ok=True)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        pk = t / "product-knowledge"
+        self.assertFalse((pk / "workflows" / "plan_feature.md").exists(),
+                         "known v1 name (underscore variant) must be removed")
+        self.assertFalse((pk / "modules").exists(),
+                         "emptied v1 modules dir must be removed")
+        self.assertTrue((pk / "workflows" / "my-notes.md").exists(),
+                        "unmatched user file must survive")
+        self.assertTrue((pk / "workflows").is_dir(),
+                        "dir with surviving user files must not be removed")
+        # non-direct modes leave the shared dirs alone
+        t2 = tmpdir("glados-v1-cla-")
+        shutil.copytree(LEGACY, t2, dirs_exist_ok=True)
+        rc, out = install("claude", t2)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((t2 / "product-knowledge" / "workflows" /
+                         "plan_feature.md").exists(),
+                        "claude install must not touch product-knowledge/workflows")
+
+
+class TestDisabledWorkflows(unittest.TestCase):
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: {phase}\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    def test_sunset_preset_disables_build_feature(self):
+        t = make_target(self.MINIMAL.format(phase="sunset"))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse(
+            (t / "product-knowledge" / "glados" / "build-feature.md").exists(),
+            "sunset must not install build-feature")
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| disabled-workflows | [build-feature] | (phase:sunset) |",
+                      report, report)
+
+    def test_explicit_empty_list_overrides_preset(self):
+        t = make_target(self.MINIMAL.format(phase="sunset")
+                        + "disabled-workflows: []\n")
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(
+            (t / "product-knowledge" / "glados" / "build-feature.md").exists(),
+            "explicit [] must re-enable what the preset disabled")
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| disabled-workflows | [] | (explicit) |", report)
+
+    def test_disabled_target_alias_shim_says_disabled(self):
+        text = read(EXAMPLE).replace("disabled-workflows: []",
+                                     "disabled-workflows: [fix-bug]")
+        t = make_target(text)
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        owned = t / ".claude" / "commands" / "glados"
+        self.assertFalse((owned / "fix-bug.md").exists())
+        shim = read(owned / "plan-fix.md")
+        self.assertIn("disabled", shim)
+        self.assertNotIn("Run `/glados:fix-bug`", shim,
+                         "a disabled target must not be invoked")
+        # direct mode's disabled shim says so too
+        t2 = make_target(text)
+        rc, out = install("direct", t2)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("disabled",
+                      read(t2 / "product-knowledge" / "glados" / "plan-fix.md"))
+        # plugin mode: disabled alias stub says disabled AND keeps the
+        # generated-stub marker so pruning can still identify it
+        t3 = make_plugin_target()
+        write(t3 / "glados.yaml.example", text)
+        rc, out = install("claude-plugin", t3)
+        self.assertEqual(rc, 0, out)
+        stub = read(t3 / "skills" / "plan-fix" / "SKILL.md")
+        self.assertIn("disabled", stub)
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/", stub)
+
+
+class TestAliasShims(unittest.TestCase):
+
+    def test_direct_and_aistudio_alias_shims(self):
+        # direct: file-pointer bodies, never slash-command syntax
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        shim = read(t / "product-knowledge" / "glados" / "plan-fix.md")
+        self.assertIn("product-knowledge/glados/fix-bug.md", shim)
+        self.assertNotIn("/glados:", shim,
+                         "direct mode has no slash-command syntax")
+        self.assertTrue((t / "product-knowledge" / "glados" / "mission.md")
+                        .exists(), "every alias gets a shim")
+        # aistudio: pointer stubs beside the bundles
+        t2 = make_target()
+        rc, out = install("aistudio", t2)
+        self.assertEqual(rc, 0, out)
+        bundles = t2 / "glados" / "adapters" / "aistudio" / "bundles"
+        self.assertIn("bundles/fix-bug-advisory.aistudio.md",
+                      read(bundles / "plan-fix.aistudio.md"))
+        self.assertIn("bundles/intent.aistudio.md",
+                      read(bundles / "mission.aistudio.md"))
+        self.assertIn("no AI Studio bundle",
+                      read(bundles / "autonomous-loop.aistudio.md"))
+        # alias stubs are pointers, not bundles: they stay out of MANIFEST.md
+        manifest = read(bundles.parent / "MANIFEST.md")
+        self.assertNotIn("mission", manifest)
+
+
+class TestParamsResolution(unittest.TestCase):
+
+    def test_baseline_evaluator_bound_resolves(self):
+        # A minimal manifest with no params: block still resolves both loop
+        # bounds (and the roster) from the baseline preset.
+        manifest = ("glados: 2\nplatform: gitlab\nphase: evolving\n"
+                    "branching:\n  feature: \"feat/<slug>\"\n"
+                    "  default-target: main\n")
+        t = make_target(manifest)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| params.evaluator.max-cycles | 3 | (baseline) |", report)
+        self.assertIn("| params.review-panel.personas | [] | (baseline) |", report)
+
+    def test_dangling_params_literal_fails(self):
+        # A compiled `params.<ns>.<key>` literal with no resolved value is an
+        # unbounded loop / missing roster — the install must refuse it.
+        src = make_doctored_source()
+        core = src / "src" / "workflows" / "intent.md"
+        core.write_text(read(core) + "\nBound: `params.bogus.max-cycles`.\n",
+                        encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("params.bogus.max-cycles", out)
+        self.assertIn("intent", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestVerifyLedger(unittest.TestCase):
@@ -492,7 +777,9 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertEqual(rc, 1, "workflow-name typo must fail:\n" + out)
         self.assertIn("reviw-mr", out)
         # d) unknown workflow in disabled-workflows leaves it enabled
-        text = read(EXAMPLE) + "\ndisabled-workflows: [run-epicc]\n"
+        text = read(EXAMPLE).replace("disabled-workflows: []",
+                                     "disabled-workflows: [run-epicc]")
+        self.assertIn("run-epicc", text, "example must carry the key to edit")
         rc, out = install("direct", make_target(text))
         self.assertEqual(rc, 1, "disabled-workflows typo must fail:\n" + out)
         self.assertIn("run-epicc", out)
@@ -547,6 +834,244 @@ class TestSourceTreeAttacks(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("aliases.yaml", out)
         self.assertNotIn("Traceback", out)
+
+    def test_include_escape_fatal(self):
+        # A ../ include resolving OUTSIDE src/ must die naming the directive,
+        # even though the escaped-to file exists.
+        src = make_doctored_source()
+        core = src / "src" / "workflows" / "intent.md"
+        core.write_text(
+            read(core) + "\n<!-- glados:include ../glados.yaml.example -->\n",
+            encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("escapes the source tree", out)
+        self.assertIn("../glados.yaml.example", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_frontmatter_type_validation(self):
+        # a) non-string description must fail with the file + field named,
+        # not crash an adapter with a raw AttributeError.
+        src = make_doctored_source()
+        core = src / "src" / "workflows" / "intent.md"
+        core.write_text(
+            read(core).replace(
+                "description: Establish or refresh the product mission and roadmap",
+                "description: [not, a, string]"),
+            encoding="utf-8", newline="\n")
+        rc, out = install("gemini", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("description", out)
+        self.assertIn("intent.md", out)
+        self.assertNotIn("Traceback", out)
+        # b) a bare-string list field must fail (list() on a str would
+        # silently produce a per-character list)
+        src2 = make_doctored_source()
+        core2 = src2 / "src" / "workflows" / "fix-bug.md"
+        core2.write_text(
+            read(core2).replace("reads: [manifest.branching, manifest.platform]",
+                                "reads: manifest.branching"),
+            encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src2)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("reads", out)
+        self.assertIn("fix-bug.md", out)
+        self.assertNotIn("Traceback", out)
+
+
+class TestDoctor(unittest.TestCase):
+
+    def test_doctor_never_fails(self):
+        # doctor's contract is 'never fails': a malformed manifest and an
+        # unreadable CI file become report lines, not exits.
+        t = make_target("glados: 2\nplatform: gitlab\nphase: evolving\n"
+                        "branching:\n\tfeature: x\n")  # tab -> YamlError
+        (t / ".gitlab-ci.yml").write_bytes("glados\n".encode("utf-16"))
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, "doctor must never fail:\n" + out)
+        self.assertIn("phase: UNREADABLE", out)
+        self.assertIn("CI check wired: UNREADABLE", out)
+        self.assertIn("never fails", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_doctor_reports_codeowners(self):
+        t = make_target()
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0)
+        self.assertIn("CODEOWNERS: none found", out)
+        write(t / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0)
+        self.assertIn("covers glados.yaml", out)
+        write(t / "CODEOWNERS", "* @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0)
+        self.assertIn("does not mention glados.yaml", out)
+
+
+class TestInstallUx(unittest.TestCase):
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: evolving\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    def test_phase_transition_advisory_printed(self):
+        t = make_target(self.MINIMAL)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("phase transition", out)
+        write(t / "glados.yaml",
+              self.MINIMAL.replace("phase: evolving", "phase: production"))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("phase transition evolving -> production", out)
+        self.assertIn("smoke suite", out)
+        self.assertIn("advisory", out)
+        # a repeat install in the same phase prints no checklist
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("phase transition", out)
+        # a backward move adds the confession line
+        write(t / "glados.yaml", self.MINIMAL)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("phase transition production -> evolving", out)
+        self.assertIn("backward move", out)
+
+    def test_v1_leftovers_hint_before_missing_manifest_fatal(self):
+        t = tmpdir("glados-v1-hint-")
+        shutil.copytree(LEGACY, t, dirs_exist_ok=True)
+        (t / "glados.yaml").unlink()
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 1)
+        self.assertIn("v1 -> v2 migration", out)   # the prefilled hint
+        self.assertIn("MIGRATION.md", out)
+        self.assertIn("no manifest", out)          # the Fatal still fires
+
+    def test_scaffold_includes_personas(self):
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        for sub in ("observations", "standards", "philosophies", "personas"):
+            self.assertTrue(
+                (t / "product-knowledge" / sub / ".gitkeep").exists(),
+                f"product-knowledge/{sub}/ must be scaffolded")
+
+
+class TestCheckResilience(unittest.TestCase):
+
+    def test_check_report_only_survives_unresolvable_source(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        empty = tmpdir("glados-empty-src-")
+        rc, out = run_cli("check", "--target", t, "--source", empty,
+                          "--report-only")
+        self.assertEqual(rc, 0, "--report-only must not hard-exit:\n" + out)
+        self.assertIn("report-only", out)
+        self.assertIn("cannot resolve the GLaDOS source tree", out)
+        self.assertNotIn("Traceback", out)
+        # enforcing mode still fails, cleanly
+        rc, out = run_cli("check", "--target", t, "--source", empty)
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot resolve the GLaDOS source tree", out)
+        self.assertNotIn("Traceback", out)
+
+
+class TestPluginSkills(unittest.TestCase):
+
+    def test_plugin_skills_pruned_by_marker_only(self):
+        t = make_plugin_target()
+        write(t / "skills" / "my-custom" / "SKILL.md",
+              "---\ndescription: mine\n---\n\nA user skill, no marker.\n")
+        write(t / "skills" / "stale-stub" / "SKILL.md",
+              "---\ndescription: stale\n---\n\nRead "
+              "`${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/stale-stub.md`.\n")
+        write(t / "skills" / "no-skill-md" / "notes.txt", "keep me\n")
+        rc, out = install("claude-plugin", t)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((t / "skills" / "my-custom" / "SKILL.md").exists(),
+                        "user skill without the marker must survive")
+        self.assertTrue((t / "skills" / "no-skill-md" / "notes.txt").exists(),
+                        "dir without a SKILL.md must survive")
+        self.assertFalse((t / "skills" / "stale-stub").exists(),
+                         "stale generated stub must be pruned by its marker")
+        # every generated stub carries the marker, so a retired core/alias
+        # can be identified structurally on the next install
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/",
+                      read(t / "skills" / "intent" / "SKILL.md"))
+        self.assertIn("${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/",
+                      read(t / "skills" / "mission" / "SKILL.md"))
+
+
+class TestHookGuards(unittest.TestCase):
+    """The run-record guard scripts, driven as real subprocesses through their
+    three states: no marker / marker + uncommitted record / committed."""
+
+    def _repo(self):
+        t = tmpdir("glados-hooks-")
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(t), *a],
+                           capture_output=True, text=True)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        git("checkout", "-q", "-b", "main")
+        (t / "a.txt").write_text("x", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "feat: initial")
+        return t, git
+
+    def _run_claude(self, repo):
+        # claude-stop-hook takes the repo root from the event's "cwd" field
+        return subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+            input=json.dumps({"cwd": str(repo)}),
+            capture_output=True, text=True)
+
+    def _run_gemini(self, repo):
+        # gemini-afteragent-guard uses the process cwd
+        return subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+            input="{}", capture_output=True, text=True, cwd=str(repo))
+
+    def test_no_marker_allows(self):
+        repo, _ = self._repo()
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), "", "must emit nothing (allow)")
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr.strip(), "", "must stay silent (allow)")
+
+    def test_marker_with_uncommitted_record_blocks(self):
+        repo, _ = self._repo()
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        payload = json.loads(p.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("run-1.md", payload["reason"])
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 2, "exit 2 retries the gemini turn")
+        self.assertIn("run-1.md", p.stderr)
+
+    def test_marker_with_committed_record_allows(self):
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        git("add", ".glados/runs/run-1.md")
+        git("commit", "-q", "-m", "chore(glados): record test run")
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), "",
+                         "committed record must not block")
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr.strip(), "",
+                         "committed record must not retry the turn")
 
     def test_toml_special_chars_roundtrip(self):
         # Backslashes, quotes and a Python triple-quote inside a core body must

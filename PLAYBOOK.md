@@ -14,7 +14,7 @@ A practical guide to adopting GLaDOS in your project and your team — from firs
 2. **Declare your phase** — it is required, with no default. Describe reality, not ambition: phase states who gets hurt when the agent is wrong, not how proud you are of the code. A repo with zero users is `nascent`; the moment real users exist, it is `production`, whatever the code looks like.
 3. **Install** for your runtime:
    ```bash
-   python bin/glados.py install --mode claude
+   python bin/glados.py install --mode claude --target /path/to/your/project
    # modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
    ```
    Read the assembly report it prints — every resolved value with its provenance, and a loud marker on anything your phase relaxed.
@@ -146,7 +146,7 @@ Create a file in `product-knowledge/philosophies/`. Start with `preferred` weigh
 ### Changing Behavior: the Two Speeds
 
 - **Live keys** (channels, merge-authority, decisions, params, the persona roster) are read from `glados.yaml` at run time — edit, and the next run behaves differently. No reinstall.
-- **Structural keys** (per-workflow module lists, phase) take effect at `python bin/glados.py install`. The recompile is a deliberate ceremony: the type-checker runs, and the assembly report shows the team what changed. `glados.py doctor` flags stale compiles.
+- **Structural keys** (per-workflow module lists, phase) take effect at `python bin/glados.py install --mode <mode> --target /path/to/your/project`. The recompile is a deliberate ceremony: the type-checker runs, and the assembly report shows the team what changed. `glados.py doctor` flags stale compiles.
 
 Never hand-edit installed workflow text — it is compiled output and the next install overwrites it. Change the manifest instead.
 
@@ -177,7 +177,7 @@ Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `imple
 |---|---|
 | **Fewer "wait, we don't do it that way" moments** | Standards gate catches violations before review |
 | **Faster onboarding** | New hires use `adopt-codebase` and read standards instead of asking 50 questions |
-| **Nothing lost silently** | CI `verify-ledger` reports zero silent-loss events week over week |
+| **Nothing lost silently** | CI `verify-ledger` (vendored into `.glados/ci/` at install; enabled by the project per MIGRATION step 5) reports zero silent-loss events week over week |
 | **Outcomes are visible** | Verdicts sit on MRs, escalations and bugs are issues — no decision lives only in a transcript |
 | **Preserved decisions** | Run records and `decision` outcomes explain *why*, resumable from `git pull` |
 | **Living standards** | Steward regularly promotes observations; brunch MRs stay small because big findings got fixed earlier |

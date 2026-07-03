@@ -52,6 +52,14 @@ baseline:
   params:
     review-panel:
       max-cycles: 3
+      # Default review roster: standing lenses only. Projects add named
+      # personas in glados.yaml; the empty default keeps the compiled
+      # `params.review-panel.personas` reference resolvable everywhere.
+      personas: []
+    evaluator:
+      # Safety bound for evaluator verify/fix cycles — the compiled
+      # `params.evaluator.max-cycles` reference must resolve in every install.
+      max-cycles: 3
 
 # ---------------------------------------------------------------------------
 # Phase presets
@@ -130,6 +138,10 @@ sunset:
   optimize-for: >-
     Optimize for safe decay; preserve every behavior people still depend on
     and make every removal visible before it lands.
+  # Sunset unloads new-feature construction structurally: the workflow is not
+  # installed. An explicit `disabled-workflows:` in glados.yaml replaces this
+  # list wholesale ([] re-enables build-feature, confessed by provenance).
+  disabled-workflows: [build-feature]
   channels:
     progress:    [ledger]
     verdict:     [mr-comment]

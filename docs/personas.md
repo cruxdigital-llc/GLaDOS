@@ -24,21 +24,9 @@ standards_weight: [security/*]
 
 ## Default Personas
 
--   **`architect.md`** (hybrid): System design, coding standards, and technical debt.
--   **`product-manager.md`** (review): User value, requirements traceability, and scope control.
--   **`qa.md`** (hybrid): Testability, edge cases, and regression prevention.
-
-## Team Manifests
-
-Create `team.yml` to define named persona combinations for different workflow types:
-
-```yaml
-teams:
-  full_review:
-    personas: [product-manager, architect, qa]
-  quick_review:
-    personas: [architect]
-```
+The shipped persona library lives in [`src/personas/`](../src/personas/) —
+each file's frontmatter declares its type and focus, and every install vendors
+the library into the target's `.glados/personas/`.
 
 ## Customization
 
