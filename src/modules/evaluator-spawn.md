@@ -1,89 +1,92 @@
-# GLaDOS Evaluator Spawn Module
+---
+name: evaluator-spawn
+kind: module
+description: Spawn a context-isolated evaluator to verify finished work against a self-contained brief
+reads: [work.base-sha, standards.index]
+writes: []
+# Inlines vocabulary/loop-bounds.md — a core enabling this module must declare
+# `escalation` in its emits (loop-bounds emits it on bound-hit/stalemate).
+emits: [verdict]
+mutates: none
+requires: []
+---
 
-**Goal**: Spawn a fresh agent with a clean context window to evaluate work, ensuring the evaluator has no knowledge of the implementation journey.
+## Independent evaluation
 
-## Contract
-This module requires two invariants:
-1. **Context isolation**: The evaluator must start with no implementation context. It must not inherit conversation history, reasoning, or decisions from the agent that wrote the code.
-2. **Filesystem-only communication**: The generator and evaluator communicate exclusively through filesystem artifacts — `evaluation-brief.md` (input) and `evaluation.md` (output). No in-memory state is shared.
+An agent that implemented a change is predisposed to approve it. A fresh agent
+that sees only what was supposed to be built and what was actually built will
+catch problems the implementer is blind to. Two invariants, non-negotiable:
 
-## Why This Exists
-An agent that implemented the code is predisposed to approve it. A fresh agent that only sees what was supposed to be built and what was actually built will catch problems the implementer is blind to.
+1. **Context isolation** — the evaluator starts with a clean context window.
+   It inherits no conversation history, reasoning, or decisions from the agent
+   that wrote the code.
+2. **Filesystem-only communication** — generator and evaluator exchange
+   exactly two artifacts, written beside the run record:
+   `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation-brief.md` (input)
+   and `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation.md` (output).
+   No other state is shared.
 
-## Instructions
+### Assemble the evaluation brief
 
-### 1. Spawn the Evaluator
-Spawn a fresh agent with a clean context window. Pass it the following prompt:
+Write the brief self-contained — the evaluator must never need this
+conversation:
+
+| Section | Contents |
+|---|---|
+| What was requested | The requirements (for a fix, the reproduction steps), copied in full |
+| What was agreed | The acceptance criteria from the spec or plan; a contract file, if one exists, takes precedence |
+| What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`) — not the full diff; the evaluator reads files directly |
+| How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
+| Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
+| Vocabulary | The severity and verdict rules below, copied verbatim |
+
+<!-- glados:include vocabulary/verdicts.md -->
+
+### Spawn the evaluator
+
+Spawn a fresh agent with a clean context window and this prompt:
 
 ```
-You are a QA evaluator. Your job is to find problems, not confirm success.
-You have no knowledge of how this code was written — only what it should do
-and what it actually does. Be skeptical. Be thorough.
+You are an evaluator. Your job is to find problems, not to confirm success.
+You have no knowledge of how this work was done — only what it should do and
+what it actually does. Be skeptical. Be thorough.
 
-## Your Inputs
-Read the evaluation brief at: specs/[trace-dir]/evaluation-brief.md
+1. Read the evaluation brief at
+   .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation-brief.md.
+   It is your only context; do not ask for more.
+2. Read the changed files directly.
+3. Run every test and lint command in the brief.
+4. If the brief lists app entry points and you have the tools, start the app
+   and use it. Do not judge by reading alone.
+5. Mark each acceptance criterion PASS or FAIL, with the evidence you
+   observed.
+6. Check the code against each standard listed in the brief.
+7. List every issue: what is wrong, where (file + line), and its severity per
+   the vocabulary in the brief.
 
-## Your Process
-1. Read the evaluation brief to understand what was requested and what was agreed to.
-2. Read the changed files directly to understand what was built.
-3. Run the test suite and linters specified in the brief.
-4. If browser/UI tools are available, navigate to the app and interact with it.
-   Do not just read the code — use the thing.
-5. For each acceptance criterion in the brief, determine: PASS or FAIL.
-6. Check the code against each applicable standard listed in the brief.
-7. Adopt each review persona listed in the brief and critique from that perspective.
-
-## Your Output
-Write your evaluation to: specs/[trace-dir]/evaluation.md
-
-Use this format:
-
-### Acceptance Criteria
-| Criterion | Verdict | Evidence |
-|-----------|---------|----------|
-| ...       | ✅ PASS / ❌ FAIL | What you observed |
-
-### Standards Compliance
-| Standard | Verdict | Notes |
-|----------|---------|-------|
-| ...      | ✅ / ❌ / ⚠️ | ... |
-
-### Persona Reviews
-For each persona, a short review paragraph.
-
-### Issues Found
-Numbered list of specific issues. For each:
-- What is wrong
-- Where it is (file + line)
-- Severity: blocking / warning / note
-
-### Overall Verdict
-PASS — all acceptance criteria met, no blocking issues.
-OR
-FAIL — list the blocking issues that must be resolved.
+Write your evaluation to
+.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation.md with sections:
+Acceptance criteria (criterion | PASS/FAIL | evidence), Standards
+(standard | met/violated | notes), Issues (numbered; location, severity,
+what would fix it), and Overall verdict — exactly one of:
+PASS — every criterion passed and no blocking issue found.
+FAIL — list the blocking issues.
 ```
 
-### 2. Read the Verdict
-After the evaluator agent completes:
-1.  **Read** `specs/[trace-dir]/evaluation.md`.
-2.  **Check** the "Overall Verdict" section.
+### On FAIL: fix, then re-evaluate fresh
 
-### 3. Handle the Result
+- Fix the blocking issues.
+- Reassemble the brief from scratch (the what-changed section is now stale)
+  and spawn a **new** evaluator with a clean context. Never reuse, continue,
+  or negotiate with the previous one — fix the code, not the evaluation.
+- Each spawn is one evaluator cycle:
 
-#### If PASS:
--   Log the evaluation summary in the trace `README.md`.
--   Proceed to completion.
+<!-- glados:include vocabulary/loop-bounds.md -->
 
-#### If FAIL:
--   Log the issues in the trace `README.md`.
--   For each blocking issue, create a fix task.
--   Return to implementation to address the blocking issues.
--   After fixes, re-invoke `evaluator-handoff.md` to assemble a fresh brief.
--   **Spawn a new evaluator** — never reuse the previous one.
--   Repeat until PASS or a maximum of 3 evaluation cycles (then escalate to user).
+### Hand the verdict back
 
-### 4. Escalation
-If the evaluator fails 3 cycles:
--   **STOP**: Do not continue looping.
--   **Log**: "BLOCKER: Evaluator has rejected 3 times. Escalating to user."
--   Present all 3 evaluations to the user for a decision.
+PASS/FAIL is vocabulary internal to the generator⇄evaluator pair; it crosses
+back into the workflow here and nowhere else. When the loop ends in an
+evaluation that stands, this step produces a `verdict` outcome, mapped exactly
+once, here: **PASS → `APPROVE`; FAIL → `REQUEST_CHANGES`**. A hit bound or
+stalemate produces the `escalation` described above instead of a verdict.

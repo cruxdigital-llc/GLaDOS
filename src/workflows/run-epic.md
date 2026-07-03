@@ -1,97 +1,106 @@
+---
+name: run-epic
+kind: core
+description: Drive a multi-ticket epic or the backlog to one human-reviewable integration MR
+reads: [intent.status, manifest.branching, manifest.merge-authority, manifest.platform, epic.progress]
+writes: [epic.progress, epic.integration-branch, work.base-sha]
+emits: [progress, escalation, decision]
+mutates: board
+requires: [mr-review-panel, standards-gate]
+---
+
 # (GLaDOS) Run Epic
 
-**Goal**: Drive an entire multi-ticket epic from initiative to a single,
-human-reviewable **integration→main** MR — autonomously and unattended. Decompose
-the epic into child tickets, then run the per-feature loop on each in dependency
-order (`build-feature` → `review-mr` ⇄ `address-review` → merge) until the backlog
-is exhausted. This is the epic-level wrapper around that loop; it adds the parts a
-single feature doesn't have: sub-tickets, an integration branch, sequential merges,
-and the conventions that make running it hands-off safe.
-
-## Prerequisites
-- [ ] `{{STATUS}}` exists (else bootstrap via
-      `{{CMD}}autonomous-loop` first).
-- [ ] An epic brief: a tracking issue, a roadmap block, or a user mandate.
-- [ ] Project CLI authed (`glab`/`gh` per `CLAUDE.md`). **Read `CLAUDE.md` first** —
-      git, CI, branch, and review conventions are project-specific and override the
-      defaults below.
+**Goal**: drive a multi-ticket effort unattended: establish the ticket queue,
+run the per-feature loop (build-feature → review-mr ⇄ address-review → merge)
+on each ticket in dependency order, and finish with one consolidated diff for
+a human. This core adds what a single feature lacks — sub-tickets, an
+integration branch, sequential merges, and epic state durable enough that any
+fresh session can pick up mid-epic.
 
 ## Process
 
-### 1. Initialize the Epic
--   Locate or create the **epic / tracking issue**; capture its goal + the
-    epic-level **acceptance criteria** (how you'll know it worked).
--   **Decompose into child tickets** — one shippable slice each, ordered by
-    dependency (shared/infra → backend → its frontend leg). File each as a sub-issue
-    with a tight spec + acceptance criteria, cross-linked to the epic. Sequence the
-    list so no ticket starts before its dependency merges.
--   Create the **integration branch** `feature/<epic-slug>` off the default branch
-    and push it. **Every child MR targets this branch, never `main`** — so `main`
-    stays releasable and the human reviews ONE consolidated diff at the end. (A
-    frontend repo gets its own `feature/<epic-slug>` branch; its FE legs target it.)
--   Create a **durable progress file** in the scratchpad (outside the repo): the
-    mandate, a ticket table (`id | depends-on | status`), the operating rules, and
-    any env facts. **Update it as every ticket lands** — it is the resume anchor that
-    survives context compression and lets a fresh session continue mid-epic.
+### 0. Resume or initialize
+- `git pull`, then read `epic.progress` from the run ledger. If a record for
+  this epic exists, resume from its ticket table at the first unfinished row
+  and skip step 1.
 
-### 2. Per-Ticket Loop (sequential, dependency order)
-For each child ticket, on a `feat/<id>` branch off the integration branch:
+### 1. Initialize the epic
+- **Ticket source** — two modes:
+  - *Default (epic mode)*: locate or create the epic tracking issue; capture
+    its goal and acceptance criteria. Decompose into child tickets — one
+    shippable slice each, in dependency order (shared/infra → backend → its
+    frontend leg) — filed as cross-linked sub-issues with tight specs, using
+    the project platform CLI (per `glados.yaml` `platform:`). No ticket
+    starts before its dependency merges.
+  - *`--backlog` mode*: the queue is the actionable backlog in the project
+    status file (`intent.status`), taken top-down. Each item is already a
+    ticket — no decomposition, no integration branch; MRs target
+    `branching.default-target`.
+- The decomposition (or backlog selection order) is a scoping call: this step
+  produces a `decision` outcome recording the ticket breakdown.
+- **Integration branch** (epic mode): resolve `branching.epic-integration`
+  from `glados.yaml`, cut it from `branching.default-target`, push it, and
+  record it as `epic.integration-branch`. Every child MR targets it, keeping
+  the default branch releasable. The commit it is cut from is this run's base
+  (`work.base-sha`, recorded at run start).
+- **Write `epic.progress`** to the ledger: the mandate, the ticket table
+  (`id | depends-on | holder | status`), the integration branch, operating
+  rules, and any environment facts a resuming session needs.
 
-1.  **Build** — `{{CMD}}build-feature` (plan → spec → implement → verify → open MR →
-    self-review). For a large ticket, write a precise spec and **delegate the
-    implementation to a subagent** (it leaves changes uncommitted); the orchestrator
-    then reviews the diff, runs the **full** suite, commits, and opens the MR. This
-    conserves orchestration context for the long haul. **MR targets the integration
-    branch.**
-2.  **Review** — `{{CMD}}review-mr`: spawn the parallel multi-persona panel
-    (`{{MODULES}}/mr-review-panel.md` — UAT, Adversarial, Standards,
-    Philosophy, Dead-code **+** the ticket's Active Personas). Each fresh subagent
-    reviews a self-contained brief, **posts an MR comment**, and returns a verdict.
-3.  **Address** — if any persona `REQUEST_CHANGES`, `{{CMD}}address-review`:
-    consolidate + dedupe + rank findings, **fix the root cause from the main agent**
-    (not subagents — they reviewed, you fix), add tests pinning each fix, re-run the
-    gate, and **post a finding→resolution note**. Default to fixing **in-MR**, not
-    deferring to a follow-up.
-4.  **Re-review** — loop `review-mr` ⇄ `address-review` until **all** personas
-    `APPROVE` (loop bound **5 cycles**; escalate if a resolved finding re-opens).
-5.  **Merge** — when review-clean **and CI green**, merge to the integration branch.
-    Respect `CLAUDE.md`'s no-author-self-approval + settle-time rules. Use a
-    **merge-on-green watcher** (poll the pipeline; merge the instant it passes)
-    instead of blocking, and **verify the state actually flipped** to `merged`.
-    Update the progress file.
-6.  Next ticket.
+### 2. Per-ticket loop (sequential, dependency order)
+For each ticket, on a working branch off the integration branch (named per
+`branching.feature`):
 
-### 3. Close the Epic
--   When the backlog is exhausted, confirm the integration branch contains exactly
-    the epic's tickets and run the full suite on it.
--   Open **one integration→main MR** with an epic-level `## Summary` + `## Test plan`
-    for the human to review before deploy. **Do not merge it** — the human owns the
-    deploy gate.
--   Annotate each child ticket ("landed on `feature/<epic-slug>`; closes on epic→main
-    merge") — auto-close fires only on a default-branch merge.
+1. **Build** — run the build-feature workflow; its MR targets the integration
+   branch.
+2. **Review** — run the review-mr workflow.
+3. **Address** — while the panel's verdict demands changes, run the
+   address-review workflow, then re-review. Bounds and stalemate handling:
 
-> [!IMPORTANT]
-> **Operating conventions — the autonomy enablers (skip these and unattended runs rot):**
-> - **One durable progress file**, updated every ticket. The single resume anchor.
-> - **Delegate implementation, keep review.** Subagents implement (uncommitted) and
->   review (panel); the orchestrator specs, reviews, commits, merges. Keeps context.
-> - **Full-suite gate before EVERY commit** — targeted tests miss integration breaks.
->   A failing test is a real defect until proven otherwise; **never loosen assertions**
->   to make it pass (prefer real instances or strictly-typed test doubles over
->   permissive catch-all mocks; follow `CLAUDE.md`'s testing rules).
-> - **Per-repo CI is the final gate, not local tests.** Reproduce its EXACT checks
->   locally before merging (lint / format-check / commit-message lint / typecheck /
->   build). They catch what targeted runs miss — formatting, conventional-commit
->   length, and env-default crashes that only surface on a clean boot.
-> - **Fix in-MR, don't defer.** Only carry forward what is genuinely out-of-epic-scope,
->   and say so explicitly (with the owning ticket) rather than silently dropping it.
-> - **Run review personas as adversaries.** The loop's value is catching real defects
->   (auth holes, tenant-isolation leaks, missing field maps, scoring flaws) — brief
->   each persona to try to break the change, not to rubber-stamp.
-> - **No bylines, no self-approval, no chained `add`/`commit`/`push`** per `CLAUDE.md`.
+<!-- glados:include vocabulary/loop-bounds.md -->
+
+4. **Merge** — when the review is clean and CI is green, resolve
+   `merge-authority` from `glados.yaml` and act only as the resolved value
+   permits for a child→integration merge. Poll the pipeline and merge the
+   moment it passes rather than blocking; verify the MR state actually
+   flipped to merged.
+5. **Record** — update the ticket's row in `epic.progress` and commit the
+   update before starting the next ticket: resume durability is per ticket,
+   not per run. Each landed ticket produces a `progress` outcome.
+
+### 3. Close the epic
+- Queue exhausted (epic mode): confirm the integration branch contains exactly
+  the epic's tickets; run the full test suite on it.
+- Open one integration→`branching.default-target` MR via the project platform
+  CLI, with an epic-level `## Summary` and `## Test plan`. Resolve
+  `merge-authority` for that scope; where the resolved value does not permit
+  the merge, opening this MR is the run's final mutating act.
+- Annotate each child ticket ("landed on the integration branch; closes when
+  the epic MR merges") — platform auto-close fires only on a default-branch
+  merge.
+- Mark the epic complete in `epic.progress`; this produces a `progress`
+  outcome. In `--backlog` mode there is no consolidated MR — the run ends when
+  the backlog is exhausted, `epic.progress` marking where the queue stands.
+
+### Operating conventions — the autonomy enablers
+- **Delegate implementation, keep review.** Subagents implement (leaving
+  changes uncommitted) and review; the orchestrator specs, reviews the diff,
+  runs the full suite, commits, and merges — conserving orchestration context
+  for the long haul.
+- **One durable progress record** — `epic.progress` in the ledger, updated as
+  every ticket lands. Never a second copy, never a machine-local file.
+- **A failing test is a real defect until proven otherwise.** Targeted runs
+  miss integration breaks — gate every commit on the full suite; never loosen
+  an assertion or a test double to make it pass.
+- **Fix in-MR, don't defer.** Carry forward only what is genuinely outside
+  the epic's scope, and say so explicitly with the owning ticket — never
+  silently drop a finding.
+
+<!-- glados:include vocabulary/git-conventions.md -->
 
 ### Exit
--   Stop when the backlog is exhausted (integration→main MR open for the human), or
-    when a blocking decision genuinely needs the human (a product call, an
-    irreversible action, a 5-cycle review stalemate). **Escalate with the open
-    question — never loop indefinitely.**
+- Stop when the ticket queue is exhausted, or when a blocking call genuinely
+  needs a human — a product decision, an irreversible action, a review
+  stalemate per the bounds above; the latter produces an `escalation` outcome
+  carrying the open question.

@@ -1,53 +1,74 @@
+---
+name: build-feature
+kind: core
+description: Take one feature from selection to a verified, self-reviewed merge request
+reads: [epic.integration-branch, intent.status, manifest.branching, manifest.merge-authority, manifest.platform]
+writes: [work.base-sha]
+emits: [progress, verdict, escalation]
+mutates: branch
+requires: []
+---
+
 # (GLaDOS) Build Feature
 
-**Goal**: Take one feature from idea to a review-ready Merge Request — the full
-plan → spec → implement → verify pipeline, then open the MR and self-review it.
-This is the entry point of the review loop
-(`build-feature` → `review-mr` ⇄ `address-review`).
-
-## Prerequisites
-- [ ] `{{STATUS}}` exists.
-- [ ] A feature is selected (an "Active Tasks" / roadmap item, or a user brief).
+**Goal**: take one feature from idea to a review-ready merge request. This core
+sequences the four stage workflows, gates the MR on verification, then
+self-reviews the diff. It is the entry point of the review loop
+(build-feature → review-mr ⇄ address-review).
 
 ## Process
 
-### 1. Select & Trace
--   Identify the feature (top "Active Tasks" item, or ask the user).
--   The feature directory `specs/[YYYY-MM-DD]_feature_[slug]/` is created/owned
-    by `plan-feature`; all steps below log to its `README.md`.
+### 1. Select the feature
+- Take the feature from the caller (an epic ticket or a user brief). With no
+  caller, pick the top actionable item from the project status file
+  (`intent.status`). If nothing is actionable, this run produces an
+  `escalation` outcome and stops.
 
-### 2. Refine
--   Run `{{CMD}}plan-feature` — establishes goals, Active Personas, plan.
--   Run `{{CMD}}spec-feature` — produces `requirements.md` + `spec.md`.
+### 2. Claim the branch
+- Resolve `branching` from `glados.yaml`; create the working branch per its
+  `feature` naming pattern. The commit the branch is cut from is this run's
+  base (`work.base-sha`, already recorded at run start).
 
-> [!IMPORTANT]
-> **Validation**: never create a `plans/` directory or numbered plan files. All
-> working traces live under `specs/[YYYY-MM-DD]_...`.
+### 3. Run the pipeline
+Run each stage as its own workflow, in order. Each consumes the previous
+stage's output — do not fold stages together or skip ahead.
 
-### 3. Build
--   Run `{{CMD}}implement-feature`.
--   Run `{{CMD}}verify-feature` — fresh-evaluator gate + test/lint regression.
+| Stage     | Do                                  | Produces                        |
+|-----------|-------------------------------------|---------------------------------|
+| Plan      | run the plan-feature workflow       | goals, approach, persona roster |
+| Spec      | run the spec-feature workflow       | requirements + spec             |
+| Implement | run the implement-feature workflow  | the working diff, with tests    |
+| Verify    | run the verify-feature workflow     | independent verification result |
 
-> [!IMPORTANT]
-> Do not proceed to the MR until `verify-feature` passes. A verified feature is
-> the precondition for review.
+- **Verified-before-MR gate**: do not proceed past this step until
+  verify-feature succeeds. If it cannot succeed within its cycle bound (the
+  bound comes from `params.evaluator.max-cycles` in `glados.yaml`), this run
+  produces an `escalation` outcome and stops — an unverified MR is worse than
+  no MR.
 
-### 4. Open the Merge Request
--   Commit per the project's git conventions (read `CLAUDE.md`): conventional
-    commit, no bylines, separate `add` / `commit` / `push`.
--   Open the MR **against the feature's integration branch** (not `main` if the
-    project uses an epic/feature branch — confirm the target from
-    `{{STATUS}}`), using the project's CLI (`glab` / `gh` per `CLAUDE.md`).
--   Description carries `## Summary` and `## Test plan`; bullet the key changes.
+### 4. Commit
 
-### 5. Self-Review
--   Critically review your own diff against the codebase conventions and the
-    closest in-tree precedent. Find real issues; record strengths to keep.
--   **Post the self-review as an MR comment.** Queue any findings for the
-    consolidated fix pass rather than editing immediately (keep review line
-    references stable).
+<!-- glados:include vocabulary/git-conventions.md -->
 
-### 6. Handoff
--   **Trace**: log the MR URL + self-review in `specs/[...]/README.md`; move the
-    task status to "MR open / in review" in `{{STATUS}}`.
--   Run `{{CMD}}review-mr` to begin the adversarial review loop.
+### 5. Open the merge request
+- Target branch: when this build runs inside an epic, read
+  `epic.integration-branch`; otherwise resolve `branching.default-target` from
+  `glados.yaml`.
+- Open the MR with the project platform CLI (per `glados.yaml` `platform:`).
+- Description carries `## Summary` and `## Test plan` sections; bullet the key
+  changes; link the spec and the verification result.
+- Resolve `merge-authority` from `glados.yaml` for who may merge — this
+  document states no authority, and this step never merges.
+
+### 6. Self-review
+- Review your own diff as a critic: against the spec and the closest in-tree
+  precedent. Hunt for real defects and note strengths worth keeping — a
+  contentless "looks good" self-review is a skipped step, not a passed one.
+- This step produces a `verdict` outcome.
+- Do not edit the branch while findings are open; queue fixes so review line
+  references stay stable.
+
+### 7. Handoff
+- This run produces a `progress` outcome carrying the MR reference and the
+  self-review result.
+- Run the review-mr workflow to begin the adversarial review loop.
