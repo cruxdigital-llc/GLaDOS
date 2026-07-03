@@ -10,4 +10,4 @@ Templates are static files that are copied to the user's project to bootstrap GL
     -   Known Issues.
     -   Recent Changes.
 
-This file is installed to the project root and is updated automatically by the `observability` module.
+This file is scaffolded into `product-knowledge/` at install (create-only) and kept current by the workflows that write the `intent.status` state key (`adopt-codebase`, `steward`).

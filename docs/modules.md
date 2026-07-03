@@ -1,16 +1,27 @@
 # Modules
 
-Modules are reusable units of logic ("sub-routines") that are invoked by multiple workflows. They ensure consistency and adherence to GLaDOS standards.
+A v2 module is a markdown file in `src/modules/` with `kind: module`
+frontmatter declaring the same contract fields as a core (`reads:`,
+`writes:`, `emits:`, `mutates:`, `requires:`). Modules are **inlined into
+cores at compile time** — an enabled module's body appears in the installed
+workflow text; an unselected module is simply absent, never a dangling
+reference. Selection is per workflow in `glados.yaml` (`workflows:` lists,
+with `default-modules:` for unlisted workflows); a core's `requires:` names
+the modules that must be enabled for it, and the compiler rejects a manifest
+that omits them.
 
-## Core Modules
+## Compiled modules
 
--   **`observability.md`**: Manages the "Trace" (Session Log) and "Status" (Project State). Ensures every workflow step is recorded in `specs/[YYYY-MM-DD]_...` and reflected in `PROJECT_STATUS.md`.
--   **`persona-context.md`**: The persona management system. Supports *review* personas (critique during gates), *operating* personas (session-level behavior), and *team manifests* for named combinations.
--   **`standards-gate.md`**: Enforces documented standards at pre- and post-implementation checkpoints. Uses 3-tier severity (`must`/`should`/`may`) and cross-checks `core` philosophies.
--   **`capabilities.md`**: Introspects the agent's available tools (Browser, SQL, etc.) and maps them to the current task to enhance execution.
--   **`interaction-proxy.md`**: Enables autonomous execution by having the agent answer its own interactive questions based on project context.
--   **`pattern-observer.md`**: *(Phase 2)* Passively detects and logs implicit standards and philosophies during normal workflow execution.
+| Module | Emits | Does |
+|---|---|---|
+| `standards-gate` | — | Gate the work artifact against the project's documented standards before advancing. |
+| `mr-review-panel` | verdict | Run one adversarial, parallel, fresh-agent review panel over the open merge request. Seats the standing lenses plus manifest and feature personas; parameterized by `params.review-panel`. |
+| `evaluator-spawn` | verdict | Spawn a context-isolated evaluator to verify finished work against a self-contained brief. Parameterized by `params.evaluator`. |
 
-## Legacy
+## Retired v1 modules
 
--   **`persona-review.md`**: Superseded by `persona-context.md`. Retained for backward compatibility but no longer referenced by workflows.
+The seven v1 module files are deleted from the tree; their jobs moved into v2
+structure (the compiled epilogue, manifest keys, `mr-review-panel`,
+`evaluator-spawn`, and the `retrospect` core). The full mapping is in the
+"Dead modules and what replaced them" table of
+[MIGRATION.md](../MIGRATION.md).

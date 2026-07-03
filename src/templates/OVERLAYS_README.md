@@ -1,25 +1,16 @@
 # GLaDOS Overlays
 
-This directory allow you to safely customize GLaDOS workflows, modules, and personas without modifying the core library.
+Overlay ingestion was a **v1** installer feature (`glados-update.sh
+--ingest-overlays`), and those scripts are retired; the v2 compiler does not
+read this directory.
 
-## How to use
+To customize GLaDOS in v2:
 
-1.  Create a subdirectory for your overlay (e.g., `my-custom-overlay/`).
-2.  Copy any file from the installed GLaDOS source (workflows, modules, personas) into this directory.
-3.  Modify the file as needed.
-4.  Run the update command to apply your changes:
+- edit lane-2 keys in `glados.yaml` (channels, decisions, params, the persona
+  roster) — live, no reinstall;
+- drop project personas in `product-knowledge/personas/` (searched before the
+  vendored `.glados/personas/` library);
+- keep project standards and philosophies under `product-knowledge/`.
 
-```bash
-./bin/glados-update.sh --ingest-overlays
-```
-
-## Structure
-
-```
-product-knowledge/
-  overlays/
-    README.md
-    my-team-standards/        <-- Your overlay name
-      plan-feature.md         <-- Overrides default plan-feature
-      architect.md            <-- Overrides default architect persona
-```
+A structural change to workflow text means editing the GLaDOS source and
+re-running `python bin/glados.py install`.

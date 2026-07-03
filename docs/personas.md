@@ -6,7 +6,7 @@ Personas define specific viewpoints and responsibilities that the agent adopts d
 
 | Type | Description |
 |---|---|
-| **review** | Used during `persona-context` review gates — a specific *lens* applied during review |
+| **review** | Seated on review panels (`mr-review-panel`, `brunch`) — a specific *lens* applied during review |
 | **operating** | Drives agent *behavior* during execution — priorities, tone, tool preferences |
 | **hybrid** | Works as both review and operating persona |
 
@@ -42,4 +42,4 @@ teams:
 
 ## Customization
 
-Add new personas by placing a markdown file with the proper frontmatter in this directory.
+Add new personas by placing a markdown file with the proper frontmatter in your project's `product-knowledge/personas/` directory and naming it in `params.review-panel.personas`. The library personas here are vendored into `.glados/personas/` at install; the project directory is searched first.
