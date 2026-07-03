@@ -1,0 +1,130 @@
+# GLaDOS v2 State-Key Registry
+#
+# Every piece of shared state a workflow core or module may read or write is a
+# FLAT TOKEN registered here, with exactly one declared home. Cores/modules
+# declare `reads:` / `writes:` lists of these tokens in frontmatter; the
+# compiler fails an install where any enabled `reads:` token has no enabled
+# writer. Tokens are flat strings — no paths, no templates, no wildcards.
+#
+# `home:` values:
+#   run-record   — inside the current run's record file (.glados/runs/…)
+#   ledger       — the run-ledger directory/branch itself
+#   manifest     — glados.yaml (lane-2 runtime read; writer is the human/MR)
+#   repo:<path>  — a versioned repo file
+#
+# Keys with home: manifest list `writer: human` — the compiler treats them as
+# always-written (the manifest schema requires them), so reading them never
+# fails the check; WRITING them from a workflow is forbidden.
+
+keys:
+  run.record:
+    home: ledger
+    doc: The current run's record file. Written by every core's compiled epilogue.
+  run.active-personas:
+    home: run-record
+    doc: >
+      Persona roster for review passes of this feature. Written by plan-feature;
+      when absent, readers fall back to manifest key params.review-panel.personas.
+  review.cycle:
+    home: run-record
+    doc: Review-loop cycle counter for the feature's MR. Written by review-mr epilogue.
+  review.reviewed-head:
+    home: run-record
+    doc: >
+      The MR HEAD SHA last reviewed. Written by review-mr epilogue; read by the
+      re-review guard.
+  review.verdicts:
+    home: run-record
+    doc: >
+      The tallied per-persona verdict objects for the latest cycle. Written by
+      review-mr; read by address-review.
+  epic.progress:
+    home: ledger
+    doc: >
+      The epic run record - ticket table (id | depends-on | holder | status),
+      integration branch, operating rules. Written and updated by run-epic;
+      read by run-epic on resume. build-feature reads the integration branch
+      through epic.integration-branch, which lives inside this record.
+  epic.integration-branch:
+    home: run-record
+    doc: >
+      The integration branch child MRs target. Written by run-epic at epic
+      init (inside epic.progress); read by build-feature. Outside an epic,
+      readers fall back to manifest key branching.default-target.
+  work.base-sha:
+    home: run-record
+    doc: >
+      The base commit recorded at claim time. Written by any mutating core's
+      preamble; read by the yield-on-external-edit rule in the epilogue.
+  observations.pending:
+    home: "repo:product-knowledge/observations/"
+    doc: >
+      Observed-standard / observed-philosophy candidates awaiting promotion.
+      Written by retrospect, review-codebase, and brunch; read and cleared
+      (which is a write) by steward.
+  standards.index:
+    home: "repo:product-knowledge/standards/"
+    doc: >
+      The standards tree (and index) applied by the standards gate. Written by
+      steward (promotions); read by standards-gate, mr-review-panel, and
+      verify-feature (standards-stale audit).
+  intent.mission:
+    home: "repo:product-knowledge/MISSION.md"
+    doc: Mission / product intent. Written by the intent core; read by plan-feature.
+  intent.roadmap:
+    home: "repo:product-knowledge/ROADMAP.md"
+    doc: >
+      The Now/Next/Later roadmap. Written by the intent core; read by
+      plan-feature when framing a feature.
+  intent.status:
+    home: "repo:product-knowledge/PROJECT_STATUS.md"
+    doc: >
+      The schema'd project status file. Written by adopt-codebase (adoption
+      metadata) and steward (documentation refresh); read by intent,
+      plan-feature, build-feature, run-epic, review-codebase, retrospect.
+
+  # ---- manifest keys (lane 2: runtime-read; writer is the human via MR) ----
+  manifest.platform:
+    home: manifest
+    writer: human
+    doc: >
+      The project platform (gitlab | github). Cores that open MRs, file
+      tickets, or query pipelines resolve it to pick the platform CLI.
+  manifest.phase:
+    home: manifest
+    writer: human
+    doc: Required project phase - nascent | evolving | production | sunset.
+  manifest.channels:
+    home: manifest
+    writer: human
+    doc: Outcome-type -> sink bindings. Read by every epilogue at publish time.
+  manifest.decisions:
+    home: manifest
+    writer: human
+    doc: Decision-rights keys (agent | record | escalate | forbidden).
+  manifest.merge-authority:
+    home: manifest
+    writer: human
+    doc: >
+      Who may merge - human | agent-integration-only | agent. No workflow text
+      may state a merge authority; all read this key.
+  manifest.branching:
+    home: manifest
+    writer: human
+    doc: Branch naming + default MR target conventions.
+  manifest.panel-personas:
+    home: manifest
+    writer: human
+    doc: >
+      Default review-panel roster when run.active-personas is absent. Maps to
+      the manifest key params.review-panel.personas in glados.yaml.
+
+# Outcome types (emitted through channels; a type emitted by an enabled core
+# with zero sinks bound in manifest.channels is an install error):
+outcome-types:
+  - progress      # run summaries; always at least the ledger
+  - verdict       # review/evaluator outcomes
+  - escalation    # loop bounds hit, forbidden decisions, blockers
+  - bug           # defects found outside the current change
+  - decision      # record-class decisions (phase decision-rights 'record')
+  - observation   # observed standards/philosophies, persona-calibration signals

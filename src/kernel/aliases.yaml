@@ -1,0 +1,21 @@
+# GLaDOS v2 command aliases — the permanent one-line shims for v1 names.
+#
+# Old CLAUDE.md files, agent memory, and human habit will invoke v1 verbs for
+# years. A failed invocation makes the model reconstruct a v1 workflow from
+# training data — an ungoverned ghost inside v2. Each alias below is emitted as
+# a one-line pointer by the claude / claude-plugin / gemini / antigravity
+# adapters, redirecting a dead name to its live core.
+#
+# The compiler checks (alias-integrity) that every target is a real core.
+
+aliases:
+  mission: intent
+  plan-product: intent
+  autonomous-loop: run-epic
+  identify-bug: fix-bug
+  plan-fix: fix-bug
+  implement-fix: fix-bug
+  verify-fix: fix-bug
+  consolidate: steward
+  establish-standards: steward
+  recombobulate: steward
