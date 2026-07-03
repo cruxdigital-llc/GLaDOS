@@ -2,6 +2,10 @@
 
 **Goal**: Ensure the work satisfies the specific concerns of all active stakeholders.
 
+> For the parallel fresh-agent panel that reviews an open Merge Request, see
+> `mr-review-panel.md`. This module adopts personas sequentially in-context
+> during build phases.
+
 ## Instructions
 
 ### 1. Identify Personas
