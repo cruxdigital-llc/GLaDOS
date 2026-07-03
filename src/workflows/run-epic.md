@@ -44,7 +44,7 @@ For each child ticket, on a `feat/<id>` branch off the integration branch:
     conserves orchestration context for the long haul. **MR targets the integration
     branch.**
 2.  **Review** — `{{CMD}}review-mr`: spawn the parallel multi-persona panel
-    (`{{MODULES}}/review-personas.md` — UAT, Adversarial, Standards,
+    (`{{MODULES}}/mr-review-panel.md` — UAT, Adversarial, Standards,
     Philosophy, Dead-code **+** the ticket's Active Personas). Each fresh subagent
     reviews a self-contained brief, **posts an MR comment**, and returns a verdict.
 3.  **Address** — if any persona `REQUEST_CHANGES`, `{{CMD}}address-review`:

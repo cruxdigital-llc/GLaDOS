@@ -26,7 +26,7 @@ approves, the MR is review-clean. Otherwise, hand off to `{{CMD}}address-review`
 > author has not responded, do not re-run — there is nothing new to review.
 
 ### 3. Spawn the Panel (parallel)
-Invoke module: `{{MODULES}}/review-personas.md`
+Invoke module: `{{MODULES}}/mr-review-panel.md`
 -   **Context**: the panel = the standing lenses (UAT, Adversarial, Standards,
     Philosophy, Dead-code) **plus** the feature's Active Personas.
 -   Spawn **one fresh agent per panelist, in parallel** (see

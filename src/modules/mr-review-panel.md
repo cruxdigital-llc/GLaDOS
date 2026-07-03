@@ -1,12 +1,12 @@
-# GLaDOS Review Personas Module
+# GLaDOS MR Review Panel Module
 
 **Goal**: Run one adversarial, parallel, multi-persona review panel over an open
 Merge Request. Every panelist is a fresh agent with no authoring context; each
 posts an MR comment and returns a structured verdict for the caller to tally.
 
-> **Not to be confused with** `persona-review.md`, which adopts personas
-> sequentially in-context during build phases and logs feedback to the trace
-> `README.md`. This module is the parallel fresh-agent panel for MR review.
+> For sequential in-context persona passes during build phases (feedback logged
+> to the trace `README.md`), see `persona-review.md`. This module is the
+> parallel fresh-agent panel for MR review.
 
 ## Contract
 This module inherits the **context isolation** invariant of
