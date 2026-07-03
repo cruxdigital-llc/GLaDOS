@@ -4,12 +4,23 @@
 Merge Request. Every panelist is a fresh agent with no authoring context; each
 posts an MR comment and returns a structured verdict for the caller to tally.
 
+> **Not to be confused with** `persona-review.md`, which adopts personas
+> sequentially in-context during build phases and logs feedback to the trace
+> `README.md`. This module is the parallel fresh-agent panel for MR review.
+
 ## Contract
-This module inherits the two invariants of `evaluator-spawn.md`:
-1. **Context isolation**: each panelist starts with a clean context window — no
-   knowledge of the implementation journey, only the self-contained review brief.
-2. **Adversarial stance**: panelists are briefed to try to **break** the change,
-   not to rubber-stamp it. Approval must be earned.
+This module inherits the **context isolation** invariant of
+`evaluator-spawn.md` — each panelist starts with a clean context window, no
+knowledge of the implementation journey, only the self-contained review brief —
+and adds an invariant of its own:
+
+-   **Adversarial stance**: panelists are briefed to try to **break** the
+    change, not to rubber-stamp it. Approval must be earned.
+
+Unlike `evaluator-spawn.md`, communication is **not** filesystem-only: each
+panelist posts an MR comment and returns a structured verdict object to the
+caller, rather than writing `evaluation.md`. The MR itself is the shared
+artifact.
 
 ## Panel Composition
 The panel = the **standing lenses** + the feature's **Active Personas**.

@@ -2,6 +2,10 @@
 
 **Goal**: Ensure the work satisfies the specific concerns of all active stakeholders.
 
+> **Not to be confused with** `review-personas.md`, which spawns a parallel
+> panel of fresh agents to review an open Merge Request. This module adopts
+> personas sequentially in-context during build phases.
+
 ## Instructions
 
 ### 1. Identify Personas

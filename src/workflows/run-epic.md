@@ -77,7 +77,8 @@ For each child ticket, on a `feat/<id>` branch off the integration branch:
 >   review (panel); the orchestrator specs, reviews, commits, merges. Keeps context.
 > - **Full-suite gate before EVERY commit** — targeted tests miss integration breaks.
 >   A failing test is a real defect until proven otherwise; **never loosen assertions**
->   to make it pass (no MagicMock; prefer typed fakes / spec'd mocks per `CLAUDE.md`).
+>   to make it pass (prefer real instances or strictly-typed test doubles over
+>   permissive catch-all mocks; follow `CLAUDE.md`'s testing rules).
 > - **Per-repo CI is the final gate, not local tests.** Reproduce its EXACT checks
 >   locally before merging (lint / format-check / commit-message lint / typecheck /
 >   build). They catch what targeted runs miss — formatting, conventional-commit
