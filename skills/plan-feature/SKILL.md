@@ -1,11 +1,5 @@
 ---
-description: Analyze requirements and create a high-level plan for a new feature
+description: "Analyze requirements and produce a high-level plan and review-persona roster for one feature"
 ---
 
-Read and follow the workflow at `${CLAUDE_PLUGIN_ROOT}/src/workflows/plan-feature.md`.
-
-When resolving path references in the workflow:
-- `{{MODULES}}/` means `${CLAUDE_PLUGIN_ROOT}/src/modules/`
-- `{{PERSONAS}}/` means `${CLAUDE_PLUGIN_ROOT}/src/personas/`
-- `{{STATUS}}` means `product-knowledge/PROJECT_STATUS.md`
-- `{{CMD}}` means the `/glados:` command prefix (e.g. `{{CMD}}build-feature` → `/glados:build-feature`)
+Read and follow the compiled workflow at `${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/plan-feature.md`.

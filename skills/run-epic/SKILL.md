@@ -1,11 +1,5 @@
 ---
-description: Drive a multi-ticket epic autonomously to a single integration→main Merge Request
+description: "Drive a multi-ticket epic or the backlog to one human-reviewable integration MR"
 ---
 
-Read and follow the workflow at `${CLAUDE_PLUGIN_ROOT}/src/workflows/run-epic.md`.
-
-When resolving path references in the workflow:
-- `{{MODULES}}/` means `${CLAUDE_PLUGIN_ROOT}/src/modules/`
-- `{{PERSONAS}}/` means `${CLAUDE_PLUGIN_ROOT}/src/personas/`
-- `{{STATUS}}` means `product-knowledge/PROJECT_STATUS.md`
-- `{{CMD}}` means the `/glados:` command prefix (e.g. `{{CMD}}build-feature` → `/glados:build-feature`)
+Read and follow the compiled workflow at `${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/run-epic.md`.
