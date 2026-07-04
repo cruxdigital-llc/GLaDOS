@@ -159,7 +159,9 @@ In increasing depth:
    walkthrough and your first week.
 2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
    runs.
-3. **[docs/guides/](docs/guides/)** — task-oriented guides; see also
+3. **[docs/guides/](docs/guides/)** — task-oriented guides, including SDA
+   conformance (`sda: true` in `glados.yaml` — claims + work-unit log
+   maintained by every run) and the Wheatley board; see also
    [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
 4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
    file, and the run records actually work.

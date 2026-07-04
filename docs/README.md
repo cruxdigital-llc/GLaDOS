@@ -57,7 +57,8 @@ after its opening paragraph.
 - [overlays.md](overlays.md) — v1's customization mechanism, now
   retired, and what replaced it in v2.
 - [standards/](standards/) — the SDA (Structured Development Artifacts)
-  Standard v1.0 and the GLaDOS Profile v1.0.
+  Standard v1.0 and the GLaDOS Profiles: v2.0 (how a v2 install conforms —
+  the current mapping, enabled by `sda: true`) and v1.0 (historical).
 - [V2_STRATEGY.md](V2_STRATEGY.md) — design rationale for v2: the audit
   evidence and the nine load-bearing decisions. The deep end.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: moving an existing

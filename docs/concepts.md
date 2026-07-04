@@ -48,6 +48,11 @@ team states policy. Its load-bearing keys:
   `new-dependency: agent`, `destructive-data-op: escalate`.
 - **`merge-authority:`** — who may merge: `human`, `agent-integration-only`,
   or `agent`.
+- **`sda:`** — explicit-only, default `false`: opts the project into SDA
+  (Structured Development Artifacts) conformance. Install scaffolds the
+  artifacts (`claims.md`, the work-unit log), and every run then records a
+  claim before mutating and appends its work-unit row before ending. No
+  phase preset may set it — see [guides/sda.md](guides/sda.md).
 
 Workflow text never states any of these; it reads the keys at run time. Two
 workflows therefore cannot contradict each other about who merges — the

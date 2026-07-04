@@ -94,6 +94,12 @@ keys deserve attention:
   failures. Weaken them only with the explicit
   `visibility-acknowledged: ledger-only` confession line.
 
+**SDA repos:** if your v1 repo carries SDA artifacts (`claims.md`,
+`product-knowledge/SPEC_LOG.md`, `SDA: v1.0` headers), set `sda: true` in the
+manifest — the artifacts carry over as-is (install scaffolding is create-only
+and never clobbers), and every v2 run resumes maintaining the claims file and
+work-unit log. See [docs/guides/sda.md](docs/guides/sda.md).
+
 Then protect the manifest with CODEOWNERS, so a phase change is always a
 human-approved MR — agents may *propose* a phase change, never merge one:
 

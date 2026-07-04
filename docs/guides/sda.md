@@ -1,99 +1,130 @@
 # SDA (Structured Development Artifacts) in GLaDOS v2
 
 **SDA** is a tool-agnostic markdown format for tracking phased software
-development work: a roadmap of trackable units, a status document, and a
-claims file recording who is working on what — all plain markdown committed
-to the repo, so any agent, CI job, or human can read and write the same
-state. The format is defined by two versioned documents that ship with
+development work: a roadmap of trackable units, a status document, a work-unit
+log, and a claims file recording who is working on what — all plain markdown
+committed to the repo, so any agent, CI job, or human can read and write the
+same state. The format is defined by versioned documents that ship with
 GLaDOS:
 
 - [docs/standards/sda-standard-v1.md](../standards/sda-standard-v1.md) — the
   standard itself (SDA v1.0), tooling-neutral
+- [docs/standards/sda-profile-glados-v2.md](../standards/sda-profile-glados-v2.md)
+  — the **v2 profile**, mapping the standard onto what v2 actually writes
+  (the run ledger as work units, the compiled kernel as the claims/log writer)
 - [docs/standards/sda-profile-glados-v1.md](../standards/sda-profile-glados-v1.md)
-  — the GLaDOS profile, mapping the standard's concepts onto GLaDOS
-  conventions
+  — the v1 profile, kept unchanged as the historical mapping for v1-era repos
 
-This guide covers SDA's current status in GLaDOS v2: how you opt in, what v2
-replaced, and when opting in is still the right call.
+This guide covers how you turn SDA on, what the installer scaffolds, and what
+every workflow run does differently once it is on.
 
-## Current status: opt-in, via the init skill
+## Turning it on: `sda: true`
 
-SDA conformance is **not** part of a default v2 install, and there is no
-installer flag for it — `python bin/glados.py install --help` offers only
-`--target`, `--mode`, and `--source`, and the compiler source contains no SDA
-handling at all. The one entry point is the **init skill**: the
-`/glados:init` bootstrap command that creates the manifest (`glados.yaml`,
-the project configuration file) and scaffolds `product-knowledge/`. Its step
-3 asks:
+SDA conformance is a first-class, opt-in manifest key:
 
-> "Would you like to enable SDA (Structured Development Artifacts)
-> conformance?"
+```yaml
+# glados.yaml
+sda: true        # explicit-only; default false
+```
 
-Answer yes and it copies, from the GLaDOS templates:
+Two properties worth knowing:
 
-- **`claims.md`** at the project root — the coordination file recording who
-  has claimed which roadmap item (dated with today's date)
-- **`product-knowledge/SPEC_LOG.md`** — the historical record of feature
-  specifications, one entry per landed feature with its merge commit
-- **`product-knowledge/ROADMAP.md`** — from the SDA-conformant roadmap
-  template (or, if a roadmap already exists, it gets an `<!-- SDA: v1.0 -->`
-  header instead of being replaced)
-- an `<!-- SDA: v1.0 -->` header on `product-knowledge/PROJECT_STATUS.md` if
-  missing
-- both versioned standards documents above into
-  `product-knowledge/standards/`, so the repo carries its own reference copy
+- **Explicit-only.** No phase preset may set it. Conformance is a team
+  declaration about how the repo coordinates — not something `production`
+  turns on for you or `nascent` turns off. The assembly report shows the row
+  as `sda: true (explicit)`.
+- **Type-checked.** The key must be a bool; the installer rejects anything
+  else.
 
-Nothing else in the install changes: the compiled workflows, channels, and CI
-templates are identical with or without SDA.
+Then re-run the install (`python bin/glados.py install --mode <mode> --target
+/path/to/your/project`) so the artifacts get scaffolded. If you only ever use
+the Claude Code plugin and never run the installer, the `/glados:init` skill
+documents a manual fallback with the same result.
 
-## What v2 replaced
+## What install scaffolds
 
-v2 restructured the two artifacts SDA leaned on hardest, which is why SDA
-moved from ambient convention to explicit opt-in:
+With `sda: true`, the installer scaffolds the SDA artifacts — **create-only,
+never clobbering** an existing file:
 
-- **`SPEC_LOG.md` → the run ledger.** v2's committed record of work is
-  `.glados/runs/` — exactly one markdown record per workflow run, written by
-  a compiled epilogue no workflow can skip, checked by the `verify-ledger` CI
-  backstop. A separate hand-curated spec log duplicates that; on a pure-v2
-  repo the ledger is the living record and `SPEC_LOG.md` exists only for SDA
-  conformance.
-- **`claims.md` → leases (v2.1).** v2.0.0 ships only the always-on base-SHA
-  yield rule (detect that someone else moved the branch; yield rather than
-  force-push). The full "who holds what" primitive arrives in the v2.1
-  coordination release as **lease files** — committed lockfiles carrying
-  scope, holder, intent, and TTL, released automatically by the epilogue.
-  That is `claims.md`'s job, done with enforcement. Until v2.1 lands,
-  `claims.md` is the available claims mechanism.
+- **`claims.md`** at the repo root — the coordination file recording who has
+  claimed what
+- **`product-knowledge/SPEC_LOG.md`** — the work-unit log, created with the
+  standard's table header
+- an **`<!-- SDA: v1.0 -->` header** prepended to
+  `product-knowledge/ROADMAP.md` and `PROJECT_STATUS.md` — only if the file
+  exists and lacks it
+- the **standards documents** (`sda-standard-v1.md` and both profiles) copied
+  into `product-knowledge/standards/`, so the repo carries its own reference
 
-## When you would still opt in
+The assembly report lists exactly what was scaffolded. Existing SDA repos
+lose nothing: files already present are left byte-for-byte alone.
+
+## What runs do differently
+
+The compiled preamble and epilogue of **every** workflow carry conditional
+SDA steps — present in every compile, gated on the manifest at run time
+(so the checked-in plugin build behaves identically to a repo install, and
+flipping the key changes behavior on the next run without a recompile;
+only the scaffolding is install-time):
+
+- **Before mutating** (preamble): the run appends a claim to `claims.md` —
+  workflow, scope, holder, timestamp. An existing uncleared claim on the same
+  scope is treated as contention: coordinate, do not clobber.
+- **Before ending** (epilogue): the run appends its work-unit row to
+  `product-knowledge/SPEC_LOG.md` — date, workflow, scope, outcome, links —
+  and clears its `claims.md` entry, both riding the run-record commit.
+
+With `sda: false` (or the key absent) the steps are skipped and nothing else
+changes: the compiled workflows are otherwise identical.
+
+The registry entries for these two files are `sda.claims` and `sda.spec-log`
+in [src/kernel/state-registry.yaml](../../src/kernel/state-registry.yaml).
+
+## How this fits the v2 architecture
+
+- **Work units = the run ledger.** v2 retired v1's per-feature `specs/`
+  directories; the v2 profile declares `.glados/runs/` records the conforming
+  work-unit equivalent — each record is the work unit and its trace log in
+  one file. See the profile's
+  [declared divergence](../standards/sda-profile-glados-v2.md) for the honest
+  fine print.
+- **`SPEC_LOG.md` complements the ledger rather than duplicating it by
+  hand.** The ledger is one file per run; the work-unit log is the one-line
+  audit trail across runs — and because the epilogue writes it, it stays
+  current by construction instead of by convention.
+- **`claims.md` predates leases.** v2.0.0's always-on concurrency answer is
+  the base-SHA yield rule; the claims file adds the "who holds what"
+  declaration SDA consumers (and `run-epic`'s contention awareness) read.
+
+## When to opt in
 
 - **You run Wheatley.** The companion Kanban board renders its claims overlay
   from the claims file and its backlog from the SDA roadmap — see
   [wheatley.md](wheatley.md), including the path note (Wheatley reads the
-  claims file under `product-knowledge/`, while init writes it at the repo
+  claims file under `product-knowledge/`, while GLaDOS writes it at the repo
   root — keep it where Wheatley looks if you use both).
-- **You have an existing SDA repo.** Projects already carrying SDA artifacts
-  (v1-era GLaDOS repos, or other tooling that speaks the format) should keep
-  conformance so their history and integrations stay valid; init preserves
-  existing files and only adds headers.
-- **You coordinate multiple agents before v2.1.** Until leases ship, a
-  claims file is the documented, git-native way to say "this item is taken."
-- **Other SDA tooling.** Anything that consumes the standard — boards, CI
-  dashboards, cross-repo reports — keeps working because the format is
+- **You have an existing SDA repo.** Set the key and the artifacts carry
+  over; scaffolding only creates what is missing and adds headers.
+- **You coordinate multiple agents or humans.** The claims file is the
+  git-native way to say "this scope is taken", and with `sda: true` every
+  mutating run says it automatically.
+- **Other SDA tooling.** Boards, CI dashboards, cross-repo reports — anything
+  that consumes the standard keeps working, because the format is
   deliberately tool-agnostic.
 
-If none of these apply, skip it: the run ledger plus `PROJECT_STATUS.md` and
-`ROADMAP.md` (all standard v2 artifacts) already cover a single-team,
-single-agent project.
+If none of these apply, leave the key off: the run ledger plus
+`PROJECT_STATUS.md` and `ROADMAP.md` (all standard v2 artifacts) already
+cover a single-team, single-agent project.
 
 ## Summary
 
 | | |
 |---|---|
-| **Works today** | Opt-in through `/glados:init` step 3: claims file, `SPEC_LOG.md`, SDA roadmap template, `SDA: v1.0` headers, and both standards docs copied into `product-knowledge/standards/` |
-| **Coming in v2.1–v2.2** | Lease files (lockfile backend) subsume `claims.md` with epilogue-enforced release; `verify-ledger` upgraded to compare emitted events against manifest claims |
-| **Your responsibility** | Decide at init time (no `--sda` installer flag exists); keep SDA files current by hand or via agent instructions — no v2 compile check enforces SDA conformance; relocate `claims.md` under `product-knowledge/` if pairing with Wheatley |
+| **Works today** | `sda: true` in `glados.yaml`: install scaffolds `claims.md`, `SPEC_LOG.md`, `SDA: v1.0` headers, and the standards docs (create-only); every mutating run records a claim and every run appends its `SPEC_LOG` work-unit row and clears its claim — native kernel behavior, no recompile to flip |
+| **Coming in v2.1** | The lease module's lockfile backend writes `claims.md`-compatible entries when `sda: true` — claims become a view over enforced leases (direction, not shipped) |
+| **Your responsibility** | Set the key explicitly (no phase sets it for you) and re-run install to scaffold; keep `ROADMAP.md` inside the SDA grammar if consumers key on item IDs; relocate `claims.md` under `product-knowledge/` if pairing with Wheatley |
 
 See also: [wheatley.md](wheatley.md) for the board that consumes these
-artifacts, and [../../MIGRATION.md](../../MIGRATION.md) for how v1 traces
+artifacts, the [v2 profile](../standards/sda-profile-glados-v2.md) for the
+exact mapping, and [../../MIGRATION.md](../../MIGRATION.md) for how v1 traces
 convert to the run ledger.

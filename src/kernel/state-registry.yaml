@@ -91,6 +91,29 @@ keys:
       metadata) and steward (documentation refresh); read by intent,
       plan-feature, build-feature, run-epic, review-codebase, retrospect.
 
+  # ---- SDA conformance keys (active only when glados.yaml sets sda: true) --
+  # Deliberately absent from every core/module frontmatter: their writers are
+  # the compiled preamble/epilogue's conditional SDA steps, which exist in
+  # every compile and no-op when the key is off — so declaring reads: on them
+  # would fail the readers-without-writers check on non-SDA installs. The
+  # reader relationships below are documentation, not compile edges.
+  sda.claims:
+    home: "repo:claims.md"
+    doc: >
+      The SDA claims file at the repo root (grammar: SDA standard v1.0,
+      Claims; mapping: docs/standards/sda-profile-glados-v2.md). Written by
+      the compiled preamble's claim step and cleared by the compiled epilogue
+      when `sda: true`; read by run-epic for contention awareness and,
+      externally, by Wheatley's claims overlay. Inert when `sda:` is absent
+      or false.
+  sda.spec-log:
+    home: "repo:product-knowledge/SPEC_LOG.md"
+    doc: >
+      The SDA work-unit log — one appended row per run (date, workflow,
+      scope, outcome, links), newest first. Written by the compiled epilogue
+      when `sda: true`; consumed outside the compile graph by SDA tooling
+      and audits.
+
   # ---- manifest keys (lane 2: runtime-read; writer is the human via MR) ----
   manifest.platform:
     home: manifest

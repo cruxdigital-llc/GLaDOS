@@ -83,6 +83,16 @@ params:
   evaluator:
     max-cycles: 3
 
+# SDA (Structured Development Artifacts) conformance — EXPLICIT-ONLY, and a
+# team declaration: phase presets may never set it. When true, install
+# scaffolds the conformance artifacts create-only (claims.md at the repo
+# root, product-knowledge/SPEC_LOG.md, `SDA: v1.0` headers on an existing
+# ROADMAP.md/PROJECT_STATUS.md, the sda-*.md standards docs into
+# product-knowledge/standards/), and every compiled workflow records claims
+# in claims.md before mutating and appends its work-unit row to SPEC_LOG.md
+# at run end. See docs/guides/sda.md.
+sda: false
+
 # Concurrency (v2.1 — the lease module; v2.0.0 ships only the base-SHA yield
 # rule, which is always on and not configurable).
 # concurrency:

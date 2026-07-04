@@ -28,14 +28,23 @@ Bootstrap the GLaDOS framework in the current project directory.
      - `observed-philosophies.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/OBSERVED_PHILOSOPHIES.md`
 
 3. **SDA Conformance (Optional)**:
-   Ask the user: "Would you like to enable SDA (Structured Development Artifacts) conformance? This adds a claims.md coordination file, an SDA-conformant ROADMAP template, and copies the SDA standard reference docs into your project."
+   Ask the user: "Would you like to enable SDA (Structured Development Artifacts) conformance? Every mutating run will then record a claim in claims.md and every run will append its work-unit row to product-knowledge/SPEC_LOG.md."
 
-   If the user says yes:
+   If the user says yes, set `sda: true` in `glados.yaml` and re-run the
+   install (`python bin/glados.py install --mode <mode> --target
+   /path/to/your/project`, from a GLaDOS checkout) — the installer scaffolds
+   the SDA artifacts create-only (claims.md, SPEC_LOG.md, `SDA: v1.0`
+   headers, standards docs) and lists them in the assembly report. The
+   compiled workflows key on the manifest value at run time.
+
+   **Fallback — plugin-only setups that never run the installer.** Perform
+   the equivalent steps by hand:
+   - Set `sda: true` in `glados.yaml` (the workflows' runtime SDA steps key on it)
    - Create `claims.md` at the project root — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/CLAIMS.md` and replace `YYYY-MM-DD` with today's date
-   - Create `product-knowledge/SPEC_LOG.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/SPEC_LOG.md` (skip if already exists)
-   - Create `product-knowledge/ROADMAP.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/SDA_ROADMAP.md` and replace `YYYY-MM-DD` with today's date (skip if ROADMAP.md already exists — instead, prepend an `<!-- SDA: v1.0 -->` header if not already present)
+   - Create `product-knowledge/SPEC_LOG.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/SPEC_LOG.md` and replace `YYYY-MM-DD` with today's date (skip if already exists)
+   - If `product-knowledge/ROADMAP.md` exists and does not contain `SDA: v1.0`, prepend an `<!-- SDA: v1.0 -->` header. Do **not** create a roadmap — the installer never invents one; a missing roadmap is the team's call (the `intent` workflow establishes it). If the user asks for a starter, offer `${CLAUDE_PLUGIN_ROOT}/src/templates/SDA_ROADMAP.md` (replace `YYYY-MM-DD` with today's date)
    - If `product-knowledge/PROJECT_STATUS.md` exists and does not contain `SDA: v1.0`, prepend an `<!-- SDA: v1.0 -->` header
-   - Copy `${CLAUDE_PLUGIN_ROOT}/docs/standards/sda-standard-v1.md` and `${CLAUDE_PLUGIN_ROOT}/docs/standards/sda-profile-glados-v1.md` into `product-knowledge/standards/`
+   - Copy `${CLAUDE_PLUGIN_ROOT}/docs/standards/sda-standard-v1.md`, `${CLAUDE_PLUGIN_ROOT}/docs/standards/sda-profile-glados-v1.md`, and `${CLAUDE_PLUGIN_ROOT}/docs/standards/sda-profile-glados-v2.md` into `product-knowledge/standards/`
 
 4. Confirm to the user what was created and explain the directory structure.
    If SDA was enabled, mention the additional artifacts. Note that a full

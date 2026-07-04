@@ -8,6 +8,7 @@ cleanup, determinism, drift detection and the runtime artifacts. A mode that
 stops shipping modules — v1's flagship bug — fails this build.
 """
 
+import datetime
 import importlib.util
 import json
 import os
@@ -907,6 +908,145 @@ class TestDoctor(unittest.TestCase):
         rc, out = run_cli("doctor", "--target", t, "--source", REPO)
         self.assertEqual(rc, 0)
         self.assertIn("does not mention glados.yaml", out)
+
+
+class TestSda(unittest.TestCase):
+    """The explicit-only `sda:` manifest key — install-time scaffolding,
+    the assembly-report row, doctor status, and the two guardrails (presets
+    may never set it; non-bool values die naming the key)."""
+
+    def _sda_manifest(self) -> str:
+        text = read(EXAMPLE)
+        self.assertIn("sda: false", text,
+                      "glados.yaml.example must document sda: false")
+        return text.replace("sda: false", "sda: true")
+
+    def test_sda_true_install_scaffolds_all(self):
+        t = make_target(self._sda_manifest())
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        # claims.md at the repo root, from the template, dated today
+        claims = read(t / "claims.md")
+        self.assertIn("# Claims", claims)
+        self.assertIn("SDA: v1.0", claims)
+        self.assertNotIn("YYYY-MM-DD", claims, "template date must be filled")
+        self.assertIn(datetime.date.today().isoformat(), claims)
+        # SPEC_LOG.md carries the work-unit-log table header whose columns
+        # match the epilogue's row fields (date, workflow, scope, outcome,
+        # links), dated today
+        spec = read(t / "product-knowledge" / "SPEC_LOG.md")
+        self.assertIn("| Date | Workflow | Scope | Outcome | Links |", spec)
+        self.assertNotIn("YYYY-MM-DD", spec, "template date must be filled")
+        self.assertIn(datetime.date.today().isoformat(), spec)
+        # the freshly scaffolded PROJECT_STATUS.md gets the version header
+        status = read(t / "product-knowledge" / "PROJECT_STATUS.md")
+        self.assertTrue(status.startswith("<!-- SDA: v1.0 -->"), status[:80])
+        # ROADMAP.md is NOT created — headers only stamp existing files
+        self.assertFalse((t / "product-knowledge" / "ROADMAP.md").exists(),
+                         "sda scaffolding must not invent a roadmap")
+        # every shipped standards doc is copied byte-identically
+        docs = sorted((REPO / "docs" / "standards").glob("sda-*.md"))
+        self.assertGreater(len(docs), 0, "repo must ship sda standards docs")
+        for d in docs:
+            dest = t / "product-knowledge" / "standards" / d.name
+            self.assertTrue(dest.exists(), f"missing scaffolded {d.name}")
+            self.assertEqual(dest.read_bytes(), d.read_bytes(),
+                             f"{d.name} must be copied byte-identically")
+        # assembly report: the sda row plus the artifact listing
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| sda | true | (explicit) |", report)
+        self.assertIn("## SDA conformance", report)
+        self.assertIn("claims.md", report)
+        self.assertIn("SPEC_LOG.md", report)
+        # the install output says what this run scaffolded
+        self.assertIn("sda: true", out)
+        self.assertIn("claims.md", out)
+        # doctor reports status + artifact presence, informationally
+        rc, dout = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, dout)
+        self.assertIn("sda: true", dout)
+        self.assertIn("claims.md: present", dout)
+        self.assertIn("SPEC_LOG.md: present", dout)
+
+    def test_sda_false_install_unchanged(self):
+        t = make_target()   # the example manifest carries sda: false
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse((t / "claims.md").exists(),
+                         "sda: false must scaffold no claims.md")
+        self.assertFalse((t / "product-knowledge" / "SPEC_LOG.md").exists())
+        std = t / "product-knowledge" / "standards"
+        self.assertEqual(list(std.glob("sda-*.md")), [],
+                         "sda: false must copy no standards docs")
+        status = read(t / "product-knowledge" / "PROJECT_STATUS.md")
+        self.assertNotIn("SDA: v1.0", status, "no header without sda: true")
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| sda | false | (explicit) |", report)
+        self.assertNotIn("## SDA conformance", report)
+        rc, dout = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, dout)
+        self.assertIn("sda: false", dout)
+
+    def test_sda_reinstall_idempotent(self):
+        t = make_target(self._sda_manifest())
+        self.assertEqual(install("direct", t)[0], 0)
+        snap1 = {f.relative_to(t).as_posix(): f.read_bytes() for f in all_files(t)}
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("already present", out,
+                      "re-install must report the artifacts as present")
+        snap2 = {f.relative_to(t).as_posix(): f.read_bytes() for f in all_files(t)}
+        self.assertEqual(snap1, snap2,
+                         "sda re-install must be a byte-wise no-op")
+
+    def test_sda_header_prepend_idempotent(self):
+        # A pre-existing ROADMAP.md gets exactly one header, its content
+        # survives byte-for-byte, and a re-install never stacks a second.
+        t = make_target(self._sda_manifest())
+        roadmap = t / "product-knowledge" / "ROADMAP.md"
+        original = "# Roadmap\n\n## Phase 1: Foundation\n\n**Goal**: Ship.\n"
+        write(roadmap, original)
+        self.assertEqual(install("direct", t)[0], 0)
+        text = read(roadmap)
+        self.assertTrue(text.startswith("<!-- SDA: v1.0 -->"), text[:80])
+        self.assertIn(original, text, "existing roadmap content must survive")
+        self.assertEqual(text.count("SDA: v1.0"), 1)
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertEqual(read(roadmap), text,
+                         "re-install must not stack a second header")
+        # a doc already carrying the (multi-line) header form is left alone
+        t2 = make_target(self._sda_manifest())
+        headered = ("<!--\nSDA: v1.0\nLast Updated: 2026-01-01\n-->\n\n"
+                    "# Roadmap\n")
+        write(t2 / "product-knowledge" / "ROADMAP.md", headered)
+        self.assertEqual(install("direct", t2)[0], 0)
+        self.assertEqual(read(t2 / "product-knowledge" / "ROADMAP.md"),
+                         headered, "an existing header must be respected")
+
+    def test_preset_setting_sda_rejected(self):
+        # sda is in the manifest schema, so the anti-inflation cap alone would
+        # admit it — the explicit-only rule must reject a preset naming it.
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        text = read(presets).replace("nascent:\n", "nascent:\n  sda: true\n")
+        self.assertIn("nascent:\n  sda: true", text, "doctoring failed")
+        presets.write_text(text, encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, "a preset must never set sda:\n" + out)
+        self.assertIn("sda", out)
+        self.assertIn("nascent", out)
+        self.assertIn("team declaration", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_sda_non_bool_fatal(self):
+        text = read(EXAMPLE).replace("sda: false", 'sda: "yes"')
+        t = make_target(text)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 1, "non-bool sda must be fatal:\n" + out)
+        self.assertIn("'sda'", out)
+        self.assertIn("bool", out)
+        self.assertIn("yes", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestInstallUx(unittest.TestCase):

@@ -21,7 +21,13 @@
    before mutating anything (branch, board, or shared files). The end-of-run
    yield check compares against it; without it, an external edit is
    undetectable and unrecoverable.
-3. **Read prior run records first**, where this workflow revisits a subject
+3. **Record your SDA claim (when `glados.yaml` sets `sda: true`)**: if this
+   run mutates shared state, append your claim to `claims.md` at the repo
+   root before the first mutation — workflow, scope, holder, timestamp. An
+   existing uncleared claim on the same scope is contention: coordinate with
+   its holder — build on their run or wait — do not clobber. The epilogue
+   clears the entry.
+4. **Read prior run records first**, where this workflow revisits a subject
    (an MR, an epic, a component): scan `.glados/runs/` for records touching
    the same subject before redoing work. If a prior run already reviewed the
    current HEAD, produced the artifact, or holds the claim, build on that

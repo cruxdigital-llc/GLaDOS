@@ -17,16 +17,20 @@ the record rather than omitting it.
 2. **Yield check**: compare the recorded `work.base-sha` against the current
    base. If an external edit moved it, emit `yielded (external_edit)` in the
    record, then rebase or release — never force-push over someone else's work.
-3. **Commit the record** on the current working branch:
+3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: append this
+   run's work-unit row to `product-knowledge/SPEC_LOG.md` — date, workflow,
+   scope, outcome, links — and clear this run's entry in `claims.md`, so
+   both ride the record commit below.
+4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Review-only runs that must not
    touch the author's branch commit to the `glados/ledger` branch instead.
-4. **Publish outcomes**: read `glados.yaml` → `channels:` and post each
+5. **Publish outcomes**: read `glados.yaml` → `channels:` and post each
    outcome type this run emitted to every bound sink (MR comment, issue,
    issue-comment, label — using the project's own platform CLI/tooling).
    `progress` always lands in the ledger at minimum. If a sink is unreachable,
    record the failure in the run record and emit an `escalation` — do not
    silently drop an outcome.
-5. **Release** anything held: leases (when enabled) and other in-flight
+6. **Release** anything held: leases (when enabled) and other in-flight
    markers — and delete `.glados/runs/current` unconditionally (the preamble
    always sets it; a leftover marker makes the run-record guard hooks block
    the next session).

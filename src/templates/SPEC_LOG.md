@@ -1,14 +1,15 @@
+<!--
+SDA: v1.0
+Last Updated: YYYY-MM-DD
+-->
+
 # Spec Log
 
-Historical record of all feature specifications.
-Each entry includes the merge commit where the work landed — use
-`git show <hash>` to see the full diff.
+The SDA work-unit log: one row per workflow run, appended by the compiled
+epilogue when `glados.yaml` sets `sda: true`. Entries are in reverse
+chronological order (newest first). The Links column carries the
+traceability references — MR, issues, and the merge commit where the work
+landed (`git show <hash>` for the full diff).
 
-Entries are in reverse chronological order (newest first).
-
----
-
-## Implemented
-
-| Date | Spec | Merge Commit | Summary |
-|------|------|:------------:|---------|
+| Date | Workflow | Scope | Outcome | Links |
+|------|----------|-------|---------|-------|

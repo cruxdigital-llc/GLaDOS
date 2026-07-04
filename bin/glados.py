@@ -36,6 +36,7 @@ Sections, in order:
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import re
@@ -150,6 +151,15 @@ PLUGIN_BOOTSTRAP_GUARD = (
     "`/glados:init`) and set `phase:` before doing consequential work — do not\n"
     "guess a phase.\n\n"
 )
+
+# SDA (Structured Development Artifacts) — the version header stamped on
+# conformant docs and the marker that makes the prepend idempotent. The
+# manifest key `sda:` is an EXPLICIT-ONLY bool (a team declaration, default
+# false): phase presets may never set it (_check_phase_invariants rejects
+# one that tries), and `sda: true` scaffolds the conformance artifacts at
+# install time (scaffold_sda, create-only). See docs/guides/sda.md.
+SDA_MARKER = "SDA: v1.0"
+SDA_HEADER = f"<!-- {SDA_MARKER} -->\n\n"
 
 # The complete v1 name sets, for legacy-cleanup and v1-detection only. v1's
 # direct mode installed these under product-knowledge/{workflows,modules}/;
@@ -710,6 +720,17 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
 
+    # sda: EXPLICIT-ONLY bool, default false. Conformance is a team
+    # declaration, not a phase default — a preset naming it is rejected by
+    # _check_phase_invariants; here only the manifest's own word counts.
+    sda = raw.get("sda", False)
+    if not isinstance(sda, bool):
+        raise Fatal(f"{manifest_name}: key 'sda' must be a bool — got "
+                    f"{sda!r}; write 'sda: true' or 'sda: false' (SDA "
+                    f"conformance is declared, never implied)")
+    r.values["sda"] = sda
+    r.provenance["sda"] = "explicit" if "sda" in raw else "default"
+
     # RELAXED(phase): a value whose resolved provenance is the phase preset AND
     # that is laxer than the strict baseline. An explicit override (provenance
     # 'explicit') is NOT phase-derived, so it clears the marker.
@@ -986,7 +1007,14 @@ def _check_phase_invariants(source: Source, r: Resolved) -> list[str]:
         if not isinstance(preset, dict):
             continue
         for key in preset.keys():
-            if key not in allowed:
+            if key == "sda":
+                # sda is in the manifest schema but is EXPLICIT-ONLY:
+                # conformance is a team declaration, not a phase default.
+                errors.append(f"phases.yaml: preset '{pname}' sets 'sda' — "
+                              f"SDA conformance is a team declaration, not a "
+                              f"phase default; remove it from the preset and "
+                              f"set 'sda: true' explicitly in glados.yaml")
+            elif key not in allowed:
                 errors.append(f"phases.yaml: preset '{pname}' sets '{key}', which "
                               f"is not a glados.yaml schema key — presets may only "
                               f"spell existing defaults (anti-inflation cap)")
@@ -1036,7 +1064,7 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
     out.append("")
     out.append("| Key | Value | Provenance |")
     out.append("|-----|-------|------------|")
-    for key in ("phase", "platform", "merge-authority", "optimize-for",
+    for key in ("phase", "platform", "sda", "merge-authority", "optimize-for",
                 "default-modules", "disabled-workflows"):
         if key in r.values and r.values[key] is not None:
             out.append(f"| {key} | {_fmt(r.values[key])} | "
@@ -1093,10 +1121,26 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
     if not confessions:
         out.append("_None._")
     out.append("")
+
+    if r.values.get("sda"):
+        out.append("## SDA conformance")
+        out.append("")
+        out.append("`sda: true` — the install scaffolds these artifacts "
+                   "(create-only, never clobbered):")
+        out.append("")
+        out.append("- `claims.md` (repo root) — the SDA claims file")
+        out.append("- `product-knowledge/SPEC_LOG.md` — the SDA work-unit log")
+        out.append("- `SDA: v1.0` headers on an existing "
+                   "`product-knowledge/ROADMAP.md` and `PROJECT_STATUS.md`")
+        out.append("- `product-knowledge/standards/sda-*.md` — the versioned "
+                   "standard and profile docs")
+        out.append("")
     return "\n".join(out)
 
 
 def _fmt(val) -> str:
+    if isinstance(val, bool):
+        return "true" if val else "false"
     if isinstance(val, list):
         return "[" + ", ".join(str(v) for v in val) + "]"
     return str(val)
@@ -1627,6 +1671,80 @@ def scaffold_product_knowledge(target: Path, source: Source) -> list[str]:
     return created
 
 
+def _prepend_sda_header(path: Path) -> bool:
+    """Idempotently prepend the `SDA: v1.0` version header; True if written.
+
+    read_text validates the encoding first (UTF-16 dies with the named fix
+    instead of mojibake); the write is a byte-level prepend so the user's own
+    bytes — CRLF endings included — survive untouched after the header."""
+    if SDA_MARKER in read_text(path):
+        return False
+    raw = path.read_bytes().removeprefix(b"\xef\xbb\xbf")
+    path.write_bytes(SDA_HEADER.encode("utf-8") + raw)
+    return True
+
+
+def _require_sda_template(source: Source, tmpl: Path) -> Path:
+    if not tmpl.exists():
+        raise Fatal(f"sda: true but the source tree is missing {tmpl} — pass "
+                    f"--source <a full glados checkout> and re-run install")
+    return tmpl
+
+
+def scaffold_sda(target: Path, source: Source) -> list[str]:
+    """Create-only SDA conformance artifacts, run when the manifest sets
+    `sda: true`. Never clobbers: existing files win, and the version-header
+    prepend is marker-checked (idempotent). Returns repo-relative paths of
+    what THIS run created/stamped — the vendored assembly report lists the
+    artifact set instead, so re-installs stay byte-identical."""
+    created: list[str] = []
+    today = datetime.date.today().isoformat()
+
+    def rel(p: Path) -> str:
+        return p.relative_to(target).as_posix()
+
+    # 1. claims.md at the repo root, from the template, dated today.
+    claims = target / "claims.md"
+    if not claims.exists():
+        tmpl = _require_sda_template(source, source.src / "templates" / "CLAIMS.md")
+        claims.write_text(read_text(tmpl).replace("YYYY-MM-DD", today),
+                          encoding="utf-8", newline="\n")
+        created.append(rel(claims))
+
+    # 2. product-knowledge/SPEC_LOG.md — the SDA work-unit log the compiled
+    #    epilogue appends to (per the standard's work-unit-log format).
+    spec_log = target / "product-knowledge" / "SPEC_LOG.md"
+    if not spec_log.exists():
+        tmpl = _require_sda_template(source, source.src / "templates" / "SPEC_LOG.md")
+        spec_log.parent.mkdir(parents=True, exist_ok=True)
+        spec_log.write_text(read_text(tmpl).replace("YYYY-MM-DD", today),
+                            encoding="utf-8", newline="\n")
+        created.append(rel(spec_log))
+
+    # 3. Version headers on the roadmap/status docs IF they exist and lack
+    #    one. Never creates the docs themselves — a missing roadmap is the
+    #    team's call, not the installer's.
+    for name in ("ROADMAP.md", "PROJECT_STATUS.md"):
+        doc = target / "product-knowledge" / name
+        if doc.is_file() and _prepend_sda_header(doc):
+            created.append(rel(doc) + " (SDA header)")
+
+    # 4. The versioned standard + profile docs, copied byte-identically
+    #    (install_file fidelity) into the repo's own standards tree.
+    docs = sorted((source.root / "docs" / "standards").glob("sda-*.md"))
+    if not docs:
+        raise Fatal(f"sda: true but no docs/standards/sda-*.md under "
+                    f"{source.root} — pass --source <a full glados checkout> "
+                    f"and re-run install")
+    for doc in docs:
+        dest = target / "product-knowledge" / "standards" / doc.name
+        if not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(doc.read_bytes())
+            created.append(rel(dest))
+    return created
+
+
 # =============================================================================
 # 10. COMMANDS
 # =============================================================================
@@ -1831,8 +1949,12 @@ def cmd_install(args) -> int:
     removed += _cleanup_v1_legacy(target, mode)
 
     scaffolded: list[str] = []
+    sda_scaffolded: list[str] = []
+    sda_on = bool(comp.resolved.values.get("sda")) and mode != "claude-plugin"
     if mode not in ("claude-plugin",):
         scaffolded = scaffold_product_knowledge(target, source)
+        if sda_on:
+            sda_scaffolded = scaffold_sda(target, source)
 
     if mode == "claude-plugin":
         _regenerate_plugin_skills(target, source, comp)
@@ -1846,6 +1968,10 @@ def cmd_install(args) -> int:
         print(f"glados: cleaned {len(removed)} stale file(s): {', '.join(removed)}")
     if scaffolded:
         print(f"glados: scaffolded {len(scaffolded)} product-knowledge file(s)")
+    if sda_scaffolded:
+        print(f"glados: sda: true — scaffolded {', '.join(sda_scaffolded)}")
+    elif sda_on:
+        print("glados: sda: true — all conformance artifacts already present")
     advisory = _phase_transition_advisory(prev_report, comp.resolved.phase)
     if advisory:
         print(advisory)
@@ -2147,9 +2273,48 @@ def cmd_doctor(args) -> int:
             for key in ("visibility-acknowledged", "relaxation-acknowledged"):
                 if key in raw:
                     print(f"  confession restated: {key}: {_fmt(raw[key])}")
+            for line in _sda_doctor_lines(target, raw):
+                print(line)
 
     print("glados doctor: informational only — never fails")
     return 0
+
+
+def _sda_doctor_lines(target: Path, raw: dict) -> list[str]:
+    """Informational sda status: the declared value plus whether each
+    scaffolded conformance artifact exists. Never raises."""
+    sda = raw.get("sda", False)
+    if not isinstance(sda, bool):
+        return [f"  sda: INVALID — {sda!r} is not a bool; write 'sda: true' "
+                f"or 'sda: false'"]
+    if not sda:
+        return ["  sda: false (SDA conformance not declared)"]
+    lines = ["  sda: true (explicit) — scaffolded artifacts:"]
+    lines.append("    - claims.md: "
+                 + ("present" if (target / "claims.md").is_file()
+                    else "missing — re-run install"))
+    spec_log = target / "product-knowledge" / "SPEC_LOG.md"
+    lines.append("    - product-knowledge/SPEC_LOG.md: "
+                 + ("present" if spec_log.is_file()
+                    else "missing — re-run install"))
+    for name in ("ROADMAP.md", "PROJECT_STATUS.md"):
+        doc = target / "product-knowledge" / name
+        if not doc.is_file():
+            lines.append(f"    - product-knowledge/{name}: absent (the header "
+                         f"is added only when the file exists)")
+            continue
+        try:
+            has = SDA_MARKER in read_text(doc)
+        except Fatal:
+            has = False
+        lines.append(f"    - product-knowledge/{name}: SDA header "
+                     + ("present" if has else "missing — re-run install"))
+    std_dir = target / "product-knowledge" / "standards"
+    n_std = len(list(std_dir.glob("sda-*.md"))) if std_dir.is_dir() else 0
+    lines.append(f"    - product-knowledge/standards/sda-*.md: "
+                 + (f"{n_std} doc(s) present" if n_std
+                    else "missing — re-run install"))
+    return lines
 
 
 def _ci_check_wired(target: Path) -> bool:
