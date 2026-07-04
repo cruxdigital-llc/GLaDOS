@@ -104,7 +104,10 @@ in [src/kernel/state-registry.yaml](../../src/kernel/state-registry.yaml).
   claims file under `product-knowledge/`, while GLaDOS writes it at the repo
   root — keep it where Wheatley looks if you use both).
 - **You have an existing SDA repo.** Set the key and the artifacts carry
-  over; scaffolding only creates what is missing and adds headers.
+  over; scaffolding only creates what is missing and adds headers. (Coming
+  from GLaDOS v1, `glados.py migrate` detects the artifacts and sets the key
+  in the manifest it generates — see
+  [../../MIGRATION.md](../../MIGRATION.md).)
 - **You coordinate multiple agents or humans.** The claims file is the
   git-native way to say "this scope is taken", and with `sda: true` every
   mutating run says it automatically.
@@ -126,5 +129,6 @@ cover a single-team, single-agent project.
 
 See also: [wheatley.md](wheatley.md) for the board that consumes these
 artifacts, the [v2 profile](../standards/sda-profile-glados-v2.md) for the
-exact mapping, and [../../MIGRATION.md](../../MIGRATION.md) for how v1 traces
-convert to the run ledger.
+exact mapping, and [../../MIGRATION.md](../../MIGRATION.md) for the `migrate`
+command that converts v1 traces to the run ledger (and logs each converted
+dir as a `SPEC_LOG.md` work unit).

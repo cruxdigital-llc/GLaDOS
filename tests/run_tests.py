@@ -1323,5 +1323,280 @@ class TestInstallRobustness(unittest.TestCase):
             "glados-prefixed stray inside the owned namespace must be cleaned")
 
 
+class TestMigrate(unittest.TestCase):
+    """The guided v1 -> v2 `migrate` command: detection + suggested mode,
+    manifest generation (platform/sda auto-filled, phase left REQUIRED),
+    specs/ -> run-record conversion with SPEC_LOG rows, idempotence,
+    --dry-run, --clean, and create-only semantics end to end."""
+
+    REC1 = ".glados/runs/2026-05-01-migrated-login-timeout.md"
+    REC2 = ".glados/runs/2026-06-10-migrated-reporting.md"
+
+    LOGIN_README = (
+        "# Login timeout fix\n\nIntro line.\n\n## Findings\n\n"
+        "- finding one\n- finding two\n- finding three\n- finding four\n"
+        "- finding five\n- finding six\n\n## Outcome\n\n"
+        "Shipped in MR !41.\n")
+    REPORTING_README = ("# Reporting spec\n\nSuperseded by workspace "
+                        "reports.\nOutcome: merged in MR !77.\n")
+
+    def _v1_repo(self, remote="git@gitlab.com:acme/thing.git", specs=True,
+                 sda=True):
+        """A rich v1-era repo: git history, a gitlab origin, the v1 claude
+        layout (namespaced + un-namespaced + a user file), SDA claims.md,
+        and two date-prefixed specs/ dirs."""
+        t = tmpdir("glados-migrate-")
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(t), *a],
+                           capture_output=True, text=True)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        git("checkout", "-q", "-b", "main")
+        if remote:
+            git("remote", "add", "origin", remote)
+        write(t / "README.md", "# my project\n")
+        write(t / ".claude" / "commands" / "plan-feature.md",
+              "# Plan Feature\n\nv1 un-namespaced command body.\n")
+        write(t / ".claude" / "commands" / "glados" / "plan_feature.md",
+              "# Plan Feature\n\nv1 namespaced command body.\n")
+        write(t / ".claude" / "commands" / "my-user-command.md",
+              "a user command, not glados's\n")
+        if sda:
+            write(t / "claims.md", "<!-- SDA: v1.0 -->\n\n# Claims\n\n- one\n")
+        if specs:
+            write(t / "specs" / "2026-05-01_login-timeout" / "README.md",
+                  self.LOGIN_README)
+            write(t / "specs" / "2026-06-10_reporting" / "README.md",
+                  self.REPORTING_README)
+        git("add", "-A")
+        git("commit", "-q", "-m", "v1 state")
+        return t, git
+
+    def _snapshot(self, t):
+        return {f.relative_to(t).as_posix(): f.read_bytes()
+                for f in all_files(t)
+                if ".git" not in f.relative_to(t).parts}
+
+    def _migrate(self, t, *extra):
+        return run_cli("migrate", "--target", t, "--source", REPO, *extra)
+
+    @staticmethod
+    def _row(date, dirname, rec):
+        return f"| {date} | migrate | specs/{dirname} | migrated | {rec} |"
+
+    def test_dry_run_writes_nothing_and_prints_plan(self):
+        t, _ = self._v1_repo()
+        before = self._snapshot(t)
+        rc, out = self._migrate(t, "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self._snapshot(t), before,
+                         "--dry-run must write nothing")
+        self.assertFalse((t / "glados.yaml").exists())
+        self.assertIn("suggested install mode: claude", out)
+        self.assertIn("platform: gitlab", out)
+        self.assertIn("sda: true", out)
+        self.assertIn("2026-05-01-migrated-login-timeout.md", out)
+        self.assertIn("2026-06-10-migrated-reporting.md", out)
+
+    def test_generate_convert_fail_fast_then_install(self):
+        t, _ = self._v1_repo()
+        rc, out = self._migrate(t)
+        self.assertEqual(rc, 0, out)
+        # generated manifest: platform + sda auto-filled, phase left REQUIRED
+        gy = read(t / "glados.yaml")
+        self.assertIn("platform: gitlab", gy)
+        self.assertIn("sda: true", gy)
+        self.assertIn(glados.MIGRATE_PHASE_LINE, gy)
+        # the generated text parses in the tool's own YAML subset, phase unset
+        raw = glados.load_manifest(t / "glados.yaml")
+        self.assertIsNone(raw.get("phase"))
+        # fail-fast: install refuses until a human picks a phase
+        rc, iout = install("claude", t)
+        self.assertEqual(rc, 1, iout)
+        self.assertIn("phase", iout)
+        self.assertIn("nascent", iout)
+        # converted records: title, date, excerpt (heading + tail), git pointer
+        rec1 = read(t / self.REC1)
+        self.assertIn("# Migrated spec: 2026-05-01_login-timeout", rec1)
+        self.assertIn("Date: 2026-05-01 (from the directory name)", rec1)
+        self.assertIn("# Login timeout fix", rec1)
+        self.assertIn("Shipped in MR !41.", rec1)
+        self.assertIn("git log", rec1)
+        rec2 = read(t / self.REC2)
+        self.assertIn("# Migrated spec: 2026-06-10_reporting", rec2)
+        self.assertIn("Date: 2026-06-10", rec2)
+        self.assertIn("merged in MR !77", rec2)
+        # SPEC_LOG created from the template with one row per dir, newest first
+        spec = read(t / "product-knowledge" / "SPEC_LOG.md")
+        self.assertIn("| Date | Workflow | Scope | Outcome | Links |", spec)
+        row_new = self._row("2026-06-10", "2026-06-10_reporting",
+                            ".glados/runs/2026-06-10-migrated-reporting.md")
+        row_old = self._row("2026-05-01", "2026-05-01_login-timeout",
+                            ".glados/runs/2026-05-01-migrated-login-timeout.md")
+        self.assertIn(row_new, spec)
+        self.assertIn(row_old, spec)
+        self.assertLess(spec.index(row_new), spec.index(row_old),
+                        "SPEC_LOG rows must land newest-first")
+        # fill phase -> the full install succeeds over the migrated tree
+        write(t / "glados.yaml",
+              gy.replace(glados.MIGRATE_PHASE_LINE, "phase: evolving"))
+        self.assertEqual(
+            glados.load_manifest(t / "glados.yaml")["phase"], "evolving")
+        rec_bytes = (t / self.REC1).read_bytes()
+        claims_bytes = (t / "claims.md").read_bytes()
+        rc, iout = install("claude", t)
+        self.assertEqual(rc, 0, iout)
+        # converted records + carried-over SDA artifacts survive (create-only)
+        self.assertEqual((t / self.REC1).read_bytes(), rec_bytes,
+                         "run records must survive install untouched")
+        self.assertEqual((t / "claims.md").read_bytes(), claims_bytes,
+                         "an existing claims.md must never be clobbered")
+        self.assertIn(row_old, read(t / "product-knowledge" / "SPEC_LOG.md"))
+
+    def test_rerun_is_byte_wise_noop(self):
+        t, _ = self._v1_repo()
+        self.assertEqual(self._migrate(t)[0], 0)
+        snap1 = self._snapshot(t)
+        rc, out = self._migrate(t)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self._snapshot(t), snap1,
+                         "re-run must be a byte-wise no-op")
+        self.assertIn("never overwritten", out)
+        self.assertIn("record exists", out)
+
+    def test_existing_manifest_never_overwritten(self):
+        t, _ = self._v1_repo()
+        shutil.copyfile(EXAMPLE, t / "glados.yaml")
+        before = (t / "glados.yaml").read_bytes()
+        rc, out = self._migrate(t)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((t / "glados.yaml").read_bytes(), before,
+                         "an existing glados.yaml must never be rewritten")
+        self.assertIn("never overwritten", out)
+        # differences are reported: SDA artifacts exist but sda: false
+        self.assertIn("sda: true", out)
+        # conversion still runs; SPEC_LOG rows skipped (manifest sda wins)
+        self.assertTrue((t / self.REC1).exists())
+        self.assertFalse(
+            (t / "product-knowledge" / "SPEC_LOG.md").exists(),
+            "sda: false in the manifest must skip SPEC_LOG rows")
+        self.assertIn("skipped (sda is not true)", out)
+
+    def test_clean_removes_converted_and_v1_only(self):
+        t, _ = self._v1_repo()
+        rc, out = self._migrate(t, "--clean")
+        self.assertEqual(rc, 0, out)
+        # converted specs/ dirs are gone, records + everything else stay
+        self.assertFalse((t / "specs").exists(),
+                         "emptied specs/ tree must be removed")
+        self.assertTrue((t / self.REC1).exists())
+        self.assertTrue((t / self.REC2).exists())
+        self.assertTrue((t / "glados.yaml").exists())
+        self.assertTrue((t / "README.md").exists())
+        self.assertTrue((t / "claims.md").exists())
+        # v1 claude layout removed; the user's own command survives
+        self.assertFalse((t / ".claude" / "commands" / "plan-feature.md").exists())
+        self.assertFalse((t / ".claude" / "commands" / "glados").exists())
+        self.assertTrue(
+            (t / ".claude" / "commands" / "my-user-command.md").exists(),
+            "--clean must never touch user files")
+
+    def test_clean_never_removes_v2_artifacts(self):
+        # After a real install, .claude/commands/glados/plan-feature.md is a
+        # v1-KNOWN NAME with v2 content — the content check must protect it.
+        t, _ = self._v1_repo()
+        self.assertEqual(self._migrate(t)[0], 0)
+        write(t / "glados.yaml",
+              read(t / "glados.yaml").replace(glados.MIGRATE_PHASE_LINE,
+                                              "phase: evolving"))
+        self.assertEqual(install("claude", t)[0], 0)
+        owned = t / ".claude" / "commands" / "glados"
+        v2_files = sorted(p.name for p in owned.glob("*.md"))
+        self.assertIn("plan-feature.md", v2_files)
+        rc, out = self._migrate(t, "--clean")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(sorted(p.name for p in owned.glob("*.md")), v2_files,
+                         "migrate --clean must never remove v2 compiled files")
+        self.assertFalse((t / "specs").exists())
+
+    def test_spec_dir_without_readme_converts(self):
+        t, _ = self._v1_repo(specs=False)
+        write(t / "specs" / "2026-04-01_no-readme" / "notes.txt", "notes\n")
+        rc, out = self._migrate(t)
+        self.assertEqual(rc, 0, out)
+        rec = read(t / ".glados" / "runs" / "2026-04-01-migrated-no-readme.md")
+        self.assertIn("# Migrated spec: 2026-04-01_no-readme", rec)
+        self.assertIn("No README.md", rec)
+
+    def test_generated_manifest_installs_under_every_phase(self):
+        # The example's explicit decisions: block is written for its own
+        # `phase: evolving` (it confesses exactly delete-code); carried
+        # verbatim into a generated manifest it fails production/sunset
+        # installs with relaxation errors the team never chose. Migrate must
+        # comment those overrides out so the ONE human edit the guide
+        # promises — fill phase:, any phase — always yields a green install.
+        t, _ = self._v1_repo()
+        self.assertEqual(self._migrate(t)[0], 0)
+        gy = read(t / "glados.yaml")
+        self.assertIn("# decisions:", gy)
+        self.assertIn("#   schema-migration: record", gy)
+        self.assertIn("# relaxation-acknowledged:", gy)
+        self.assertNotIn("\ndecisions:", gy,
+                         "the active decisions block must be commented out")
+        raw = glados.load_manifest(t / "glados.yaml")
+        self.assertNotIn("decisions", raw)
+        self.assertNotIn("relaxation-acknowledged", raw)
+        for phase in glados.PHASES:
+            write(t / "glados.yaml",
+                  gy.replace(glados.MIGRATE_PHASE_LINE, f"phase: {phase}"))
+            rc, out = install("claude", t)
+            self.assertEqual(rc, 0,
+                             f"phase '{phase}' must install cleanly over the "
+                             f"generated manifest:\n{out}")
+
+    def test_platform_github_and_no_remote_todo(self):
+        t, _ = self._v1_repo(remote="git@github.com:acme/thing.git")
+        self.assertEqual(self._migrate(t)[0], 0)
+        self.assertIn("platform: github", read(t / "glados.yaml"))
+        t2, _ = self._v1_repo(remote=None)
+        rc, out = self._migrate(t2)
+        self.assertEqual(rc, 0, out)
+        line = re.search(r"(?m)^platform:.*$", read(t2 / "glados.yaml")).group(0)
+        self.assertIn("platform: gitlab", line,
+                      "no remote must keep the example default")
+        self.assertIn("TODO", line)
+
+    def test_git_date_fallback_and_create_only_records(self):
+        # a) no dirname date prefix -> the dir's last commit date is used
+        t, git = self._v1_repo(specs=False)
+        write(t / "specs" / "no-date-prefix" / "README.md", "# No date\n\nBody.\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "add spec")
+        proc = subprocess.run(
+            ["git", "-C", str(t), "log", "-1", "--format=%cs", "--",
+             "specs/no-date-prefix"], capture_output=True, text=True)
+        expected = proc.stdout.strip()
+        self.assertRegex(expected, r"^\d{4}-\d{2}-\d{2}$")
+        rc, out = self._migrate(t)
+        self.assertEqual(rc, 0, out)
+        rec = t / ".glados" / "runs" / f"{expected}-migrated-no-date-prefix.md"
+        self.assertTrue(rec.exists(), out)
+        self.assertIn("from git history", read(rec))
+        # b) create-only: a pre-existing record wins, but its SPEC_LOG row
+        # still lands (the dir counts as converted)
+        t2, _ = self._v1_repo()
+        write(t2 / self.REC1, "HUMAN OWNED RECORD\n")
+        rc, out = self._migrate(t2)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(t2 / self.REC1), "HUMAN OWNED RECORD\n",
+                         "an existing record must win (create-only)")
+        self.assertIn("kept", out)
+        self.assertIn("2026-05-01-migrated-login-timeout.md",
+                      read(t2 / "product-knowledge" / "SPEC_LOG.md"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

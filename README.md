@@ -30,7 +30,9 @@ What you get:
 
 ## 60-second quickstart
 
-From a clone of this repository:
+Coming from GLaDOS v1? Run `python bin/glados.py migrate --target
+/path/to/your/project` instead — [MIGRATION.md](MIGRATION.md) is the guided
+path. Otherwise, from a clone of this repository:
 
 ```bash
 cp glados.yaml.example /path/to/your/project/glados.yaml
@@ -171,5 +173,6 @@ In increasing depth:
    [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) (design rationale — the deep
    end).
 
-Upgrading from GLaDOS v1? Every old command name keeps working as an alias;
-[MIGRATION.md](MIGRATION.md) has the full map.
+Upgrading from GLaDOS v1? Every old command name keeps working as an alias,
+and `python bin/glados.py migrate` converts the rest;
+[MIGRATION.md](MIGRATION.md) is the guided path.

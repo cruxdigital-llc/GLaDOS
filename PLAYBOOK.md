@@ -154,7 +154,7 @@ Never hand-edit installed workflow text — it is compiled output and the next i
 
 ### v1 Names
 
-Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `implement-fix`, `verify-fix`, `consolidate`, `establish-standards`, `recombobulate`, `autonomous-loop`) are permanent alias shims routing to their v2 workflow (`intent`, `fix-bug`, `steward`, `run-epic --backlog`). Nothing breaks, but update your docs — see [MIGRATION.md](MIGRATION.md) for the full map.
+Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `implement-fix`, `verify-fix`, `consolidate`, `establish-standards`, `recombobulate`, `autonomous-loop`) are permanent alias shims routing to their v2 workflow (`intent`, `fix-bug`, `steward`, `run-epic --backlog`). Nothing breaks, but update your docs — see [MIGRATION.md](MIGRATION.md) for the full map and the guided `glados.py migrate` command.
 
 ---
 
@@ -179,7 +179,7 @@ Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `imple
 |---|---|
 | **Fewer "wait, we don't do it that way" moments** | The standards gate catches violations before review |
 | **Faster onboarding** | New hires use `adopt-codebase` and read standards instead of asking 50 questions |
-| **Nothing lost silently** | The CI `verify-ledger` job (copied into `.glados/ci/` at install; enabled by the project per MIGRATION.md step 5) reports zero runs whose results never reached a team-visible place, week over week |
+| **Nothing lost silently** | The CI `verify-ledger` job (copied into `.glados/ci/` at install; enabling it is the project's job — see "What does NOT migrate automatically" in [MIGRATION.md](MIGRATION.md)) reports zero runs whose results never reached a team-visible place, week over week |
 | **Outcomes are visible** | Verdicts sit on MRs, escalations and bugs are issues — no decision lives only in a chat transcript |
 | **Preserved decisions** | Run records and `decision` outcomes explain *why*, resumable from `git pull` |
 | **Living standards** | Steward regularly promotes observations; brunch MRs stay small because big findings got fixed earlier |

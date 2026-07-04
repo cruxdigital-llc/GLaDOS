@@ -58,9 +58,9 @@ still required:
 
 - **`specs/` is gone.** v1 wrote a per-feature trace directory under
   `specs/`; v2 replaced that with the **run ledger** — exactly one committed
-  record per workflow run under `.glados/runs/`. The v2 migration guide
-  ([MIGRATION.md](../../MIGRATION.md), steps 3–4) explicitly converts live
-  `specs/` dirs into ledger entries and then deletes the tree. Wheatley reads
+  record per workflow run under `.glados/runs/`. The v2 `migrate` command
+  ([MIGRATION.md](../../MIGRATION.md)) converts live `specs/` dirs into
+  ledger entries, and its `--clean` flag deletes the tree. Wheatley reads
   `specs/`, so its *in-flight* columns (Planning through Verifying) are empty
   on a v2 repo. Closing this needs Wheatley-side work (reading
   `.glados/runs/`) planned alongside the GLaDOS v2.1 coordination release —

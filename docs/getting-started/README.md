@@ -19,6 +19,7 @@ Pick your row:
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) (Google's open-source terminal agent) | `gemini` | [gemini-cli.md](gemini-cli.md) |
 | [Google AI Studio](https://aistudio.google.com) (browser chat, no file access) | `aistudio` | [google-ai-studio.md](google-ai-studio.md) |
 | Some other agent, or no agent-specific command surface at all | `direct` | [direct.md](direct.md) |
+| A repo with an existing **GLaDOS v1** install (any runtime) | run `migrate` first — it suggests your mode | [MIGRATION.md](../../MIGRATION.md) |
 
 Not sure? If you type prompts into a terminal tool made by Anthropic, that's
 Claude Code — start with [claude-code.md](claude-code.md). If you type prompts
@@ -61,5 +62,6 @@ Antigravity installs both.
 
 - [PLAYBOOK.md](../../PLAYBOOK.md) — how to actually work with the workflows,
   day to day.
-- [MIGRATION.md](../../MIGRATION.md) — coming from GLaDOS v1.
+- [MIGRATION.md](../../MIGRATION.md) — coming from GLaDOS v1: the guided
+  `migrate` command and the steps around it.
 - [docs/workflows.md](../workflows.md) — what each of the 15 workflows does.

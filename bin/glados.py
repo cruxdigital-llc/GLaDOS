@@ -16,6 +16,7 @@ Subcommands (see ``--help``):
     install         compile the sources against a manifest and emit one adapter
     check           CI mode: recompute the compile and diff it against install
     doctor          staleness + wiring report (never fails)
+    migrate         guided v1 -> v2 migration: detect, generate, convert, clean
     verify-ledger   scan git history for silent-loss candidates (report-only)
     compile-plugin  shorthand: install --mode claude-plugin --target <repo>
 
@@ -29,7 +30,7 @@ Sections, in order:
     7.  ASSEMBLY REPORT
     8.  ADAPTERS          — six emitters over the SAME compiled artifacts
     9.  VENDOR + SCAFFOLD
-    10. COMMANDS          — install / check / doctor / verify-ledger
+    10. COMMANDS          — install / check / doctor / migrate / verify-ledger
     11. CLI
 """
 
@@ -177,6 +178,21 @@ KNOWN_V1_MODULES = frozenset({
     "mr-review-panel", "observability", "pattern-observer", "persona-context",
     "persona-review", "standards-gate",
 })
+
+# migrate: markers that identify a v2-GENERATED artifact (a compiled core's
+# provenance header, or an alias shim's rename sentence). The v1 and v2 name
+# sets overlap (plan-feature is both a v1 workflow and a v2 core), so the
+# v1 -> v2 migrate command may treat a name-matched file as a v1 leftover
+# only when its CONTENT carries no v2 marker.
+V2_ARTIFACT_MARKERS = ("GLaDOS v2 compiled artifact", "workflow was renamed")
+
+# The phase line `migrate` writes into a generated glados.yaml. It parses to
+# null in the YAML subset, so the very next install still fails fast with the
+# four-phase message — migrate removes the blank-page problem without ever
+# choosing a phase for the team.
+MIGRATE_PHASE_LINE = ("phase: # REQUIRED - pick one: " + " | ".join(PHASES)
+                      + " (who gets hurt when the agent is wrong; "
+                        "see MIGRATION.md)")
 
 # Advisory (never blocking) checklists printed when an install crosses a phase
 # boundary relative to the previously vendored assembly report.
@@ -1691,6 +1707,19 @@ def _require_sda_template(source: Source, tmpl: Path) -> Path:
     return tmpl
 
 
+def _scaffold_spec_log(target: Path, source: Source, today: str) -> bool:
+    """Create product-knowledge/SPEC_LOG.md from the template, dated today
+    (the scaffold_sda date-fill precedent). Create-only; True when written."""
+    spec_log = target / "product-knowledge" / "SPEC_LOG.md"
+    if spec_log.exists():
+        return False
+    tmpl = _require_sda_template(source, source.src / "templates" / "SPEC_LOG.md")
+    spec_log.parent.mkdir(parents=True, exist_ok=True)
+    spec_log.write_text(read_text(tmpl).replace("YYYY-MM-DD", today),
+                        encoding="utf-8", newline="\n")
+    return True
+
+
 def scaffold_sda(target: Path, source: Source) -> list[str]:
     """Create-only SDA conformance artifacts, run when the manifest sets
     `sda: true`. Never clobbers: existing files win, and the version-header
@@ -1713,13 +1742,8 @@ def scaffold_sda(target: Path, source: Source) -> list[str]:
 
     # 2. product-knowledge/SPEC_LOG.md — the SDA work-unit log the compiled
     #    epilogue appends to (per the standard's work-unit-log format).
-    spec_log = target / "product-knowledge" / "SPEC_LOG.md"
-    if not spec_log.exists():
-        tmpl = _require_sda_template(source, source.src / "templates" / "SPEC_LOG.md")
-        spec_log.parent.mkdir(parents=True, exist_ok=True)
-        spec_log.write_text(read_text(tmpl).replace("YYYY-MM-DD", today),
-                            encoding="utf-8", newline="\n")
-        created.append(rel(spec_log))
+    if _scaffold_spec_log(target, source, today):
+        created.append(rel(target / "product-knowledge" / "SPEC_LOG.md"))
 
     # 3. Version headers on the roadmap/status docs IF they exist and lack
     #    one. Never creates the docs themselves — a missing roadmap is the
@@ -1793,6 +1817,25 @@ def _force_unlink(path: Path) -> None:
                         f"hand, then re-run install")
 
 
+def _remove_tree_files(root: Path, target: Path) -> list[str]:
+    """Remove every file under root and prune the emptied directories (root
+    included). Returns target-relative paths of the removed files. Only ever
+    called on trees GLaDOS owns outright (v1 layouts, converted specs/ dirs)."""
+    removed: list[str] = []
+    entries = sorted(root.rglob("*"), reverse=True)
+    for f in entries:
+        if f.is_file():
+            _force_unlink(f)
+            removed.append(str(f.relative_to(target)))
+    for d in entries + [root]:
+        if d.is_dir():
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+    return removed
+
+
 def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
                    comp: Compilation) -> list[str]:
     """Directory-scoped stale-file removal, porting the bash cleanup semantics."""
@@ -1829,6 +1872,11 @@ def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
     return removed
 
 
+def _v1_stem_match(stem: str, names: frozenset) -> bool:
+    """A file stem names a known v1 unit, in dash or underscore spelling."""
+    return stem in names or stem.replace("_", "-") in names
+
+
 def _cleanup_v1_legacy(target: Path, mode: str) -> list[str]:
     """Per-mode removal of v1-era layouts the current mode supersedes.
 
@@ -1843,17 +1891,7 @@ def _cleanup_v1_legacy(target: Path, mode: str) -> list[str]:
     if mode == "gemini":
         root = target / ".gemini" / "skills" / "glados"
         if root.is_dir():
-            entries = sorted(root.rglob("*"), reverse=True)
-            for f in entries:
-                if f.is_file():
-                    _force_unlink(f)
-                    removed.append(str(f.relative_to(target)))
-            for d in entries + [root]:
-                if d.is_dir():
-                    try:
-                        d.rmdir()
-                    except OSError:
-                        pass
+            removed.extend(_remove_tree_files(root, target))
     if mode == "direct":
         for sub, names in (("workflows", KNOWN_V1_WORKFLOWS),
                            ("modules", KNOWN_V1_MODULES)):
@@ -1861,7 +1899,7 @@ def _cleanup_v1_legacy(target: Path, mode: str) -> list[str]:
             if not d.is_dir():
                 continue
             for f in sorted(d.glob("*.md")):
-                if f.stem in names or f.stem.replace("_", "-") in names:
+                if _v1_stem_match(f.stem, names):
                     _force_unlink(f)
                     removed.append(str(f.relative_to(target)))
             try:
@@ -1925,9 +1963,10 @@ def cmd_install(args) -> int:
     if mode != "claude-plugin" and not (target / "glados.yaml").exists() \
             and _has_v1_leftovers(target):
         print("glados: v1 GLaDOS files detected but no glados.yaml — this "
-              "looks like a v1 -> v2 migration; copy glados.yaml.example into "
-              "the repo root as glados.yaml, set phase:, and re-run install "
-              "(MIGRATION.md walks every step)", file=sys.stderr)
+              "looks like a v1 -> v2 migration; run `glados.py migrate "
+              "--target <repo>` to generate the manifest and convert specs/ "
+              "history, then set phase: and re-run install (MIGRATION.md "
+              "documents the details)", file=sys.stderr)
 
     comp, manifest_hash = _prepare_compilation(source, target, mode)
     report = build_assembly_report(source, comp)
@@ -1996,7 +2035,7 @@ def _has_v1_leftovers(target: Path) -> bool:
         d = target / "product-knowledge" / sub
         if d.is_dir():
             for f in d.glob("*.md"):
-                if f.stem in names or f.stem.replace("_", "-") in names:
+                if _v1_stem_match(f.stem, names):
                     return True
     cmds = target / ".claude" / "commands"
     if cmds.is_dir():
@@ -2372,6 +2411,585 @@ def cmd_verify_ledger(args) -> int:
     return 0
 
 
+# ---- migrate ----------------------------------------------------------------
+#
+# `glados.py migrate --target <repo>` — the guided v1 -> v2 path. Four steps:
+# DETECT (v1 layouts, specs/ dirs, SDA artifacts; suggest the install mode),
+# GENERATE (glados.yaml from the example — platform auto-detected, sda from
+# the artifacts, phase left as a REQUIRED human edit), CONVERT (each specs/
+# dir becomes a create-only .glados/runs/ digest record; SPEC_LOG rows when
+# sda), REPORT (next steps + counts). Non-destructive by default and
+# idempotent; --dry-run prints the full plan and writes nothing; --clean
+# removes the converted specs/ dirs and the detected v1 layouts. Touches
+# nothing outside specs/, the v1 GLaDOS-owned layouts, glados.yaml, .glados/,
+# and product-knowledge/SPEC_LOG.md.
+
+
+def _is_v2_artifact(path: Path) -> bool:
+    """True when the file is provably v2-generated — or unreadable (an
+    unreadable file is not provably a v1 leftover, so it is left alone,
+    the same stance as plugin-skill pruning)."""
+    try:
+        text = read_text(path)
+    except Fatal:
+        return True
+    return any(m in text for m in V2_ARTIFACT_MARKERS)
+
+
+def _detect_v1_layouts(target: Path) -> dict[str, list[Path]]:
+    """The v1 command layouts present, keyed by the v2 install mode that
+    supersedes each. Only files provably v1 GLaDOS-owned are listed: a known
+    v1 name (or its underscore variant) carrying no v2 artifact marker —
+    the v1/v2 name overlap makes the content check load-bearing."""
+    layouts: dict[str, list[Path]] = {}
+
+    claude: list[Path] = []
+    cmds = target / ".claude" / "commands"
+    if cmds.is_dir():
+        for f in sorted(cmds.glob("*.md")):   # v1 un-namespaced commands
+            if _v1_stem_match(f.stem, KNOWN_V1_WORKFLOWS):
+                claude.append(f)
+        namespaced = cmds / "glados"
+        if namespaced.is_dir():               # v1 content under the v2 dir
+            for f in sorted(namespaced.glob("*.md")):
+                if _v1_stem_match(f.stem, KNOWN_V1_WORKFLOWS) \
+                        and not _is_v2_artifact(f):
+                    claude.append(f)
+    if claude:
+        layouts["claude"] = claude
+
+    gem = target / ".gemini" / "skills" / "glados"
+    if gem.is_dir():                          # tree fully owned by v1
+        layouts["gemini"] = sorted(f for f in gem.rglob("*") if f.is_file())
+
+    agy: list[Path] = []
+    for base in (".agents", ".agent"):
+        d = target / base / "workflows"
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            stem = f.stem.removeprefix("glados-")
+            if _v1_stem_match(stem, KNOWN_V1_WORKFLOWS) \
+                    and not _is_v2_artifact(f):
+                agy.append(f)
+    if agy:
+        layouts["antigravity"] = agy
+
+    direct: list[Path] = []
+    for sub, names in (("workflows", KNOWN_V1_WORKFLOWS),
+                       ("modules", KNOWN_V1_MODULES)):
+        d = target / "product-knowledge" / sub
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.md")):
+            if _v1_stem_match(f.stem, names):
+                direct.append(f)
+    if direct:
+        layouts["direct"] = direct
+    return layouts
+
+
+def _suggest_mode(layouts: dict):
+    """The install mode the follow-up should use, from the detected layouts."""
+    for mode in ("claude", "gemini", "antigravity", "direct"):
+        if mode in layouts:
+            return mode
+    return None
+
+
+def _detect_sda_artifacts(target: Path) -> list[str]:
+    """The v1 SDA conformance artifacts present (prefills `sda: true`)."""
+    found: list[str] = []
+    if (target / "claims.md").is_file():
+        found.append("claims.md")
+    if (target / "product-knowledge" / "SPEC_LOG.md").is_file():
+        found.append("product-knowledge/SPEC_LOG.md")
+    for name in ("ROADMAP.md", "PROJECT_STATUS.md"):
+        doc = target / "product-knowledge" / name
+        if doc.is_file():
+            try:
+                if SDA_MARKER in read_text(doc):
+                    found.append(f"product-knowledge/{name} (SDA header)")
+            except Fatal:
+                pass
+    return found
+
+
+def _detect_platform(target: Path):
+    """platform: for the generated manifest, from the origin remote host —
+    gitlab.com -> gitlab, github.com -> github; anything else (self-hosted,
+    no remote, no git) -> None, leaving the example default plus a TODO."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(target), "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    url = proc.stdout.strip()
+    if proc.returncode != 0 or not url:
+        return None
+    m = re.search(r"(?:@|://)(?:[^/@]+@)?([^/:]+)", url)
+    host = (m.group(1) if m else url).lower()
+    if host == "gitlab.com" or host.endswith(".gitlab.com"):
+        return "gitlab"
+    if host == "github.com" or host.endswith(".github.com"):
+        return "github"
+    return None
+
+
+def _generated_manifest(example_text: str, platform, sda: bool) -> str:
+    """glados.yaml content for a migrating repo: the example verbatim except
+    platform: auto-filled, sda: set from detection, phase: left as the
+    REQUIRED-edit line (parses to null, so install still fails fast until a
+    human chooses), and the example's explicit `decisions:` overrides plus
+    its `relaxation-acknowledged:` confession commented out. The example's
+    decision values are written for its own `phase: evolving`; carried into
+    a manifest whose phase a human picks LATER, they would fail the install
+    for a stricter phase (production/sunset) with relaxation errors the team
+    never chose. Commented out, the chosen phase's preset governs and every
+    phase installs cleanly. Line-level edits only — the output stays inside
+    the YAML subset the tool's own parser accepts."""
+    out: list[str] = []
+    done = {"phase": False, "platform": False, "sda": False}
+    in_decisions = False
+    for line in example_text.split("\n"):
+        if in_decisions:
+            if line.startswith("  ") and line.strip():
+                out.append("# " + line)
+                continue
+            in_decisions = False
+        if not done["phase"] and line.startswith("phase:"):
+            out.append(MIGRATE_PHASE_LINE)
+            done["phase"] = True
+        elif not done["platform"] and line.startswith("platform:"):
+            if platform:
+                out.append(f"platform: {platform}            # gitlab | github "
+                           f"(auto-detected from the origin remote)")
+            else:
+                out.append(line + "  # TODO(migrate): could not auto-detect "
+                                  "from a git origin remote - verify")
+            done["platform"] = True
+        elif not done["sda"] and line.startswith("sda:"):
+            out.append("sda: true" if sda else line)
+            done["sda"] = True
+        elif line.startswith("decisions:"):
+            out.append("# NOTE(migrate): the example's explicit decision "
+                       "overrides are commented out")
+            out.append("# so whichever phase: you pick governs them (see the "
+                       "presets in")
+            out.append("# .glados/presets.yaml after install). Uncomment a "
+                       "line only to override")
+            out.append("# your phase deliberately - a laxer value then needs "
+                       "relaxation-acknowledged.")
+            out.append("# " + line)
+            in_decisions = True
+        elif line.startswith("relaxation-acknowledged:"):
+            out.append("# " + line)
+        else:
+            out.append(line)
+    missing = [k for k, ok in done.items() if not ok]
+    if missing:
+        raise Fatal(f"glados.yaml.example has no top-level "
+                    f"{', '.join(missing)} line(s) — cannot generate a "
+                    f"migrated glados.yaml from it; pass --source <a v2 "
+                    f"glados checkout with the current example>")
+    return "\n".join(out)
+
+
+def _check_generated_manifest_phases(source: Source, text: str) -> None:
+    """Generate-time self-check: the generated manifest must resolve with NO
+    phase-invariant errors under EVERY phase — 'fill phase:, run install' is
+    the guided path's contract, and a pre-seeded value laxer than the phase
+    a human picks later would break it. Fails fast at generate time instead
+    of at the user's install."""
+    raw = parse_yaml(text, "glados.yaml (generated)")
+    for phase in PHASES:
+        trial = dict(raw)
+        trial["phase"] = phase
+        resolved = resolve_manifest(trial, source.presets,
+                                    "glados.yaml (generated)")
+        errors = _check_phase_invariants(source, resolved)
+        if errors:
+            raise Fatal("the generated glados.yaml would fail install under "
+                        f"phase '{phase}':\n  - " + "\n  - ".join(errors)
+                        + "\nglados.yaml.example and the phase presets have "
+                          "drifted apart — fix the example (this is a GLaDOS "
+                          "source bug, not a problem with your repo)")
+
+
+def _existing_manifest_report(raw: dict, source: Source, platform,
+                              sda_artifacts: list[str]) -> list[str]:
+    """Report-only differences for a pre-existing glados.yaml (never edited)."""
+    lines: list[str] = []
+    if raw.get("phase") in (None, ""):
+        lines.append("phase: unset — set it to one of: " + ", ".join(PHASES)
+                     + " before running install")
+    if platform and raw.get("platform") not in (None, platform):
+        lines.append(f"platform: manifest says '{raw.get('platform')}' but the "
+                     f"origin remote looks like {platform} — verify")
+    if sda_artifacts and raw.get("sda") is not True:
+        lines.append("sda: SDA artifacts detected ("
+                     + ", ".join(sda_artifacts)
+                     + ") but the manifest does not set 'sda: true' — "
+                     "consider declaring it")
+    example = source.root / "glados.yaml.example"
+    if example.exists():
+        ex_keys = parse_yaml(read_text(example), "glados.yaml.example").keys()
+        absent = sorted(k for k in ex_keys if k not in raw)
+        if absent:
+            lines.append("keys in glados.yaml.example not present here "
+                         "(informational): " + ", ".join(absent))
+    if not lines:
+        lines.append("no differences worth reporting")
+    return lines
+
+
+_SPEC_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[-_]+(.*))?$")
+
+
+def _git_last_commit_date(target: Path, rel: str):
+    """YYYY-MM-DD of the last commit touching rel, else None. History, never
+    wall clock — a re-run derives the same date."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(target), "log", "-1", "--format=%cs", "--", rel],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    line = proc.stdout.strip().split("\n")[0].strip() if proc.stdout.strip() else ""
+    return line if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line) else None
+
+
+def _spec_dirs(target: Path) -> list[Path]:
+    specs = target / "specs"
+    if not specs.is_dir():
+        return []
+    return sorted(d for d in specs.iterdir() if d.is_dir())
+
+
+def _spec_identity(target: Path, d: Path):
+    """(date, date_source, slug) for one specs/ dir: date from the YYYY-MM-DD
+    dirname prefix, else from git history of the dir, else None."""
+    m = _SPEC_DATE_RE.match(d.name)
+    if m:
+        date, date_src = m.group(1), "from the directory name"
+        rest = m.group(2) or ""
+    else:
+        date = _git_last_commit_date(target, f"specs/{d.name}")
+        date_src = ("from git history" if date
+                    else "unknown - no dirname date prefix and no git history")
+        rest = d.name
+    slug = re.sub(r"[^A-Za-z0-9.-]+", "-", rest.replace("_", "-")).strip("-.")
+    return date, date_src, slug or "spec"
+
+
+def _spec_excerpt(readme: Path):
+    """First heading + last ~10 lines of a spec dir's README.md, or None."""
+    if not readme.is_file():
+        return None
+    try:
+        text = read_text(readme)
+    except Fatal:
+        return None
+    lines = [l.rstrip() for l in text.split("\n")]
+    while lines and lines[-1] == "":
+        lines.pop()
+    if not lines:
+        return None
+    tail = lines[-10:]
+    while tail and tail[0] == "":
+        tail.pop(0)
+    heading = next((l for l in lines if l.startswith("#")), None)
+    parts: list[str] = []
+    if heading is not None and heading not in tail:
+        parts += [heading, "", "[...]", ""]
+    parts += tail
+    return "\n".join(parts)
+
+
+def _spec_record_body(d: Path, date, date_src: str) -> str:
+    """The digest run record one converted specs/ dir becomes."""
+    name = d.name
+    lines = [f"# Migrated spec: {name}", ""]
+    lines.append(f"- Converted from `specs/{name}/` by `glados.py migrate` "
+                 f"(v1 -> v2).")
+    lines.append(f"- Date: {date or 'unknown'} ({date_src}).")
+    lines.append(f"- The full history lives in git: `git log -- specs/{name}` "
+                 f"— the specs/ tree can be deleted after migration "
+                 f"(migrate --clean does it).")
+    excerpt = _spec_excerpt(d / "README.md")
+    if excerpt is None:
+        lines += ["", f"_No README.md in `specs/{name}/` — no excerpt._"]
+    else:
+        lines += ["", f"## Excerpt (from `specs/{name}/README.md`)", "", excerpt]
+    return "\n".join(lines) + "\n"
+
+
+def _insert_spec_log_rows(path: Path, rows: list[str]) -> None:
+    """Insert work-unit rows just under the table header separator (the log
+    is newest-first); with no recognizable table, append them at the end."""
+    lines = read_text(path).split("\n")
+    idx = None
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("|") and s.endswith("|") and "-" in s \
+                and set(s) <= set("|-: "):
+            idx = i + 1
+            break
+    if idx is None:
+        while lines and lines[-1] == "":
+            lines.pop()
+        lines += rows + [""]
+    else:
+        lines[idx:idx] = rows
+    path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+
+
+def _migrate_clean(target: Path, layouts: dict, conversions: list) -> list[str]:
+    """--clean: remove converted specs/ dirs (record on disk == converted)
+    and the exact v1 files detection named; the fully v1-owned gemini/direct
+    layouts go through the same _cleanup_v1_legacy the installer uses."""
+    removed: list[str] = []
+    for c in conversions:
+        if c["path"].exists() and c["dir"].is_dir():
+            removed += _remove_tree_files(c["dir"], target)
+    specs = target / "specs"
+    if specs.is_dir():
+        try:
+            specs.rmdir()   # only when every spec dir was converted + removed
+        except OSError:
+            pass
+    for f in layouts.get("claude", []):
+        if f.is_file():
+            _force_unlink(f)
+            removed.append(str(f.relative_to(target)))
+    namespaced = target / ".claude" / "commands" / "glados"
+    if namespaced.is_dir():
+        try:
+            namespaced.rmdir()   # keeps a dir that still has v2/user files
+        except OSError:
+            pass
+    for f in layouts.get("antigravity", []):
+        if f.is_file():
+            _force_unlink(f)
+            removed.append(str(f.relative_to(target)))
+    for base in (".agents", ".agent"):
+        d = target / base / "workflows"
+        if d.is_dir():
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+    removed += _cleanup_v1_legacy(target, "gemini")
+    removed += _cleanup_v1_legacy(target, "direct")
+    return removed
+
+
+def cmd_migrate(args) -> int:
+    target = Path(args.target).resolve()
+    if not target.is_dir():
+        raise Fatal(f"target directory does not exist: {target}")
+    source = _resolve_source(args)
+    dry = bool(args.dry_run)
+
+    def act(verb: str) -> str:
+        return f"would {verb}" if dry else verb
+
+    def posix(p: Path) -> str:
+        return p.relative_to(target).as_posix()
+
+    print(f"glados migrate — {target}"
+          + (" (dry-run: nothing is written)" if dry else ""))
+
+    # -- 1. DETECT ------------------------------------------------------------
+    layouts = _detect_v1_layouts(target)
+    spec_dirs = _spec_dirs(target)
+    sda_artifacts = _detect_sda_artifacts(target)
+    suggested = _suggest_mode(layouts)
+    platform = _detect_platform(target)
+
+    print("\n== detected ==")
+    if layouts:
+        for mode, paths in layouts.items():
+            print(f"  v1 layout [{mode}]: {len(paths)} file(s)")
+            for p in paths:
+                print(f"    - {posix(p)}")
+    else:
+        print("  v1 command layouts: none found")
+    if spec_dirs:
+        print(f"  specs/ directories: {len(spec_dirs)}")
+        for d in spec_dirs:
+            print(f"    - specs/{d.name}")
+    else:
+        print("  specs/ directories: none found")
+    print("  SDA artifacts: "
+          + (", ".join(sda_artifacts) if sda_artifacts else "none found"))
+    if suggested:
+        others = [m for m in layouts if m != suggested]
+        print(f"  suggested install mode: {suggested}"
+              + (f" (v1 layouts also found for: {', '.join(others)})"
+                 if others else ""))
+    else:
+        print("  suggested install mode: none detected — pick one of: "
+              + ", ".join(INSTALL_MODES))
+
+    # -- 2. GENERATE glados.yaml (never overwrite) ------------------------------
+    print("\n== manifest ==")
+    gy = target / "glados.yaml"
+    files_generated = 0
+    phase_unset = True
+    if gy.exists():
+        raw = load_manifest(gy)
+        sda_val = raw.get("sda", False)
+        if not isinstance(sda_val, bool):
+            raise Fatal(f"{gy.name}: key 'sda' must be a bool — got {sda_val!r}; "
+                        f"write 'sda: true' or 'sda: false'")
+        sda_effective = sda_val
+        phase_unset = raw.get("phase") in (None, "")
+        print("  glados.yaml: present — never overwritten (report-only):")
+        for line in _existing_manifest_report(raw, source, platform,
+                                              sda_artifacts):
+            print(f"    - {line}")
+    else:
+        sda_effective = bool(sda_artifacts)
+        example = source.root / "glados.yaml.example"
+        if not example.exists():
+            raise Fatal(f"cannot generate glados.yaml: no glados.yaml.example "
+                        f"under {source.root} — pass --source <a full glados "
+                        f"checkout>")
+        text = _generated_manifest(read_text(example), platform, sda_effective)
+        _check_generated_manifest_phases(source, text)  # any phase must install
+        print(f"  glados.yaml: absent — {act('generate from glados.yaml.example')}:")
+        if platform:
+            print(f"    - platform: {platform} (auto-detected from the origin "
+                  f"remote)")
+        else:
+            print("    - platform: gitlab (example default; no gitlab.com/"
+                  "github.com origin remote found — a TODO comment marks the "
+                  "line)")
+        print(f"    - sda: {'true' if sda_effective else 'false'}"
+              + (" (SDA artifacts detected)" if sda_effective else ""))
+        print("    - phase: left REQUIRED — install fails fast until a human "
+              "picks one")
+        print("    - decisions: example overrides commented out — your phase's "
+              "preset governs (uncomment to override)")
+        if not dry:
+            gy.write_text(text, encoding="utf-8", newline="\n")
+        files_generated += 1
+
+    # -- 3. CONVERT specs/ ------------------------------------------------------
+    print("\n== convert specs/ ==")
+    conversions: list[dict] = []
+    for d in spec_dirs:
+        date, date_src, slug = _spec_identity(target, d)
+        rec_name = f"{date or 'undated'}-migrated-{slug}.md"
+        rec_path = target / ".glados" / "runs" / rec_name
+        existed = rec_path.exists()
+        conversions.append({"dir": d, "date": date, "path": rec_path,
+                            "rel": f".glados/runs/{rec_name}",
+                            "existed": existed})
+        if existed:
+            print(f"  specs/{d.name}/ -> .glados/runs/{rec_name} "
+                  f"(record exists — kept)")
+            continue
+        print(f"  specs/{d.name}/ -> .glados/runs/{rec_name} ({act('create')})")
+        if not dry:
+            rec_path.parent.mkdir(parents=True, exist_ok=True)
+            rec_path.write_text(_spec_record_body(d, date, date_src),
+                                encoding="utf-8", newline="\n")
+        files_generated += 1
+    if not spec_dirs:
+        print("  nothing to convert")
+
+    rows_added = 0
+    if conversions and sda_effective:
+        spec_log = target / "product-knowledge" / "SPEC_LOG.md"
+        existing_text = read_text(spec_log) if spec_log.exists() else ""
+        pending = [c for c in conversions
+                   if c["path"].name not in existing_text]
+        pending.sort(key=lambda c: c["date"] or "", reverse=True)  # newest first
+        rows = [f"| {c['date'] or 'undated'} | migrate | specs/{c['dir'].name} "
+                f"| migrated | {c['rel']} |" for c in pending]
+        if rows:
+            if not spec_log.exists():
+                print(f"  product-knowledge/SPEC_LOG.md: "
+                      f"{act('create from the template')}")
+                if not dry:
+                    _scaffold_spec_log(target, source,
+                                       datetime.date.today().isoformat())
+                files_generated += 1
+            print(f"  product-knowledge/SPEC_LOG.md: "
+                  f"{act(f'append {len(rows)} work-unit row(s)')}")
+            if not dry:
+                _insert_spec_log_rows(spec_log, rows)
+            rows_added = len(rows)
+        else:
+            print("  product-knowledge/SPEC_LOG.md: every migrated row already "
+                  "present")
+    elif conversions:
+        print("  SPEC_LOG rows: skipped (sda is not true)")
+
+    # -- --clean / cleanup report -----------------------------------------------
+    print("\n== cleanup ==")
+    if args.clean:
+        if dry:
+            for c in conversions:
+                print(f"  would remove specs/{c['dir'].name}/ (converted)")
+            for mode, paths in layouts.items():
+                for p in paths:
+                    print(f"  would remove {posix(p)} (v1 {mode} layout)")
+            if not conversions and not layouts:
+                print("  nothing to clean")
+        else:
+            removed = _migrate_clean(target, layouts, conversions)
+            for rel in removed:
+                print("  removed " + rel.replace("\\", "/"))
+            if not removed:
+                print("  nothing to clean")
+    else:
+        if conversions or layouts:
+            print("  nothing removed (non-destructive default); removable once "
+                  "migrated:")
+            for c in conversions:
+                print(f"    - specs/{c['dir'].name}/ (converted to {c['rel']})")
+            for mode, paths in layouts.items():
+                for p in paths:
+                    print(f"    - {posix(p)} (v1 {mode} layout)")
+            print("  note: `install --mode <m>` cleans the v1 layout of its own "
+                  "mode; `migrate --clean` removes all of the above")
+        else:
+            print("  nothing to clean")
+
+    # -- 4. NEXT STEPS + counts ---------------------------------------------------
+    print("\n== next steps ==")
+    steps: list[str] = []
+    if phase_unset:
+        steps.append("edit glados.yaml — set phase: (one of: "
+                     + ", ".join(PHASES) + ")")
+    steps.append(f"python glados.py install --mode {suggested or '<mode>'} "
+                 f"--target {target}")
+    steps.append("commit the migrated tree")
+    if not args.clean:
+        steps.append(f"re-run: python glados.py migrate --target {target} "
+                     f"--clean (removes the converted specs/ dirs and v1 "
+                     f"layouts)")
+    for i, step in enumerate(steps, 1):
+        print(f"  {i}. {step}")
+
+    converted = sum(1 for c in conversions if not c["existed"])
+    if dry:
+        print(f"\nglados migrate (dry-run): would convert {converted} spec "
+              f"dir(s), generate {files_generated} file(s), append "
+              f"{rows_added} SPEC_LOG row(s)")
+    else:
+        print(f"\nglados migrate: {converted} spec dir(s) converted, "
+              f"{files_generated} file(s) generated, {rows_added} SPEC_LOG "
+              f"row(s) appended")
+    return 0
+
+
 def cmd_compile_plugin(args) -> int:
     source = _resolve_source(args)
     repo = Path(args.target).resolve() if args.target else source.root
@@ -2408,6 +3026,20 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--target", required=True)
     pd.add_argument("--source")
     pd.set_defaults(func=cmd_doctor)
+
+    pm = sub.add_parser(
+        "migrate",
+        help="guided v1 -> v2 migration: detect v1 layouts, generate "
+             "glados.yaml (phase left for a human), convert specs/ history "
+             "to run records — non-destructive and idempotent by default")
+    pm.add_argument("--target", required=True)
+    pm.add_argument("--source")
+    pm.add_argument("--dry-run", action="store_true",
+                    help="print the full migration plan; write nothing")
+    pm.add_argument("--clean", action="store_true",
+                    help="after successful conversion, remove the converted "
+                         "specs/ dirs and the detected v1 command layouts")
+    pm.set_defaults(func=cmd_migrate)
 
     pv = sub.add_parser("verify-ledger", help="scan git for silent-loss candidates")
     pv.add_argument("--target", required=True)

@@ -61,5 +61,6 @@ after its opening paragraph.
   the current mapping, enabled by `sda: true`) and v1.0 (historical).
 - [V2_STRATEGY.md](V2_STRATEGY.md) — design rationale for v2: the audit
   evidence and the nine load-bearing decisions. The deep end.
-- [../MIGRATION.md](../MIGRATION.md) — for v1 users: moving an existing
-  v1 install to v2, step by step.
+- [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
+  path — `glados.py migrate` does the mechanical work; the guide covers
+  the one decision it leaves to you and what changed conceptually.
