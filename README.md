@@ -1,154 +1,173 @@
 # GLaDOS
 
-**GLaDOS** (Generative Logic and Documentation Operating System) v2 is a
-**compiler for team attention**.
+**G**enerative **L**ogic **a**nd **D**ocumentation **O**perating **S**ystem — yes, [that GLaDOS](https://en.wikipedia.org/wiki/GLaDOS). Unlike her namesake, this one writes everything down and lets you leave the testing chamber.
 
-Code got cheap; understanding got scarce. v1 was 21 instruction files that each
-individually promised to trace, publish, coordinate, and use the same words —
-and prose promises don't compose. In v2, workflows shrink to short **cores**
-describing only their distinctive work. Everything cross-cutting — where
-outcomes publish, what words verdicts use, how the review panel is seated, what
-happens at the end of every run — is **compiled into the workflow text at
-install time from one project manifest**. The installer is an assembler with a
-type-checker: it refuses to produce an install where something is read that
-nothing writes, where an emitted outcome type has no team-visible sink, or
-where a reference dangles. Enforcement lives at the three real enforcement
-points a daemon-less markdown framework has — install time, CI time, and
-host-agent hooks — never in prose hope.
+GLaDOS is a library of engineering workflows for AI coding agents — Claude
+Code, Gemini CLI (Google's open-source terminal agent), Google Antigravity
+(Google's agentic IDE; CLI `agy`; antigravity.google), and others. You
+install it *into* a project: a small
+compiler reads one configuration file in your repo (`glados.yaml`) and
+generates a set of slash commands — `/glados:build-feature`,
+`/glados:fix-bug`, `/glados:review-mr` — tailored to that project. When your
+agent runs one, it follows a disciplined, team-visible process instead of
+improvising: reviews get posted where the team can see them, decisions get
+written down with their reasons, and every run leaves a committed record in
+your repo.
 
-The full rationale, audit evidence, and release sequencing live in
-**[docs/V2_STRATEGY.md](docs/V2_STRATEGY.md)**.
+What you get:
 
----
+- **Ready-made workflows for the whole development loop** — plan, spec,
+  implement, verify, review, bug-fix, epic runs, weekly cleanup — installed as
+  slash commands your agent already knows how to invoke.
+- **Nothing important lives only in a chat transcript.** Review verdicts land
+  as merge-request comments (a merge request, or MR, is GitLab's name for a
+  pull request), problems become issues, and every run writes a record file
+  into `.glados/runs/` that is committed alongside the work.
+- **One config file controls behavior.** `glados.yaml` declares who may merge,
+  which decisions the agent may make on its own, and where each kind of result
+  gets posted. The installer refuses any configuration under which a result
+  would silently disappear.
 
-## Quickstart
+## 60-second quickstart
 
-1. Copy the example manifest into your project root and edit it —
-   `platform:`, `phase:`, and the channel bindings are the load-bearing keys:
+From a clone of this repository:
 
-   ```bash
-   cp glados.yaml.example /path/to/your/project/glados.yaml
-   ```
+```bash
+cp glados.yaml.example /path/to/your/project/glados.yaml
+```
 
-2. Compile and install for your runtime:
+Open the copy and set two keys. `platform:` is `gitlab` or `github`. `phase:`
+is a one-word honest answer to "who gets hurt if the agent gets something
+wrong?" — `nascent` (nobody; no users yet), `evolving` (early adopters),
+`production` (real users), or `sunset` (winding down) — describe reality, not
+ambition, because the word tunes how much caution gets compiled in.
 
-   ```bash
-   python bin/glados.py install --mode claude --target /path/to/your/project
-   # modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
-   ```
+Then install for your agent's runtime (here: Claude Code):
 
-The install compiles the cores, vocabulary partials, and kernel fragments
-against your manifest, runs the registry and sink checks, prints an assembly
-report (every resolved value with its provenance), and emits the adapter output
-for the chosen runtime. One compiled output feeds every mode; a fixture
-self-test compiles all adapters so per-mode drift fails the build. The compiler
-is under active development — see `bin/` for current status.
+```bash
+python bin/glados.py install --mode claude --target /path/to/your/project
+# modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
+```
 
----
+The installer prints an **assembly report** — every configuration value it
+resolved and where it came from — and writes the commands into your project.
+Now open your agent inside the project and run your first command:
 
-## The 15 cores
+```
+/glados:adopt-codebase
+```
 
-| Core | Does |
-|---|---|
-| `intent` | Establish or refresh the product mission and roadmap. |
-| `plan-feature` | Analyze requirements and produce a high-level plan and review-persona roster for one feature. |
-| `spec-feature` | Turn one feature's plan into finalized requirements and an implementable specification. |
-| `implement-feature` | Write the code and tests that satisfy an approved specification. |
-| `verify-feature` | Verify the implemented feature with a fresh evaluator that has no implementation context. |
-| `build-feature` | Take one feature from selection to a verified, self-reviewed merge request (plan→spec→implement→verify, one sitting). |
-| `fix-bug` | Take one bug from report through reproduction to a verified root-cause fix MR. |
-| `review-mr` | Run one adversarial multi-persona review pass over an open merge request. |
-| `address-review` | Resolve every open review finding in one coherent fix pass, then hand back for re-review. |
-| `run-epic` | Drive a multi-ticket epic or the backlog to one human-reviewable integration MR. |
-| `adopt-codebase` | Onboard an existing codebase — scaffold GLaDOS state and the manifest, then extract its knowledge. |
-| `review-codebase` | Audit an existing codebase read-only and report structure, health, and observed-standards candidates. |
-| `retrospect` | Review recent work to harvest observed standards, philosophies, and phase-fitness signals. |
-| `steward` | The standing gardening pass — compact the run ledger, refresh stale docs, promote observations, sanity-check tests, ship one cleanup MR. |
-| `brunch` | The codebase critique roundtable — evidence pre-flight, parallel persona reviewers, a moderator, one surgical fix MR. |
+The agent studies your codebase, writes what it learns (structure,
+conventions, candidate coding standards) into `product-knowledge/`, and leaves
+a record of the run in `.glados/runs/` — ordinary files you review and commit
+like any other change.
 
-Every retired v1 command name remains as a permanent alias shim that routes to
-its v2 core — old habits and old CLAUDE.md files keep working. See the name
-map in [MIGRATION.md](MIGRATION.md).
+## What a run looks like
 
----
+Say a user reports a crash and you run `/glados:fix-bug`. The agent does not
+jump straight to editing code: it first reproduces the bug and writes down
+how; it fixes the root cause rather than the symptom; then a second, fresh
+agent session — one that never saw the fix being written — independently
+verifies it. What you end up with is a merge request with the review verdict
+posted as a comment on it, plus a committed record in `.glados/runs/` saying
+what was decided and why. Six months later, `git log` still knows the whole
+story.
 
-## The manifest
+`fix-bug` is one of fifteen commands. The everyday ones are `build-feature`
+(one feature from plan to a verified merge request in one sitting),
+`review-mr` and `address-review` (the review loop), and `run-epic` (a whole
+ticket queue). The full list, with what each does, is in
+[docs/workflows.md](docs/workflows.md).
 
-`glados.yaml` is the one project-owned configuration file
-([glados.yaml.example](glados.yaml.example) is the template). It declares the
-platform, the required project phase, the **channel bindings** that route each
-outcome type (`verdict`, `escalation`, `bug`, `progress`, `decision`,
-`observation`) to team-visible sinks, merge authority, decision-rights keys,
-branch conventions, per-workflow module selection, and module parameters.
-Workflow cores emit outcome types and never name destinations; an emitted type
-with zero team-visible sinks is an install error. Policies are manifest keys
-that workflows read — no workflow file states a merge authority or a loop
-bound, so contradictory sentences cannot exist.
+## Where things land in your repo
 
-## Project phase
+Everything is installed into your project workspace and committed to git:
 
-`phase:` is a required manifest key — `nascent | evolving | production |
-sunset` — declaring in one word who gets hurt when the agent is wrong and what
-the team wants optimized. It expands into defaults for manifest keys that
-already exist (precedence `baseline < phase preset < explicit`), never appears
-in compiled workflow text, may never touch observability, and only a
-human-merged MR can change it.
+```
+your-project/
+├── glados.yaml                  # the one config file you own and edit
+├── .claude/commands/glados/     # the compiled slash commands (this dir is
+│                                #   per-runtime — see the table below)
+├── .glados/                     # GLaDOS working state, committed to git
+│   ├── runs/                    # one record file per run (created on first run)
+│   ├── assembly-report.md       # what the installer resolved, and from where
+│   ├── personas/                # reviewer viewpoints: security, architecture, QA…
+│   ├── ci/                      # optional CI job that catches config drift
+│   └── src/                     # copies of the sources, so installs are reproducible
+└── product-knowledge/           # your project's written knowledge
+    ├── standards/               # rules the agent's work is checked against
+    ├── philosophies/            # high-level principles
+    ├── personas/                # your own reviewer viewpoints (override shipped ones)
+    └── observations/            # recurring patterns noticed, awaiting promotion
+```
 
-## The three-lane rule
+The compiled command files are generated output — never edit them by hand.
+Edit `glados.yaml` and re-run the install; a hand-edit is silently overwritten
+by the next install.
 
-Not everything compiles — the lanes decide what changes live and what passes
-through a ceremony:
+## Supported runtimes
 
-- **Lane 1 — compiled:** what the agent must not be able to skip. The
-  epilogue, the verdict vocabulary, module presence/absence, constant rule
-  text — inlined into each installed workflow. Changing structure is a
-  manifest edit + recompile, deliberately a ceremony: the type-checker runs
-  and the assembly report shows the team what changed.
-- **Lane 2 — runtime-read:** values that change without ceremony. Compiled
-  text instructs the agent to resolve channel bindings, merge authority,
-  decision keys, loop-bound values, and the panel roster from `glados.yaml`
-  at run time — a two-line manifest edit changes behavior on the next run.
-- **Lane 3 — referenced on demand:** bulky, optional, harmless to skip.
-  Persona definitions, rare-path procedures, standards documents. Add a
-  persona by dropping a file in `product-knowledge/personas/` and adding one
-  manifest line — the next panel seats it, no reinstall. The library personas
-  ship vendored into `.glados/personas/` by every install mode; a project file
-  of the same name wins.
+One compiled output feeds every mode, so behavior matches across runtimes.
 
----
+| Runtime | `--mode` | What gets installed |
+|---|---|---|
+| Claude Code (Anthropic's terminal coding agent) | `claude` | Slash commands in `.claude/commands/glados/` — run `/glados:fix-bug` |
+| Claude Code, packaged as a plugin | `claude-plugin` | A plugin build in `compiled/claude-plugin/` |
+| Gemini CLI (Google's open-source terminal agent) | `gemini` | Commands in `.gemini/commands/glados/` — run `/glados:fix-bug` |
+| Google Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google) | `antigravity` | Workflow files in `.agents/workflows/` — run `/glados-fix-bug` |
+| Google AI Studio (aistudio.google.com) | `aistudio` | Paste-in bundles in `glados/adapters/aistudio/bundles/` — no command surface; you paste a bundle into the chat |
+| Any agent that can read a markdown file | `direct` | Plain workflow documents in `product-knowledge/glados/` |
 
-## Scheduling the ceremonies
+## The weekly rhythm
 
-`steward` (housekeeping, typically Saturday) and `brunch` (the critique
-roundtable, typically Sunday) are standing ceremonies. GLaDOS ships no
-scheduler — every core is headless-invocable on every supported runtime, and
-scheduling is the project's routine definition pointing at our core:
+Two commands are standing weekly jobs rather than things you run when you
+think of them:
 
-| Runtime | Headless recipe |
-|---|---|
-| Claude Code | A scheduled task that runs `/glados:steward` or `/glados:brunch`. |
-| Gemini CLI | `gemini -p "/glados:brunch"` from cron or CI. |
-| Antigravity (`agy`) | Non-interactive `agy` with `--output json` (stdout is dropped without it in non-TTY runs). |
-| Any CI | A cron/scheduled pipeline job invoking the runtime headless. |
-| AI Studio | The api-runner scripts from the paste-kit, targeting the Interactions API for scheduled read-mostly runs. |
+- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses old
+  run records into a short digest, refreshes stale docs, reviews the
+  accumulated observations and promotes the real patterns into written
+  standards, and sanity-checks the tests. Ships as one small cleanup merge
+  request.
+- **`/glados:brunch`** (typically Sunday) — a critique roundtable. Several
+  reviewer personas examine the codebase in parallel (after actually running
+  the project first), a moderator ranks the findings by impact against
+  effort, and the top finding ships as one small fix merge request.
 
-## Boundary of responsibility
+GLaDOS deliberately ships no scheduler. Every command can run
+non-interactively, so use whatever your project already has: a cron job (e.g.
+`gemini -p "/glados:brunch"` for Gemini CLI), a scheduled CI pipeline, or your
+agent's own scheduled-task feature.
 
-GLaDOS defines *contracts* — outcome types, channel kinds, the run-record
-shape. The **project** provides the platform (GitLab or GitHub, error
-tracking, CI wiring) and declares it in the manifest. The **agent** brings its
-own hands — the project platform CLI, MCP servers, whatever its runtime
-offers — to execute channel bindings. GLaDOS never wires a platform API
-itself: it ships CI templates the project enables, and the doctor check
-reports wiring that is declared but not actually running. On runtimes without
-hands, the contract degrades honestly: the agent emits the exact commands and
-file contents, and the operator or runner script executes them.
+## What GLaDOS does and doesn't do
 
----
+GLaDOS defines the process: what must be recorded, what words a verdict may
+use, and where each kind of result must be visible to the team. It does
+**not** talk to GitLab or GitHub itself. Your project declares its platform in
+`glados.yaml`, and your agent uses its own tools — the `glab` or `gh` CLI, MCP
+servers, whatever its runtime provides — to actually post comments and open
+issues. GLaDOS ships CI job templates your project can enable, and
+`python bin/glados.py doctor --target /path/to/your/project` reports anything
+declared in the config but not actually wired up. On runtimes where the agent
+cannot run commands at all (Google AI Studio), it degrades honestly: the agent
+prints the exact commands and file contents, and you execute them.
 
-## Documentation
+## Learn more
 
-- [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) — the guiding strategy for v2.
-- [docs/workflows.md](docs/workflows.md) — the cores and the v1 alias map.
-- [docs/modules.md](docs/modules.md) — compiled modules and retired v1 modules.
-- [docs/src.md](docs/src.md) — the source tree, kernel, and vocabulary.
+In increasing depth:
+
+1. **[docs/getting-started/](docs/getting-started/)** — a full install
+   walkthrough and your first week.
+2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
+   runs.
+3. **[docs/guides/](docs/guides/)** — task-oriented guides; see also
+   [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
+4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
+   file, and the run records actually work.
+5. **Reference** — [docs/workflows.md](docs/workflows.md) (all fifteen
+   commands and the v1→v2 name map), [docs/modules.md](docs/modules.md),
+   [docs/personas.md](docs/personas.md), [docs/src.md](docs/src.md), and
+   [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) (design rationale — the deep
+   end).
+
+Upgrading from GLaDOS v1? Every old command name keeps working as an alias;
+[MIGRATION.md](MIGRATION.md) has the full map.

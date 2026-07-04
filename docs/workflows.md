@@ -1,5 +1,9 @@
 # Workflows
 
+> Reference page. If terms like *core*, *module*, *manifest*, or
+> *run record* are new to you, read [concepts.md](concepts.md) first —
+> everything past this line assumes that vocabulary.
+
 A v2 workflow is a **core**: a markdown file in `src/workflows/` whose YAML
 frontmatter declares its contract (`reads:` / `writes:` state-registry tokens,
 `emits:` outcome types, `mutates:`, `requires:` modules) and whose body covers

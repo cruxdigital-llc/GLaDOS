@@ -34,7 +34,9 @@ by design. This document is the whole procedure.
   `git pull` instead of a scratchpad file that exists on one machine.
 
 Full rationale, audit evidence, and the nine load-bearing decisions:
-[docs/V2_STRATEGY.md](docs/V2_STRATEGY.md).
+[docs/V2_STRATEGY.md](docs/V2_STRATEGY.md). The v2 vocabulary used below
+(core, manifest, run ledger, channel) is defined in plain words in
+[docs/concepts.md](docs/concepts.md).
 
 ## The name map
 
@@ -162,12 +164,15 @@ the silent failure v2 exists to kill, so doctor reports its absence loudly.
 ### 6. Optional: host-agent guard hooks
 
 The compiled epilogue is a promise kept by an LLM at 90% context; the hooks
-make it mechanical. Set up the guard for your runtime — Claude Code Stop-hook
-(refuses session end without a committed run record), Gemini CLI AfterAgent
-guard, or the agy Stop hook in `.agents/hooks.json`. See the per-runtime
-setup recipes in the runtime docs (`docs/`, decision 9 of the strategy). CI
-`verify-ledger` remains the universal backstop on every runtime, so the hooks
-are belt-and-suspenders — recommended, not required.
+make it mechanical. Set up the guard for your runtime — the Claude Code
+Stop-hook (refuses session end without a committed run record), the AfterAgent
+guard for Gemini CLI (Google's open-source terminal agent), or the Stop hook
+in `.agents/hooks.json` for `agy`, the CLI of Google Antigravity (Google's
+agentic IDE; antigravity.google). Per-runtime setup recipes live in
+[hooks/README.md](hooks/README.md); the reasoning is decision 9 of
+[docs/V2_STRATEGY.md](docs/V2_STRATEGY.md). CI `verify-ledger` remains the
+universal backstop on every runtime, so the hooks are belt-and-suspenders —
+recommended, not required.
 
 ## That's it
 

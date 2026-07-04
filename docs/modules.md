@@ -1,5 +1,9 @@
 # Modules
 
+> Reference page. If terms like *core*, *manifest*, or *compile time*
+> are new to you, read [concepts.md](concepts.md) first — everything
+> past this line assumes that vocabulary.
+
 A v2 module is a markdown file in `src/modules/` with `kind: module`
 frontmatter declaring the same contract fields as a core (`reads:`,
 `writes:`, `emits:`, `mutates:`, `requires:`). Modules are **inlined into

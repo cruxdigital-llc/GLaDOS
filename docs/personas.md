@@ -1,5 +1,9 @@
 # Personas
 
+> Reference page. If terms like *review panel*, *manifest*, or *module*
+> are new to you, read [concepts.md](concepts.md) first — everything
+> past this line assumes that vocabulary.
+
 Personas define specific viewpoints and responsibilities that the agent adopts during review gates and/or throughout active sessions.
 
 ## Persona Types
@@ -9,6 +13,7 @@ Personas define specific viewpoints and responsibilities that the agent adopts d
 | **review** | Seated on review panels (`mr-review-panel`, `brunch`) — a specific *lens* applied during review |
 | **operating** | Drives agent *behavior* during execution — priorities, tone, tool preferences |
 | **hybrid** | Works as both review and operating persona |
+| **moderator** | Seated only as `brunch`'s roundtable moderator — ranks and prunes the reviewers' findings, never reviews itself. The library ships exactly one: `brunch-moderator`. |
 
 ## File Format
 
@@ -16,7 +21,7 @@ Each persona file includes YAML frontmatter:
 
 ```yaml
 ---
-type: review | operating | hybrid
+type: review | operating | hybrid | moderator
 priority_areas: [security, performance]
 standards_weight: [security/*]
 ---
