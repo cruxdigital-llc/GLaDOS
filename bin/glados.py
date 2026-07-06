@@ -1913,9 +1913,14 @@ def _resolve_source(args) -> Source:
     if getattr(args, "source", None):
         return Source(Path(args.source).resolve())
     here = Path(__file__).resolve().parent
-    # bin/glados.py -> repo root is parent; vendored .glados/glados.py has no src
+    # Disambiguate on the GLaDOS source *shape* (src/kernel/), not the mere
+    # presence of a src/ dir: a target repo with its own top-level src/ would
+    # otherwise shadow the vendored .glados/src/. For bin/glados.py the repo
+    # root (here.parent) has src/kernel/ and wins; for a vendored
+    # .glados/glados.py, here.parent is the consuming repo (whose unrelated
+    # src/ has no kernel/) so it falls through to here (.glados/), which does.
     for cand in (here.parent, here):
-        if (cand / "src").is_dir():
+        if (cand / "src" / "kernel").is_dir():
             return Source(cand)
     raise Fatal("could not locate the GLaDOS source tree — pass --source <repo>")
 

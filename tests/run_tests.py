@@ -373,6 +373,34 @@ class TestVendor(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, out)
         self.assertIn("glados check: OK", out)
 
+    def test_vendored_checker_ignores_target_src_layout(self):
+        """A target repo with its own top-level src/ (a src-layout project)
+        must not shadow the vendored .glados/src/. _resolve_source keys on the
+        src/kernel/ shape, so the vendored checker still resolves .glados/ with
+        NO --source and passes in enforcing mode. Regression for #14, where the
+        app's src/ won and check --report-only went silently green."""
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        # Plant an unrelated application source tree at the repo root.
+        write(t / "src" / "app" / "main.py", "print('hello')\n")
+        proc = subprocess.run(
+            [sys.executable, str(t / ".glados" / "glados.py"),
+             "check", "--target", str(t)],
+            capture_output=True, text=True)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("glados check: OK", out)
+        self.assertNotIn("cannot resolve the GLaDOS source tree", out)
+        # report-only must genuinely check (and pass), not go green while
+        # never resolving its own sources.
+        proc = subprocess.run(
+            [sys.executable, str(t / ".glados" / "glados.py"),
+             "check", "--target", str(t), "--report-only"],
+            capture_output=True, text=True)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertNotIn("cannot resolve the GLaDOS source tree", out)
+
     def test_vendored_tree_stale_files_cleaned(self):
         """A leftover file in a vendored .glados/ subtree (e.g. a renamed
         source after an upgrade) is cleaned on reinstall — it would otherwise
