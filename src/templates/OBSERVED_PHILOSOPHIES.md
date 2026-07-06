@@ -1,7 +1,7 @@
 # Observed Philosophies
 
-*This file is populated automatically by the `pattern-observer` module during normal workflow execution.*
-*Items here are reviewed and promoted (or discarded) during `{{CMD}}recombobulate`.*
+*This file is populated by the `retrospect`, `review-codebase`, and `brunch` workflows during normal execution.*
+*Items here are reviewed and promoted (or discarded) by the weekly `steward` pass.*
 
 ---
 

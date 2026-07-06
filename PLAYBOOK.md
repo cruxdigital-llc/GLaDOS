@@ -1,8 +1,8 @@
 # GLaDOS Playbook
 
-A practical guide to adopting GLaDOS in your project and your team — from first install to steady-state operations.
+A practical guide to adopting GLaDOS in your project and your team — from first install to steady-state operations. New here? The [README](README.md) and [docs/getting-started/](docs/getting-started/) cover what GLaDOS is and how to install it from zero; this playbook assumes that much and focuses on adopting it well.
 
-> **Note**: Command syntax varies by agent. For example, `mission` is invoked as `/glados:mission` in Claude Code, `/glados/mission` in Antigravity, and `glados mission` in Gemini CLI. This guide uses bare command names for readability.
+> **Note**: Invocation syntax varies by runtime. `intent` is invoked as `/glados:intent` in Claude Code, `/glados:intent` in Gemini CLI (Google's open-source terminal agent; installed as TOML commands), and `/glados-intent` in Google Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google; flat workflow files, name-prefixed). Google AI Studio (aistudio.google.com) has no command surface — you paste the workflow's self-contained bundle into the conversation. This guide uses bare command names for readability.
 
 ---
 
@@ -10,34 +10,53 @@ A practical guide to adopting GLaDOS in your project and your team — from firs
 
 ### Day 1: Install & Orient
 
-1. **Install GLaDOS** for your agent of choice:
+1. **Create your manifest** — the `glados.yaml` configuration file GLaDOS reads. Copy [glados.yaml.example](glados.yaml.example) to your repo root as `glados.yaml` and edit it. The load-bearing keys are `platform:`, `phase:`, and the channel bindings — the lines that say which team-visible place each kind of result gets posted to (a merge-request comment, an issue, or the committed run log).
+2. **Declare your phase** — it is required, with no default. Describe reality, not ambition: phase states who gets hurt when the agent is wrong, not how proud you are of the code. A repo with zero users is `nascent`; the moment real users exist, it is `production`, whatever the code looks like.
+3. **Install** for your runtime:
    ```bash
-   ./bin/glados-install.sh --mode antigravity  # or claude, gemini
+   python bin/glados.py install --mode claude --target /path/to/your/project
+   # modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
    ```
-2. **Choose your path**:
-   - **New project?** Start with `mission` → `plan-product` → `plan-feature`.
-   - **Existing codebase?** Run `adopt-codebase` for a guided onboarding, or step through `review-codebase` → `establish-standards` → `mission` manually.
-3. **Establish 2-3 standards** right away. Don't boil the ocean — pick the most contentious or error-prone areas (e.g., "How do we handle errors?", "What's our test strategy?").
+   Read the **assembly report** it prints — a table of every configuration value the installer resolved, where each came from, and a loud marker on anything your phase relaxed.
+4. **Choose your path**:
+   - **New project?** Start with `intent` to establish the mission and roadmap.
+   - **Existing codebase?** Run `adopt-codebase` for a guided onboarding, or step through `review-codebase` → `intent` manually.
+5. **Seed 2-3 standards** right away — short markdown files in `product-knowledge/standards/`, each stating a rule the agent's work will be checked against. Don't boil the ocean — pick the most contentious or error-prone areas (e.g., "How do we handle errors?", "What's our test strategy?").
 
 ### Week 1: Build Muscle Memory
 
-Run the full development loop for at least **one feature**:
+Run the full development loop for at least **one feature** — either the four stages by hand:
 
 ```
-/plan-feature → /spec-feature → /implement-feature → /verify-feature
+plan-feature → spec-feature → implement-feature → verify-feature
 ```
 
-This teaches you the GLaDOS rhythm and surfaces any standards you forgot to document. Pay attention to the **standards gate** — if it's too noisy, tune your standard severities (`should` → `may`).
+or `build-feature`, which sequences all four and opens a review-ready merge request (MR — GitHub calls it a pull request) in one sitting. This teaches you the GLaDOS rhythm and surfaces any standards you forgot to document. Pay attention to the **standards gate** — the automatic check, built into each workflow, that compares the agent's work against your written standards. Every standard carries a severity: `must` blocks the workflow, `should` only advises. If the gate is too noisy, tune your standard severities.
 
 ### Week 2+: Let Patterns Emerge
 
-By now the `pattern-observer` module is silently logging things to `product-knowledge/observations/`. After 3-5 features:
+`retrospect` reviews recent work and writes down **observations** — recurring patterns it noticed — into `product-knowledge/observations/` (retrospect owns this in v2; there is no separate pattern-observing workflow). Observations accumulate as pending items until the weekly `steward` pass promotes the real patterns into `standards/` or `philosophies/` and discards the noise, with a one-line reason either way.
 
-```
-/recombobulate --scope observations-only
-```
+---
 
-Review what was captured. Promote the real patterns to `standards/` or `philosophies/`, discard the noise.
+## The Weekly Rhythm
+
+Two standing ceremonies — scheduled, recurring jobs — keep the project healthy without anyone remembering to run them:
+
+| Ceremony | Typical day | Produces |
+|---|---|---|
+| `steward` | Saturday | The housekeeping pass — condense old run records into a digest, refresh stale docs, promote pending observations, sanity-check the tests. **One cleanup MR.** |
+| `brunch` | Sunday | The codebase critique roundtable — an evidence pre-flight (actually run the thing), parallel persona reviewers, a moderator who ranks findings by impact against effort. **One surgical fix MR.** |
+
+(**Personas** are markdown files that give the reviewing agent a specific reviewer's viewpoint — security engineer, architect, QA, and so on. See [docs/personas.md](docs/personas.md).)
+
+GLaDOS ships no scheduler — every workflow can run non-interactively (headless), and scheduling is the project's job. See the per-runtime recipes in the README ("The weekly rhythm").
+
+The third loop runs per merge request, not per week: **`review-mr` ⇄ `address-review`**. Review runs several personas over the MR, each hunting for real problems, and posts a **verdict** — a one-word review outcome from a fixed vocabulary, such as APPROVE. Address-review resolves every open finding in one coherent pass and hands back. The loop repeats until the verdict is APPROVE or someone escalates to a human.
+
+## The Run Ledger and Channels
+
+Every workflow run leaves exactly one committed record in `.glados/runs/` — what ran, what it decided, what it emitted. This folder of records is the **run ledger**. Epic and feature state lives in the ledger on the branch, so a fresh session on any machine resumes from `git pull`, not from a scratch file that exists only where the last run happened. The results themselves — GLaDOS calls them outcomes, and there are six kinds: `verdict`, `escalation`, `bug`, `progress`, `decision`, `observation` — land wherever your `glados.yaml` channels point them: verdicts as MR comments, escalations and bugs as issues, by default. Nothing important lives only in a chat transcript. The weekly `steward` pass condenses settled records into a one-line-per-run digest, keeping the ledger readable. The assembly report printed at install is the ledger's front door: it shows where every resolved configuration value came from and marks anything your phase preset relaxed, so the team can see exactly what it traded away. If the report shows a relaxation you didn't intend, fix the manifest before the first run — not after the first incident.
 
 ---
 
@@ -48,75 +67,63 @@ Review what was captured. Promote the real patterns to `standards/` or `philosop
 |---|---|---|
 | Plan | `plan-feature` | Developer (self or peer) |
 | Spec | `spec-feature` | Developer + Personas (auto) |
-| Standards Check | *automatic via standards-gate* | System (blocking on `must`) |
+| Standards Check | *automatic via the standards gate* | System (blocking on `must`) |
 | Implement | `implement-feature` | Developer |
-| Verify | `verify-feature` | Developer + Personas (auto) |
+| Verify | `verify-feature` | A fresh evaluator — a separate agent session that never saw the implementation |
+| Review | `review-mr` ⇄ `address-review` | Per the `merge-authority` key in `glados.yaml` (who may merge) |
 
-### Weekly (or Per Sprint)
+`build-feature` runs the first five as one sitting; `fix-bug` is the same shape for bugs (report → reproduction → verified root-cause fix MR); `run-epic` drives a multi-ticket epic — or the whole backlog with `--backlog` — to one human-reviewable integration MR.
+
+### Weekly
 | Activity | Workflow | Purpose |
 |---|---|---|
-| Retrospect | `retrospect` | Human reflection — what went well, what didn't |
-| Quick Consolidation | `recombobulate --scope observations-only` | Promote any accumulated observations |
+| Housekeeping | `steward` | Ledger digest, doc refresh, observation promotion — one cleanup MR |
+| Critique | `brunch` | Persona roundtable — one surgical fix MR |
+| Retrospect | `retrospect` | Human reflection; writes down observations and flags when your declared phase no longer matches reality |
 
 ### Monthly (or Per Milestone)
-| Activity | Workflow | Purpose |
-|---|---|---|
-| Full Audit | `recombobulate --scope full` | Standards drift, dead code, consistency, documentation staleness |
-| Philosophy Review | Manual review of `philosophies/` | Are our principles still right? |
-| Persona Tuning | Review `personas/` | Add/retire personas based on project evolution |
+| Activity | Purpose |
+|---|---|
+| Philosophy Review | Manual review of `philosophies/` — are our principles still right? |
+| Persona Tuning | Add/retire personas; read brunch's discard breakdowns as calibration signal |
 
 ### Quarterly
 | Activity | Purpose |
 |---|---|
 | Standards Pruning | Remove standards nobody follows or that no longer serve the project |
-| Roadmap Alignment | Ensure `product-knowledge/ROADMAP.md` and `product-knowledge/MISSION.md` still reflect reality |
+| Intent Refresh | Run `intent` — does the mission/roadmap still reflect reality? |
+| Phase Check | Does your declared `phase:` still describe reality? Transitions are a one-line MR against `glados.yaml`. |
 
 ---
 
 ## Part 3: Team Adoption
-
-### The Evangelization Path
 
 GLaDOS works best when adopted incrementally, not mandated top-down.
 
 #### Stage 1: Champion (1 Developer)
 One person installs GLaDOS, uses it for a sprint, and documents the experience. The goal is to answer: *"Does this actually help?"*
 
-**What to demonstrate**:
-- A feature built end-to-end through the GLaDOS loop.
-- The `specs/` trace showing full decision history.
-- A few captured observations that turned into real standards.
+**What to demonstrate**: a feature built end-to-end through the loop; the run ledger showing the full decision history; verdicts and escalations landing on MRs and issues instead of vanishing; a brunch MR that fixed something real.
 
 #### Stage 2: Pair (2-3 Developers)
-Expand to a small group. This is where you discover:
-- Which standards are truly shared vs. personal preference.
-- Whether personas need tuning for your domain.
-- How the observations system handles multiple contributors.
-
-**Key action**: Run `establish-standards` as a group exercise. The interview format naturally surfaces disagreements and builds consensus.
+Expand to a small group. This is where you discover which standards are truly shared vs. personal preference, and whether the personas need tuning for your domain. **Key action**: review a `steward` promotion MR together — arguing over whether an observation deserves to be a standard naturally surfaces disagreements and builds consensus.
 
 #### Stage 3: Team (Full Adoption)
-Once the standards and philosophies feel right:
-- Commit the `product-knowledge/` directory to version control.
-- Add GLaDOS install to your onboarding docs.
-- Use `adopt-codebase` for any new team member's first session — it's a great way to learn the codebase with guided analysis.
+- Commit `glados.yaml`, `product-knowledge/`, and `.glados/` to version control (the ledger only works committed).
+- Add the GLaDOS install to your onboarding docs.
+- Use `adopt-codebase` for any new team member's first session — guided analysis is a great way to learn a codebase.
 
 #### Stage 4: Multi-Team
-For organizations with multiple repos:
-- Create a **shared overlay** with org-wide standards (e.g., `security`, `accessibility`).
-- Each team maintains its own `philosophies/` — these are intentionally local.
-- Share the overlay via a common GLaDOS fork or a Git submodule.
-
----
+Each repo owns its own manifest and phase — never share those. Share persona definitions and org-wide standards (e.g., security, accessibility) via a common fork or submodule; keep `philosophies/` local, they are intentionally per-team.
 
 ### Team Workflow: Who Does What
 
 | Role | GLaDOS Activity |
 |---|---|
-| **Developer** | Runs the development loop daily. Owns `specs/` for their features. |
-| **Tech Lead** | Reviews standards and philosophies. Runs `recombobulate --scope full` periodically. Tunes personas. |
-| **Product Owner** | Maintains `product-knowledge/MISSION.md` and `product-knowledge/ROADMAP.md`. Reviews `plan-feature` outputs. |
-| **New Hire** | Runs `adopt-codebase` as onboarding. Reads `standards/` and `philosophies/` as documentation. |
+| **Developer** | Runs the development loop daily. Works the `review-mr` ⇄ `address-review` loop on their MRs. |
+| **Tech Lead** | Reviews the weekly steward and brunch MRs. Owns the `merge-authority` and `decisions:` keys in `glados.yaml`. Tunes personas. |
+| **Product Owner** | Owns `intent` (mission + roadmap). Reviews `plan-feature` outputs. |
+| **New Hire** | Runs `adopt-codebase` as onboarding. Reads `standards/` and the ledger digest as documentation. |
 
 ---
 
@@ -124,114 +131,70 @@ For organizations with multiple repos:
 
 ### Adding a Persona
 
-Drop a markdown file into `product-knowledge/personas/` or `src/personas/`:
+Drop a markdown file into `product-knowledge/personas/` and add its name to `params.review-panel.personas` in `glados.yaml`. The next review panel seats it — no reinstall. (The personas shipped with GLaDOS are copied into `.glados/personas/` at install; the project directory is searched first, so a project file of the same name wins.)
 
 ```yaml
 ---
-type: review           # review, operating, or hybrid
+type: review           # review, or moderator (brunch seats exactly one)
 priority_areas: [security, compliance]
-standards_weight: [security/*]
 ---
 # Security Expert Persona
-
-**Role**: You are a Security Engineer focused on...
 ```
-
-Common custom personas:
-- **Security Expert**: For teams with compliance requirements.
-- **Accessibility Lead**: For user-facing products.
-- **DevOps Engineer**: For infrastructure-heavy features.
-- **Domain Expert**: When your business logic has specific invariants.
 
 ### Adding a Philosophy
 
-Create a file in `product-knowledge/philosophies/`:
+Create a file in `product-knowledge/philosophies/`. Start with `preferred` weight and promote to `core` only after the team has lived with it. Keep philosophies high-level — if it has a code example, it's a standard.
 
-```yaml
----
-domain: architecture
-weight: core
----
-# Convention Over Configuration
+### Changing Behavior: the Two Speeds
 
-## Statement
-When designing new features, prefer conventions...
-```
+- **Live keys** (channels, merge-authority, decisions, params, the persona roster) are read from `glados.yaml` at run time — edit, and the next run behaves differently. No reinstall.
+- **Structural keys** (per-workflow module lists, phase) take effect at `python bin/glados.py install --mode <mode> --target /path/to/your/project`. The recompile is a deliberate ceremony: the installer's consistency checks run, and the assembly report shows the team what changed. `python bin/glados.py doctor --target /path/to/your/project` flags installs that are stale against the manifest.
 
-Start with `preferred` weight and promote to `core` only after the team has lived with it.
+Never hand-edit installed workflow text — it is compiled output and the next install overwrites it. Change the manifest instead.
 
-### Spec Lifecycle & Ephemerality
+### v1 Names
 
-Specs in GLaDOS are **ephemeral by default**. They serve their purpose during feature development — capturing requirements, decisions, and rationale — but they are not maintained as the codebase evolves. Once a feature is implemented and verified, the spec has done its job.
-
-This is intentional. Specs that linger without updates become stale, and stale specs are worse than no specs — they mislead future readers into trusting outdated decisions, constraints, or implementation details that no longer reflect reality.
-
-**Teams choose their own spec lifecycle.** The spectrum looks like:
-
-| Strategy | Description | Trade-off |
-|---|---|---|
-| **Fully ephemeral** | Delete or archive specs after implementation is verified. The code is the source of truth. | Cleanest, but loses decision history. |
-| **Archive after verify** | Move completed specs to an `archive/` directory. Searchable but clearly not current. | Preserves history without implying currency. |
-| **Maintain actively** | Keep specs updated as code evolves. Treat them as living documentation. | Most informative, but highest maintenance cost — and rarely sustained. |
-
-Most teams land on **archive after verify** as a pragmatic middle ground. The key principle: *a spec should never be in a state where someone might trust it but shouldn't.*
-
-When deciding your approach, consider:
-- **Solo/small teams** often prefer fully ephemeral — the developer *is* the context.
-- **Larger teams** benefit from archiving, since specs capture *why* decisions were made, which helps onboarding.
-- **Regulated environments** may require maintained specs for compliance — but be honest about the maintenance burden.
-
-Whatever you choose, make it explicit. Add your team's spec lifecycle policy to your standards so GLaDOS workflows respect it.
-
-### Creating Overlays
-
-For team-specific customizations that shouldn't alter the base GLaDOS:
-
-1. Create `product-knowledge/overlays/my-team/`.
-2. Copy any workflow or module you want to customize.
-3. Edit it.
-4. Apply: `./bin/glados-update.sh --ingest-overlays`.
-
-This keeps your customizations separate from upstream updates.
+Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `implement-fix`, `verify-fix`, `consolidate`, `establish-standards`, `recombobulate`, `autonomous-loop`) are permanent alias shims routing to their v2 workflow (`intent`, `fix-bug`, `steward`, `run-epic --backlog`). Nothing breaks, but update your docs — see [MIGRATION.md](MIGRATION.md) for the full map and the guided `glados.py migrate` command.
 
 ---
 
 ## Part 5: Anti-Patterns
 
-Things that will undermine GLaDOS adoption:
-
 | Anti-Pattern | Why It Fails | What to Do Instead |
 |---|---|---|
 | **Documenting 50 standards on day one** | Alert fatigue. Agent ignores everything. | Start with 2-3 `must` standards. Add more as patterns emerge. |
-| **Making everything `must` severity** | Nothing feels important when everything is critical. | Use the full `must`/`should`/`may` spectrum. Most standards should be `should`. |
-| **Skipping `retrospect`** | Vibe debt accumulates silently. | Make it a ritual — even 10 minutes after a sprint. |
-| **Never running `recombobulate`** | Observations pile up, standards drift unnoticed. | Schedule monthly at minimum. |
-| **Treating philosophies like standards** | Philosophies guide; they don't prescribe syntax. | Keep philosophies high-level. If it has a code example, it's a standard. |
-| **Keeping specs without maintaining them** | Stale specs mislead future readers into trusting outdated context. | Choose a spec lifecycle policy — ephemeral, archived, or maintained — and follow it. See *Spec Lifecycle & Ephemerality*. |
+| **Making everything `must` severity** | Nothing feels important when everything is critical. | Use the full severity spectrum. Most standards should be `should`. |
+| **Declaring a flattering phase** | `nascent` on a repo with users strips caution from exactly the code that can hurt people. | Phase describes reality. The assembly report marks every relaxation — read it. |
+| **Routing every result only to the run ledger** | Verdicts and escalations nobody sees is the v1 failure mode, refiled. | Keep the defaults (`verdict: mr-comment`, `escalation`/`bug`: `issue`). Weakening them requires a written confession line in `glados.yaml` (`visibility-acknowledged`) — treat needing one as a smell. |
+| **Skipping `retrospect`** | No observations accumulate; steward has nothing to promote; standards fossilize. | Make it a ritual — even 10 minutes after a sprint. |
+| **Skipping the weekly ceremonies** | Ledger bloat, doc drift, and vibe debt accumulate silently. | Schedule `steward` and `brunch` weekly; they each cost one MR review. |
+| **Hand-editing compiled workflows** | The next install silently reverts your change. | Edit `glados.yaml` (live keys) or recompile (structural keys). |
 | **Mandating GLaDOS top-down** | Resistance and resentment. | Let champions demonstrate value first. |
 
 ---
 
 ## Part 6: Measuring Success
 
-How to know GLaDOS is working:
-
 | Signal | How to Check |
 |---|---|
-| **Fewer "wait, we don't do it that way" moments** | Standards gate catches violations before review |
+| **Fewer "wait, we don't do it that way" moments** | The standards gate catches violations before review |
 | **Faster onboarding** | New hires use `adopt-codebase` and read standards instead of asking 50 questions |
-| **Consistent codebase** | `recombobulate --scope full` finds fewer drift issues over time |
-| **Preserved decisions** | `specs/` traces explain *why* things were built the way they were |
-| **Living standards** | `product-knowledge/observations/` regularly produces promotable patterns |
+| **Nothing lost silently** | The CI `verify-ledger` job (copied into `.glados/ci/` at install; enabling it is the project's job — see "What does NOT migrate automatically" in [MIGRATION.md](MIGRATION.md)) reports zero runs whose results never reached a team-visible place, week over week |
+| **Outcomes are visible** | Verdicts sit on MRs, escalations and bugs are issues — no decision lives only in a chat transcript |
+| **Preserved decisions** | Run records and `decision` outcomes explain *why*, resumable from `git pull` |
+| **Living standards** | Steward regularly promotes observations; brunch MRs stay small because big findings got fixed earlier |
 
 ---
 
 ## Quick Reference
 
 ```
-First Day:     /adopt-codebase (brownfield) or /mission (greenfield)
-Every Feature: /plan → /spec → /implement → /verify
-Every Sprint:  /retrospect + /recombobulate --scope observations-only
-Every Month:   /recombobulate --scope full
-On Demand:     /establish-standards, /identify-bug, /plan-fix
+First Day:     adopt-codebase (existing codebase) or intent (new project)
+Every Feature: build-feature   (or plan → spec → implement → verify by hand)
+Every MR:      review-mr ⇄ address-review
+Every Week:    steward (cleanup MR) + brunch (fix MR) + retrospect
+Backlog/Epic:  run-epic [--backlog]
+On Demand:     fix-bug, review-codebase, intent (refresh)
 ```
+
+Deeper reading, in increasing depth: [docs/examples/](docs/examples/) for worked runs, [docs/concepts.md](docs/concepts.md) for how the pieces fit, and the reference pages ([docs/workflows.md](docs/workflows.md), [docs/modules.md](docs/modules.md), [docs/personas.md](docs/personas.md), [docs/src.md](docs/src.md)).

@@ -1,0 +1,21 @@
+name: v2 self-test
+
+# Compiles every adapter and runs the type-checker over the fixtures. A mode
+# that stops shipping modules — v1's flagship bug — fails this build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run the v2 test suite
+        run: python tests/run_tests.py

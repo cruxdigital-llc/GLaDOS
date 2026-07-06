@@ -1,256 +1,178 @@
 # GLaDOS
 
-**GLaDOS** (Generative Logic and Documentation Operating System) is an advanced agentic framework designed to structure, trace, and enhance the software development lifecycle when using LLMs.
+**G**enerative **L**ogic **a**nd **D**ocumentation **O**perating **S**ystem — yes, [that GLaDOS](https://en.wikipedia.org/wiki/GLaDOS). Unlike her namesake, this one writes everything down and lets you leave the testing chamber.
 
-It transforms vague instructions into a rigorous, verifiable process by enforcing **Traceability**, **Role-Based Review**, and **Modular Workflows**.
+GLaDOS is a library of engineering workflows for AI coding agents — Claude
+Code, Gemini CLI (Google's open-source terminal agent), Google Antigravity
+(Google's agentic IDE; CLI `agy`; antigravity.google), and others. You
+install it *into* a project: a small
+compiler reads one configuration file in your repo (`glados.yaml`) and
+generates a set of slash commands — `/glados:build-feature`,
+`/glados:fix-bug`, `/glados:review-mr` — tailored to that project. When your
+agent runs one, it follows a disciplined, team-visible process instead of
+improvising: reviews get posted where the team can see them, decisions get
+written down with their reasons, and every run leaves a committed record in
+your repo.
 
----
+What you get:
 
-## Features
+- **Ready-made workflows for the whole development loop** — plan, spec,
+  implement, verify, review, bug-fix, epic runs, weekly cleanup — installed as
+  slash commands your agent already knows how to invoke.
+- **Nothing important lives only in a chat transcript.** Review verdicts land
+  as merge-request comments (a merge request, or MR, is GitLab's name for a
+  pull request), problems become issues, and every run writes a record file
+  into `.glados/runs/` that is committed alongside the work.
+- **One config file controls behavior.** `glados.yaml` declares who may merge,
+  which decisions the agent may make on its own, and where each kind of result
+  gets posted. The installer refuses any configuration under which a result
+  would silently disappear.
 
-### 🔍 Strict Observability (`specs/`)
-Every unit of work (Feature, Bugfix, Plan) creates a dedicated directory in `specs/[YYYY-MM-DD]_[Name]/`. It acts as a "Flight Recorder," logging every decision, prompt, and file change. The high-level state is maintained in `PROJECT_STATUS.md`, while long-term artifacts (`MISSION.md`, `ROADMAP.md`, `TECH_STACK.md`) live in `product-knowledge/`.
+## 60-second quickstart
 
-### 🎭 Dynamic Personas
-GLaDOS forces the agent to adopt specific viewpoints during planning and verification.
--   **Product Manager**: "Is this valuable?"
--   **Architect**: "Is this scalable?"
--   **QA**: "Is this breakable?"
-
-Personas support three modes: **review** (critique during gates), **operating** (drive session behavior), and **hybrid** (both). Add your own by dropping files into `src/personas`.
-
-### ⚡ Split Lifecycles
-Development is broken into discrete, verifying steps:
-**Plan** → **Spec** → **Implement** → **Verify**.
-This prevents "hallucination spirals" by validating state at each checkpoint.
-
-### 🛡️ Standards Gate
-Documented standards are enforced automatically at pre- and post-implementation checkpoints using three severity tiers:
--   **must**: Blocks the workflow.
--   **should**: Warning in the trace.
--   **may**: Informational.
-
-### 🧭 Philosophies
-Beyond standards (the *what*), GLaDOS tracks **philosophies** (the *why*) — high-level design principles like "All APIs should be RESTful" or "Zero-downtime deployments are non-negotiable." Core philosophies are enforced as blocking constraints.
-
-### 👁️ Silent Capture
-The `pattern-observer` module passively logs implicit standards and philosophies as they emerge during normal work — user corrections, repeated patterns, and explicit statements get captured in `product-knowledge/observations/` for later review.
-
-### 🧩 Modular Architecture
-Logic is shared across workflows using Modules (`src/modules/`).
--   **Observability**: Standardized logging.
--   **Persona Context**: Review and operating persona management.
--   **Standards Gate**: Automated enforcement at checkpoints.
--   **Pattern Observer**: Passive implicit-pattern detection.
--   **Capabilities**: Introspects available tools (Browser, DB, MCPs).
--   **Interaction Proxy**: Autonomous decision-making from project context.
-
-### 📐 SDA Conformance (Optional)
-GLaDOS can optionally conform to the **Structured Development Artifacts (SDA) Standard** — a tool-agnostic markdown format for tracking phased work. Enable SDA at install time to scaffold:
--   `claims.md`: Multi-agent/developer coordination file.
--   `product-knowledge/SPEC_LOG.md`: Historical log of archived specs with commit hashes and summaries.
--   SDA-conformant `ROADMAP.md` template with hierarchical item IDs.
--   SDA version headers on existing documents.
--   Reference copies of the SDA standard and GLaDOS profile in `product-knowledge/standards/`.
-
-See `docs/standards/sda-standard-v1.md` and `docs/standards/sda-profile-glados-v1.md` for the full specification.
-
----
-
-
-GLaDOS installs directly into your project, creating a `product-knowledge/` directory for configuration and product knowledge.
-
-### Basic Installation
-
-To install (or update) GLaDOS, run the install script and specify your environment:
-
-**Claude Code:**
-```bash
-./bin/glados-install.sh --mode claude
-```
-*Installs commands to `.claude/commands/glados`.*
-
-**Antigravity (IDE):**
-```bash
-./bin/glados-install.sh --mode antigravity
-```
-*Installs workflows to `.agent/workflows/glados`.*
-
-**Gemini CLI:**
-```bash
-./bin/glados-install.sh --mode gemini
-```
-*Installs as a skill to `.gemini/skills/glados`.*
-
-**With SDA conformance:**
-```bash
-./bin/glados-install.sh --mode claude --sda
-```
-*Adds `claims.md`, `SPEC_LOG.md`, SDA-conformant `ROADMAP.md`, and reference docs.*
-
-**Installing into a different project:**
-
-By default, GLaDOS installs into the current directory. Use `--target` to install into another repo:
+Coming from GLaDOS v1? Run `python bin/glados.py migrate --target
+/path/to/your/project` instead — [MIGRATION.md](MIGRATION.md) is the guided
+path. Otherwise, from a clone of this repository:
 
 ```bash
-./bin/glados-install.sh --mode claude --target /path/to/your/project
+cp glados.yaml.example /path/to/your/project/glados.yaml
 ```
 
-### The `product-knowledge/` Directory
+Open the copy and set two keys. `platform:` is `gitlab` or `github`. `phase:`
+is a one-word honest answer to "who gets hurt if the agent gets something
+wrong?" — `nascent` (nobody; no users yet), `evolving` (early adopters),
+`production` (real users), or `sunset` (winding down) — describe reality, not
+ambition, because the word tunes how much caution gets compiled in.
 
-Every installation scaffolds a `product-knowledge/` directory in your project root:
--   `product-knowledge/PROJECT_STATUS.md`: The high-level state of your project.
--   `product-knowledge/MISSION.md`: The product mission and north star.
--   `product-knowledge/ROADMAP.md`: The strategic roadmap.
--   `product-knowledge/TECH_STACK.md`: Technology stack decisions.
--   `product-knowledge/personas/`: Custom personas (add your own here!).
--   `product-knowledge/overlays/`: Directory for local overlays to customize workflows.
--   `product-knowledge/standards/`: Documented coding and architectural standards.
--   `product-knowledge/philosophies/`: High-level design principles and agreements.
--   `product-knowledge/observations/`: Staging area for implicitly detected patterns.
-
-### Updates & Overlays
-
-To update your commands or ingest new local overlays from `product-knowledge/overlays/`, run:
+Then install for your agent's runtime (here: Claude Code):
 
 ```bash
-./bin/glados-update.sh --ingest-overlays
+python bin/glados.py install --mode claude --target /path/to/your/project
+# modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
 ```
 
+The installer prints an **assembly report** — every configuration value it
+resolved and where it came from — and writes the commands into your project.
+Now open your agent inside the project and run your first command:
 
----
-
-## Quick Start Guide
-
-Choose the path that matches your project state.
-
-> **Note**: Command syntax varies by agent. For example, `mission` is invoked as `/glados:mission` in Claude Code, `/glados/mission` in Antigravity, and `glados mission` in Gemini CLI.
-
-### Path A: Information Greenfield (New Project)
-*Best for starting from scratch.*
-
-1.  **Define the Mission**:
-    Run `mission` to create `product-knowledge/MISSION.md`. Establishing the "Why" and "Who" ensures all future agents align with your goals.
-2.  **Plan the Product**:
-    Run `plan-product` to create `product-knowledge/ROADMAP.md` and `product-knowledge/TECH_STACK.md`.
-3.  **Start Building**:
-    Run `plan-feature` to pick an item from your roadmap and begin the development loop.
-
-### Path B: Brownfield (Existing Codebase)
-*Best for integrating GLaDOS into an active repo.*
-
-1.  **Full Onboarding** (recommended):
-    Run `adopt-codebase`. This orchestrates the full brownfield sequence: structural analysis, standards extraction, philosophy discovery, and mission alignment.
-2.  **Or, Step by Step**:
-    1.  Run `review-codebase` to analyze your file structure and populate `PROJECT_STATUS.md`.
-    2.  Run `establish-standards` to extract tribal knowledge into `standards/` files.
-    3.  Run `mission` to ensure the agent understands the project's purpose.
-3.  **Resume Work**:
-    Run `identify-bug` or `plan-feature` to start contributing.
-
-### Path C: Autonomous Mode
-*Best for hands-off development.*
-
-1.  **Ignite the Loop**:
-    Run `autonomous-loop`.
-2.  **Bootstrap**:
-    -   **Empty Repo**: It will ask for your Vision and Success Criteria once, then take over.
-    -   **Existing Repo**: It will read your `product-knowledge/ROADMAP.md` and start executing the next active task.
-3.  **Sit Back**:
-    The agent will Plan, Spec, Implement, and Verify features in a continuous loop, answering its own questions based on your defined Mission and Standards.
-
----
-
-## Core Workflows
-
-Once installed, use these workflows to drive development.
-
-### 1. Strategy & Setup
-| Command | Description |
-| :--- | :--- |
-| `mission` | Creates/Updates `product-knowledge/MISSION.md` (North Star). |
-| `plan-product` | Generates `product-knowledge/ROADMAP.md` & `product-knowledge/TECH_STACK.md`. |
-| `establish-standards` | Interactive interview to create `standards/*.md`. |
-| `review-codebase` | Spider the directory to build `PROJECT_STATUS.md`. |
-| `adopt-codebase` | Full brownfield onboarding sequence. |
-
-### 2. The Development Loop
-For every feature, follow this 4-step cycle:
-
-1.  **`plan-feature`**: Analyzes requirements, consults the Roadmap, drafts a high-level approach.
-2.  **`spec-feature`**: Refines the plan into a detailed `spec.md`. Triggers **Persona Review**.
-3.  **`implement-feature`**: Writes code based on the spec. Updates traces in `specs/`.
-4.  **`verify-feature`**: Runs tests, verifies against the spec, and updates the `walkthrough.md`.
-
-### 3. Maintenance
-| Command | Description |
-| :--- | :--- |
-| `identify-bug` | Creates a reproduction plan before touching code. |
-| `plan-fix` | Lightweight planning for smaller issues. |
-| `implement-fix` | Targeted code changes. |
-| `retrospect` | Review recent work to improve `standards/` or process. |
-| `recombobulate` | Systematically clean up vibe debt, formalize patterns, audit standards. |
-| `consolidate` | Alias for `recombobulate`. |
-
----
-
-## Example Scenario: "Adding a Login Page"
-
-Here is what a typical GLaDOS interaction looks like.
-
-**1. User runs `plan-feature`**
-> User: "We need a login page for the admin panel."
-> Agent: Creates `specs/2024-10-24_feature_admin-login/`. Reads `product-knowledge/MISSION.md`. Checks `product-knowledge/ROADMAP.md`.
-> **Output**: `specs/.../implementation_plan.md` outlining the Auth0 integration.
-
-**2. User runs `spec-feature`**
-> Agent: Reads the plan. Simulates strict reviews.
-> *Persona (Security)*: "Ensure we use Rotation Tokens."
-> *Persona (Product)*: "Don't forget the 'Forgot Password' flow."
-> **Output**: A comprehensive `spec.md` approved by simulated stakeholders.
-
-**3. User runs `implement-feature`**
-> Agent: Writes code in `src/auth/`. Updates `specs/.../trace.md` with every file change.
-> **Output**: The actual code changes.
-
-**4. User runs `verify-feature`**
-> Agent: Runs `npm test`. Clicks through the browser (if available).
-> **Output**: `walkthrough.md` with screenshots/logs proving it works.
-
----
-
-## Customization (Overlays)
-
-You can customize GLaDOS without forking it using **Overlays**.
-
-1.  Create `src/overlays/my-overlay/`.
-2.  Copy a file (e.g., `src/workflows/plan-feature.md`) to your overlay directory.
-3.  Edit it.
-4.  Install with the overlay:
-
-```bash
-./bin/glados-install.sh --mode antigravity --overlay my-overlay
+```
+/glados:adopt-codebase
 ```
 
----
+The agent studies your codebase, writes what it learns (structure,
+conventions, candidate coding standards) into `product-knowledge/`, and leaves
+a record of the run in `.glados/runs/` — ordinary files you review and commit
+like any other change.
 
-## Playbook: Adopting GLaDOS in Your Team
+## What a run looks like
 
-See **[PLAYBOOK.md](PLAYBOOK.md)** for comprehensive guidance on:
+Say a user reports a crash and you run `/glados:fix-bug`. The agent does not
+jump straight to editing code: it first reproduces the bug and writes down
+how; it fixes the root cause rather than the symptom; then a second, fresh
+agent session — one that never saw the fix being written — independently
+verifies it. What you end up with is a merge request with the review verdict
+posted as a comment on it, plus a committed record in `.glados/runs/` saying
+what was decided and why. Six months later, `git log` still knows the whole
+story.
 
--   **Solo quickstart**: Day-1 install through week-2 steady state.
--   **Recommended cadence**: Per-feature, weekly, monthly, and quarterly rituals.
--   **Team adoption**: A 4-stage evangelization path from Champion → Pair → Team → Multi-Team.
--   **Customization**: Adding personas, philosophies, and overlays.
--   **Anti-patterns**: Common mistakes that undermine adoption.
--   **Measuring success**: Signals that GLaDOS is delivering value.
+`fix-bug` is one of fifteen commands. The everyday ones are `build-feature`
+(one feature from plan to a verified merge request in one sitting),
+`review-mr` and `address-review` (the review loop), and `run-epic` (a whole
+ticket queue). The full list, with what each does, is in
+[docs/workflows.md](docs/workflows.md).
 
----
+## Where things land in your repo
 
-## Contributing
+Everything is installed into your project workspace and committed to git:
 
-1.  **Workflows** in `src/workflows/` define the high-level steps.
-2.  **Modules** in `src/modules/` contain shared logic.
-3.  **Personas** in `src/personas/` define agent roles.
+```
+your-project/
+├── glados.yaml                  # the one config file you own and edit
+├── .claude/commands/glados/     # the compiled slash commands (this dir is
+│                                #   per-runtime — see the table below)
+├── .glados/                     # GLaDOS working state, committed to git
+│   ├── runs/                    # one record file per run (created on first run)
+│   ├── assembly-report.md       # what the installer resolved, and from where
+│   ├── personas/                # reviewer viewpoints: security, architecture, QA…
+│   ├── ci/                      # optional CI job that catches config drift
+│   └── src/                     # copies of the sources, so installs are reproducible
+└── product-knowledge/           # your project's written knowledge
+    ├── standards/               # rules the agent's work is checked against
+    ├── philosophies/            # high-level principles
+    ├── personas/                # your own reviewer viewpoints (override shipped ones)
+    └── observations/            # recurring patterns noticed, awaiting promotion
+```
 
-Please ensure any new feature includes a corresponding Module or Persona if applicable to keep workflows DRY.
+The compiled command files are generated output — never edit them by hand.
+Edit `glados.yaml` and re-run the install; a hand-edit is silently overwritten
+by the next install.
+
+## Supported runtimes
+
+One compiled output feeds every mode, so behavior matches across runtimes.
+
+| Runtime | `--mode` | What gets installed |
+|---|---|---|
+| Claude Code (Anthropic's terminal coding agent) | `claude` | Slash commands in `.claude/commands/glados/` — run `/glados:fix-bug` |
+| Claude Code, packaged as a plugin | `claude-plugin` | A plugin build in `compiled/claude-plugin/` |
+| Gemini CLI (Google's open-source terminal agent) | `gemini` | Commands in `.gemini/commands/glados/` — run `/glados:fix-bug` |
+| Google Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google) | `antigravity` | Workflow files in `.agents/workflows/` — run `/glados-fix-bug` |
+| Google AI Studio (aistudio.google.com) | `aistudio` | Paste-in bundles in `glados/adapters/aistudio/bundles/` — no command surface; you paste a bundle into the chat |
+| Any agent that can read a markdown file | `direct` | Plain workflow documents in `product-knowledge/glados/` |
+
+## The weekly rhythm
+
+Two commands are standing weekly jobs rather than things you run when you
+think of them:
+
+- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses old
+  run records into a short digest, refreshes stale docs, reviews the
+  accumulated observations and promotes the real patterns into written
+  standards, and sanity-checks the tests. Ships as one small cleanup merge
+  request.
+- **`/glados:brunch`** (typically Sunday) — a critique roundtable. Several
+  reviewer personas examine the codebase in parallel (after actually running
+  the project first), a moderator ranks the findings by impact against
+  effort, and the top finding ships as one small fix merge request.
+
+GLaDOS deliberately ships no scheduler. Every command can run
+non-interactively, so use whatever your project already has: a cron job (e.g.
+`gemini -p "/glados:brunch"` for Gemini CLI), a scheduled CI pipeline, or your
+agent's own scheduled-task feature.
+
+## What GLaDOS does and doesn't do
+
+GLaDOS defines the process: what must be recorded, what words a verdict may
+use, and where each kind of result must be visible to the team. It does
+**not** talk to GitLab or GitHub itself. Your project declares its platform in
+`glados.yaml`, and your agent uses its own tools — the `glab` or `gh` CLI, MCP
+servers, whatever its runtime provides — to actually post comments and open
+issues. GLaDOS ships CI job templates your project can enable, and
+`python bin/glados.py doctor --target /path/to/your/project` reports anything
+declared in the config but not actually wired up. On runtimes where the agent
+cannot run commands at all (Google AI Studio), it degrades honestly: the agent
+prints the exact commands and file contents, and you execute them.
+
+## Learn more
+
+In increasing depth:
+
+1. **[docs/getting-started/](docs/getting-started/)** — a full install
+   walkthrough and your first week.
+2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
+   runs.
+3. **[docs/guides/](docs/guides/)** — task-oriented guides, including SDA
+   conformance (`sda: true` in `glados.yaml` — claims + work-unit log
+   maintained by every run) and the Wheatley board; see also
+   [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
+4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
+   file, and the run records actually work.
+5. **Reference** — [docs/workflows.md](docs/workflows.md) (all fifteen
+   commands and the v1→v2 name map), [docs/modules.md](docs/modules.md),
+   [docs/personas.md](docs/personas.md), [docs/src.md](docs/src.md), and
+   [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) (design rationale — the deep
+   end).
+
+Upgrading from GLaDOS v1? Every old command name keeps working as an alias,
+and `python bin/glados.py migrate` converts the rest;
+[MIGRATION.md](MIGRATION.md) is the guided path.

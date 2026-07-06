@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "glados-run-record-guard": {
+      "Stop": {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .glados/hooks/gemini-afteragent-guard.py",
+            "timeout": 30
+          }
+        ]
+      }
+    }
+  }
+}

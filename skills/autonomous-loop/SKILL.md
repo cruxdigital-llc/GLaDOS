@@ -1,11 +1,5 @@
 ---
-description: Orchestrate the entire development lifecycle autonomously
+description: "(renamed) the 'autonomous-loop' workflow is now 'run-epic'"
 ---
 
-Read and follow the workflow at `${CLAUDE_PLUGIN_ROOT}/src/workflows/autonomous-loop.md`.
-
-When resolving path references in the workflow:
-- `{{MODULES}}/` means `${CLAUDE_PLUGIN_ROOT}/src/modules/`
-- `{{PERSONAS}}/` means `${CLAUDE_PLUGIN_ROOT}/src/personas/`
-- `{{STATUS}}` means `product-knowledge/PROJECT_STATUS.md`
-- `{{CMD}}` means the `/glados:` command prefix (e.g. `{{CMD}}build-feature` → `/glados:build-feature`)
+`autonomous-loop` was renamed to `run-epic`. Read and follow `${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/run-epic.md`.

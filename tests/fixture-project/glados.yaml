@@ -1,0 +1,85 @@
+# glados.yaml — the one project-owned GLaDOS configuration file.
+# Copy to your repo root as `glados.yaml` and edit. Lane-2 keys (channels,
+# decisions, merge-authority, params, personas) are read LIVE at run time —
+# editing them changes agent behavior on the next run, no reinstall. Structural
+# keys (workflows' module lists, phase) take effect at `glados.py install`,
+# which stamps a manifest hash into the compiled output; `glados.py doctor`
+# flags stale compiles.
+
+glados: 2
+
+# Which platform the project lives on. The agent uses its own tooling for it
+# (glab, gh, MCP); GLaDOS never wires platform APIs itself.
+platform: gitlab            # gitlab | github
+
+# REQUIRED — no default. The team states its intent in one word.
+# nascent | evolving | production | sunset
+# Presets expand into the keys below (precedence: baseline < phase < explicit);
+# the assembly report shows the provenance of every resolved value and marks
+# phase-derived relaxations loudly.
+phase: evolving
+
+# Outcome-type -> sink bindings. An outcome type emitted by an enabled
+# workflow with no team-visible sink is an install error unless explicitly
+# confessed (visibility-acknowledged).
+channels:
+  progress:    [ledger]
+  verdict:     [mr-comment]
+  escalation:  [issue]
+  bug:         [issue]
+  decision:    [ledger]
+  observation: [ledger]
+
+# Who may merge. No workflow file states an authority; they all read this key.
+merge-authority: human       # human | agent-integration-only | agent
+
+# Decision rights — closed value set: agent | record | escalate | forbidden.
+# `record` = decide, then emit a `decision` outcome. Phase presets fill these;
+# explicit entries override (weakening below your phase preset requires
+# relaxation-acknowledged).
+decisions:
+  schema-migration: record
+  public-api-break: record
+  new-dependency: agent
+  delete-code: agent
+  destructive-data-op: escalate
+
+# Confess any explicit key set laxer than the declared phase's preset. Here
+# `delete-code: agent` is laxer than evolving's `record`, so it is named below;
+# without this line the install fails with a relaxation error. Confessions are
+# restated in every assembly report.
+relaxation-acknowledged: [delete-code]
+
+# Branch conventions (lane 2 — projects override freely).
+branching:
+  feature: "feat/<slug>"
+  epic-integration: "feature/<epic-slug>"
+  default-target: main
+
+# Per-workflow module selection (lane 1 — structural; changes need recompile).
+# A workflow absent here installs with default-modules + epilogue. A list must
+# include at least the modules the core's `requires:` declares.
+default-modules: [standards-gate]
+workflows:
+  review-mr:      [mr-review-panel]
+  verify-feature: [evaluator-spawn]
+  fix-bug:        [evaluator-spawn, standards-gate]
+  run-epic:       [mr-review-panel, standards-gate]
+  brunch:         [mr-review-panel]
+
+# Module parameters (lane 2). `review-panel` parameterizes the
+# mr-review-panel module; `evaluator` parameterizes evaluator-spawn.
+params:
+  review-panel:
+    personas: [architect]          # added to the standing lenses
+    max-cycles: 5
+  evaluator:
+    max-cycles: 3
+
+# Concurrency (v2.1 — the lease module; v2.0.0 ships only the base-SHA yield
+# rule, which is always on and not configurable).
+# concurrency:
+#   backend: lockfile              # lockfile | issue-claim | none
+
+# Uncomment ONLY to confess a deliberate visibility reduction:
+# visibility-acknowledged: ledger-only

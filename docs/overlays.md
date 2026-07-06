@@ -1,15 +1,25 @@
 # Overlays
 
-Overlays allow you to customize GLaDOS without forking the entire repository.
+> Reference page, mostly for v1 users. New v2 terms below (*manifest*,
+> *lanes*, *personas*) are defined in [concepts.md](concepts.md); the
+> full v1-to-v2 procedure is [MIGRATION.md](../MIGRATION.md).
 
-## How it Works
+Overlays were the **v1** mechanism for customizing GLaDOS without forking:
+files placed under `src/overlays/<name>/` overrode same-named files in `src/`,
+applied by the retired `glados-install.sh --overlay` flag.
 
-1.  Create a directory matching your overlay name: `src/overlays/my-custom-setup/`.
-2.  Place modified versions of any file (workflow, module, or persona) in that directory.
-    -   *Example*: To change how features are planned, copy `src/workflows/plan-feature.md` to `src/overlays/my-custom-setup/plan-feature.md` and edit it.
-3.  Install with the overlay flag:
-    ```bash
-    ./bin/glados-install.sh --mode <mode> --overlay my-custom-setup
-    ```
+**The v2 compiler (`bin/glados.py`) does not read overlay directories.** The
+supported v2 customization surface is:
 
-The installer will prefer files found in the overlay directory over the defaults in `src/`.
+- **Lane-2 manifest keys** in `glados.yaml` — channels, merge authority,
+  decisions, params, the persona roster. Edit and the next run behaves
+  differently; no reinstall.
+- **Project personas** in `product-knowledge/personas/` — searched before the
+  library vendored into `.glados/personas/`, so a project file of the same
+  name wins.
+- **Project standards and philosophies** under `product-knowledge/` — read by
+  the standards gate and review panels at run time.
+
+A structural change to a core's text still means editing the source (in a
+fork or checkout) and re-running `python bin/glados.py install --mode <mode>
+--target /path/to/your/project`.

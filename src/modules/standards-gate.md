@@ -1,71 +1,85 @@
-# GLaDOS Standards Gate Module
+---
+name: standards-gate
+kind: module
+description: Gate the work artifact against the project's documented standards before advancing
+reads: [standards.index]
+writes: []
+emits: []
+mutates: none
+requires: []
+---
 
-**Goal**: Enforce documented standards by auditing work artifacts (specs, code diffs) and blocking on violations.
+## Standards gate
 
-## Usage
-Invoked at two checkpoints:
-1. **Pre-implementation**: After `{{CMD}}spec-feature`, before `{{CMD}}implement-feature`.
-2. **Post-implementation**: During `{{CMD}}verify-feature`, before declaring success.
+Before advancing past this point, audit the artifact the preceding step
+produced — the spec when this gate runs before implementation, the working
+diff when it runs before declaring the work done — against the project's
+documented standards. The standards tree lives at
+`product-knowledge/standards/` and that is the **only** standards root: a bare
+`standards/` directory at the repo root is not read, not even as a fallback.
 
-## Instructions
+### Discover applicable standards
 
-### 1. Discover Applicable Standards
--   **Scan**: Read `standards/index.yml` for all registered standards.
--   **Load Frontmatter**: Each standard file should include a YAML frontmatter block:
-    ```yaml
-    ---
-    scope: [api, backend]      # areas this applies to
-    severity: must | should | may
-    keywords: [error, response] # aids auto-matching
-    ---
-    ```
--   **Filter**: Match standards to the current work based on:
-    -   `scope` tags vs. the file types/areas being touched.
-    -   `keywords` vs. the content of the spec or changed files.
--   If a standard has no frontmatter, treat it as `severity: should` and `scope: [all]`.
+- Read `product-knowledge/standards/index.yml` for the registered standards.
+  If the tree or its index is absent, say so in the gate report and pass the
+  gate vacuously — an empty standards tree gates nothing, but skipping the
+  gate silently is not the same thing.
+- Each standard file carries YAML frontmatter:
 
-### 2. Severity Tiers (RFC 2119)
-| Tier | Behavior | Label |
-|---|---|---|
-| **must** | Blocks the workflow. Work cannot proceed until resolved. | ❌ VIOLATION |
-| **should** | Logged as a warning in the trace. Does not block. | ⚠️ WARNING |
-| **may** | Informational. Noted in the trace for awareness. | ℹ️ NOTE |
+  ```yaml
+  ---
+  scope: [api, backend]         # areas this standard applies to
+  severity: must | should | may # RFC 2119
+  keywords: [error, response]   # aids matching
+  ---
+  ```
 
-### 3. Audit
-For each applicable standard:
-1.  **Read**: Load the full standard content.
-2.  **Compare**: Check the spec (pre-implementation) or code diff (post-implementation) against the standard's rules.
-3.  **Verdict**: Assign one of:
-    -   `✅ PASSES` — The work adheres to this standard.
-    -   `❌ VIOLATION` — The work breaks a `must` standard.
-    -   `⚠️ WARNING` — The work breaks a `should` standard.
-    -   `ℹ️ NOTE` — A `may` standard is relevant but not followed (informational).
+- Filter to the standards that apply to the artifact at hand: `scope` tags
+  against the areas and file types touched; `keywords` against the content of
+  the spec or the changed files.
+- A standard without frontmatter is `severity: should`, `scope: [all]`.
+- Philosophy documents registered in the index participate like any other
+  standard; treat `weight: core` as `severity: must`.
 
-### 4. Gate Decision
--   **If any `❌ VIOLATION` exists**:
-    -   **STOP**: Do not proceed to the next phase.
-    -   **Log**: Record each violation in the trace `README.md`.
-    -   **Action**: Present violations to the user. They must either:
-        1. Fix the code/spec to comply, OR
-        2. Update the standard (if it's outdated).
--   **If only `⚠️ WARNING` or `ℹ️ NOTE`**:
-    -   **Log**: Record in the trace `README.md`.
-    -   **Proceed**: Work continues.
+### Audit
 
-### 5. Philosophy Cross-Check
-If `philosophies/` exists:
-1.  **Load**: Read all philosophy files with `weight: core`.
-2.  **Audit**: Check if the work conflicts with any core philosophy.
-3.  **Gate**: Core philosophy violations are treated as `❌ VIOLATION` — blocking.
-4.  **Log**: Present the conflict. User must fix the code or update the philosophy.
+<!-- glados:include vocabulary/verdicts.md -->
 
-### 6. Report
-Generate a summary table in the trace:
+For each applicable standard, read its full content and compare the artifact
+against it. A standard the artifact adheres to produces no finding. A breached
+standard produces exactly one finding, classified on the single severity scale
+above by the standard's declared severity:
+
+| Standard severity | Finding    |
+|-------------------|------------|
+| `must`            | `blocking` |
+| `should` / `may`  | `advisory` |
+
+A standard's `must`/`should`/`may` is authoring metadata about the standard;
+findings themselves take only the two tiers — no third tier exists at the
+gate.
+
+### Gate decision
+
+- **Any `blocking` finding**: stop. Do not advance to the next step until the
+  artifact is brought into compliance, then re-run the gate on the corrected
+  artifact. If the standard itself appears wrong or outdated, do not weaken or
+  bypass it inline — record the conflict in the gate report as a candidate for
+  the standards owner to review, and either comply anyway or halt the work
+  here with the conflict stated.
+- **Only `advisory` findings**: proceed. State each advisory finding's
+  disposition as the severity scale requires — fixed, or declined with a
+  one-line reason.
+
+### Report
+
+Close the gate with a summary table; the surrounding workflow carries it in
+its findings and outcomes:
 
 ```markdown
-## Standards Gate Report
-| Standard | Scope | Severity | Verdict |
-|---|---|---|---|
-| API Response Format | api | must | ✅ PASSES |
-| Error Logging | backend | should | ⚠️ WARNING |
+## Standards Gate
+| Standard            | Scope   | Severity | Finding  |
+|---------------------|---------|----------|----------|
+| API Response Format | api     | must     | none     |
+| Error Logging       | backend | should   | advisory |
 ```

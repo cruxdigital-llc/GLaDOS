@@ -25,10 +25,13 @@ dist/
 node_modules/
 
 # GLaDOS Framework Generated Artifacts
-# Installation targets (when running installers locally)
-product-knowledge/
-glados/
-.agent/
+# Installation targets (when running installers against this repo root);
+# anchored so test fixtures (tests/fixture-project/) stay trackable.
+/product-knowledge/
+/glados/
+/.agent/
+# compile-plugin vendors a .glados/ copy into the repo root; keep it untracked
+/.glados/
 
 # Observability & Logs
 specs/

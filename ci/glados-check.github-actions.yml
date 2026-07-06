@@ -1,0 +1,38 @@
+# GLaDOS drift + type check for GitHub Actions.
+#
+# `glados.py install` vendors this file to `.glados/ci/` together with the full
+# source tree (`.glados/src/`), so the vendored checker is self-contained — no
+# --source needed. Enable it by copying the vendored file into place:
+#
+#   cp .glados/ci/glados-check.github-actions.yml .github/workflows/glados-check.yml
+#
+# It runs the vendored compiler in check mode: recompute the compile in-memory
+# from the vendored sources + manifest, diff against the installed files, run
+# every type check, and verify the vendored manifest hash. Drift, a failed
+# check, or a stale compile fail the job. The check ships report-only first;
+# drop --report-only to enforce (recommended when entering production).
+
+name: glados-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  glados-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # verify-ledger scans real history, not a shallow clone
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: glados check
+        run: python .glados/glados.py check --target . --report-only
+      # Universal run-record backstop: scans git history for silent-loss
+      # candidates. Report-only in v2.0.0 and a separate, non-blocking step so
+      # its output is visible without ever gating a merge.
+      - name: glados verify-ledger (report-only)
+        run: python .glados/glados.py verify-ledger --target . --report-only
+        continue-on-error: true

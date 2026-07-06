@@ -1,54 +1,48 @@
-# GLaDOS MR Review Panel Module
+---
+name: mr-review-panel
+kind: module
+description: Run one adversarial, parallel, fresh-agent review panel over the open merge request
+reads: [run.active-personas, manifest.panel-personas, standards.index]
+writes: []
+emits: [verdict]
+mutates: none
+requires: []
+---
 
-**Goal**: Run one adversarial, parallel, multi-persona review panel over an open
-Merge Request. Every panelist is a fresh agent with no authoring context; each
-posts an MR comment and returns a structured verdict for the caller to tally.
+## Review panel
 
-> For sequential in-context persona passes during build phases (feedback logged
-> to the trace `README.md`), see `persona-review.md`. This module is the
-> parallel fresh-agent panel for MR review.
+Run one adversarial, parallel, multi-persona review panel over the open merge
+request. Every panelist is a fresh agent with no authoring context; each
+returns a structured verdict object; the validated objects feed one composed
+`verdict` outcome emitted by the workflow this panel serves.
 
-## Contract
-This module inherits the **context isolation** invariant of
-`evaluator-spawn.md` — each panelist starts with a clean context window, no
-knowledge of the implementation journey, only the self-contained review brief —
-and adds an invariant of its own:
+Two invariants govern the panel:
 
--   **Adversarial stance**: panelists are briefed to try to **break** the
-    change, not to rubber-stamp it. Approval must be earned.
+- **Context isolation** (inherited from the evaluator-spawn contract): a
+  panelist starts with a clean context window — no conversation history, no
+  reasoning or decisions from the agent that wrote the change, only the
+  self-contained brief. An agent that implemented the code is predisposed to
+  approve it; a fresh agent is not.
+- **Adversarial stance**: panelists are briefed to try to **break** the
+  change, not to rubber-stamp it. Approval must be earned.
 
-Unlike `evaluator-spawn.md`, communication is **not** filesystem-only: each
-panelist posts an MR comment and returns a structured verdict object to the
-caller, rather than writing `evaluation.md`. The MR itself is the shared
-artifact.
+<!-- glados:include vocabulary/verdicts.md -->
 
-## Panel Composition
-The panel = the **standing lenses** + the feature's **Active Personas**.
+<!-- glados:include vocabulary/panel-roster.md -->
 
-Standing lenses (always present):
-| Lens | Mandate |
-|------|---------|
-| **UAT** | Does the change actually do what the spec/ticket promises? Exercise it as a user would; verify each acceptance criterion. |
-| **Adversarial** | Attack the change: edge cases, error paths, race conditions, auth/tenancy holes, injection, data loss. |
-| **Standards** | Audit against `product-knowledge/standards/` — every applicable standard, cited by name. |
-| **Philosophy** | Audit against `product-knowledge/philosophies/` — fail-fast, root-cause-not-symptom, and the project's stated values. |
-| **Dead-code** | Hunt leftovers: unused symbols, orphaned files, stale comments/docs, debug artifacts, commented-out code. |
+### Assemble the brief
 
-Active Personas: read the feature trace `README.md` for the "Active Personas"
-list; load each definition from `{{PERSONAS}}/[persona_name].md` and add it to
-the panel with its Responsibilities and Key Questions as its mandate.
+Panelists cannot ask questions, so the brief must be self-contained. It
+carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
+spec or ticket, the commands to run tests and linters, each panelist's seated
+mandate, and the severity scale, verdict words, and composition rules above,
+copied verbatim. If anything is missing, assemble it before spawning — a
+panelist that has to guess reviews the wrong change.
 
-## Instructions
+### Spawn the panel (parallel)
 
-### 1. Assemble the Brief
-The caller (e.g. `review-mr`) supplies a self-contained review brief: MR id,
-diff (`<base>...<head>`), changed-file list, `spec.md`, test commands, and the
-panel roster. If anything is missing, assemble it before spawning — panelists
-cannot ask questions.
-
-### 2. Spawn the Panel (parallel)
-Spawn **one fresh agent per panelist, all in parallel**. Each panelist's prompt
-contains: the review brief, its persona mandate, and these standing orders:
+Spawn **one fresh agent per panelist, all in parallel**. Each panelist's
+prompt contains the brief, its persona mandate, and these standing orders:
 
 ```
 You are the [Persona] reviewer on an adversarial MR review panel.
@@ -56,21 +50,26 @@ You have no knowledge of how this change was written — only the brief.
 Your job is to find real problems, not to confirm success.
 
 1. Read the brief, the spec, and the diff. Read surrounding source as needed.
-2. Review strictly through your persona's lens. Cite file + line for findings.
-3. Classify each finding: blocking / major / minor.
-4. Post ONE MR comment via the project CLI, headed:
-   `## [Persona] review — [APPROVE | REQUEST_CHANGES]`
-   followed by your findings (or an explicit "no findings" note).
-5. Return the structured verdict object:
-   { persona, verdict: APPROVE | REQUEST_CHANGES, blocking: [...], major: [...], minor: [...] }
-
-Verdict rule: any blocking or major finding ⇒ REQUEST_CHANGES.
-Minor-only findings MAY approve with notes.
+2. Review strictly through your persona's lens. Cite file + line per finding.
+3. Classify each finding and choose your verdict using ONLY the severity
+   scale, verdict words, and composition rules in the brief.
+4. Return the structured verdict object:
+   { persona, verdict, findings: [{ severity, file, line, description }] }
+   Report an explicit empty findings list rather than omitting the field.
 ```
 
-### 3. Collect Verdicts
--   Gather every panelist's verdict object; confirm every panelist both posted
-    its MR comment and returned a verdict (respawn any that silently died —
-    never let a missing verdict count as approval).
--   Return the full verdict list to the caller — tallying and the
-    approve/loop decision belong to the calling workflow, not this module.
+### Collect and validate
+
+Validation happens at the tally, not on trust in the panelist prompt:
+
+- Gather every panelist's verdict object. Respawn any panelist that died
+  without returning one — a missing verdict is never counted as approval. A
+  seat that still lacks a well-formed verdict after respawn is a missing
+  panelist verdict under the composition rules.
+- Check each object against the composition rules: recompute the verdict its
+  findings imply. Where a panelist's self-declared verdict disagrees with its
+  own findings, the composition rules win.
+- The validated objects are the panel's output. They do not become outcomes
+  one per persona: tallying them into the single composed `verdict` outcome —
+  the per-persona verdicts plus the cycle's composed result — and making the
+  approve/loop decision happen downstream in the workflow this panel serves.

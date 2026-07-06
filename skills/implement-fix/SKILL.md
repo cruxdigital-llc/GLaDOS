@@ -1,11 +1,5 @@
 ---
-description: Apply a bug fix and verify it passes the reproduction test
+description: "(renamed) the 'implement-fix' workflow is now 'fix-bug'"
 ---
 
-Read and follow the workflow at `${CLAUDE_PLUGIN_ROOT}/src/workflows/implement-fix.md`.
-
-When resolving path references in the workflow:
-- `{{MODULES}}/` means `${CLAUDE_PLUGIN_ROOT}/src/modules/`
-- `{{PERSONAS}}/` means `${CLAUDE_PLUGIN_ROOT}/src/personas/`
-- `{{STATUS}}` means `product-knowledge/PROJECT_STATUS.md`
-- `{{CMD}}` means the `/glados:` command prefix (e.g. `{{CMD}}build-feature` → `/glados:build-feature`)
+`implement-fix` was renamed to `fix-bug`. Read and follow `${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/fix-bug.md`.

@@ -1,53 +1,81 @@
+---
+name: address-review
+kind: core
+description: Resolve every open review finding in one coherent fix pass, then hand back for re-review
+reads: [review.verdicts]
+writes: [work.base-sha]
+emits: [progress, escalation]
+mutates: branch
+requires: []
+---
+
 # (GLaDOS) Address Review
 
-**Goal**: Resolve every open finding from a `{{CMD}}review-mr` pass in one
-coherent fix pass — fixing from the **main agent** (not subagents), re-running
-the test/lint gate, and posting a resolution note — then hand back to
-`{{CMD}}review-mr` for the next pass. This is the fix half of the loop that runs
-until the MR is approved by all personas.
-
-## Prerequisites
-- [ ] `{{CMD}}review-mr` has run and at least one persona returned
-      `REQUEST_CHANGES`.
+**Goal**: resolve every open finding from a review-mr pass in one coherent fix
+pass — fixing from the main agent, gating on the full test suite, and mapping
+each finding to its resolution — then hand back to review-mr for the next
+pass. This is the fix half of the review loop
+(build-feature → review-mr ⇄ address-review).
 
 ## Process
 
-### 1. Resume Trace
--   Select the feature directory; read its `README.md` and the latest
-    per-persona verdicts (Review Cycle N).
+### 1. Load the verdicts
+- Read `review.verdicts` from the run record: the tallied per-persona verdict
+  objects for the latest cycle, with their findings. If no verdict demands
+  changes, there is nothing to address — this run produces an `escalation`
+  outcome (a mis-sequenced loop is worth a human glance) and stops.
+- The MR HEAD you fix from is this run's base (`work.base-sha`, already
+  recorded at run start).
 
-### 2. Consolidate Findings
--   Collect all open findings across personas from the MR comments + verdicts.
--   **Dedupe** (several personas often flag the same root cause) and **rank**
-    `blocking` / `major` / `minor`.
--   For each, decide: **fix now**, or **reasoned exception** (a finding you
-    deliberately decline — e.g. it conflicts with the in-tree house style, or is
-    epic-scope by design). Every exception needs a one-line justification.
+### 2. Consolidate the findings
 
-> [!IMPORTANT]
-> Fix the **root cause**, not the symptom. Prefer making the bad state
-> impossible (e.g. a DB constraint) over defensively tolerating it — this is the
-> fail-fast philosophy. A failing review finding is a real defect until proven
-> otherwise.
+<!-- glados:include vocabulary/verdicts.md -->
 
-### 3. Fix (main agent)
--   Apply the fixes yourself, as one coherent edit set — do **not** fan out to
-    subagents (they reviewed; you fix). Keep changes minimal and idiomatic;
-    match the closest in-tree precedent.
--   Add or update tests that pin each fixed behaviour (esp. the blocking ones).
+- Collect every open finding across all panelists, from the verdict objects
+  and their published copies. **Dedupe** — several personas often flag the
+  same root cause; merge duplicates into one finding that credits each lens.
+- **Rank** the consolidated list by the severity tiers above, `blocking`
+  first.
+- For each finding decide: **fix now**, or **reasoned exception** — a finding
+  you deliberately decline (it conflicts with in-tree house style, or is
+  out of this change's scope by design). Every exception carries a one-line
+  justification.
+- Declining a `blocking` finding is not the author's call: record the
+  disagreement and emit an `escalation` outcome rather than spending cycles
+  arguing with the panel.
+- Fix the **root cause**, not the symptom. Prefer making the bad state
+  impossible (a constraint, a type) over defensively tolerating it. A review
+  finding is a real defect until proven otherwise.
 
-### 4. Re-run the Gate
--   Run project linters and the **full test suite** (regression check) before
-    committing — distinguish any pre-existing/known-flaky failures from real
-    regressions and say which is which.
+### 3. Fix from the main agent
+- Apply the fixes yourself, as one coherent edit set — do **not** fan out to
+  subagents (they reviewed; you fix). Keep changes minimal and idiomatic;
+  match the closest in-tree precedent.
+- Add or update tests that pin each fixed behavior — every `blocking` fix
+  gets a test that would have caught it.
 
-### 5. Commit, Push, Report
--   Commit per `CLAUDE.md` conventions (conventional commit, no bylines,
-    separate `add` / `commit` / `push`); push the branch.
--   **Post a resolution note** to the MR mapping **each finding → resolution**
-    (fixed + how, or declined + why), citing the new commit.
--   **Trace**: log the fixes and the commit in `README.md`.
+### 4. Full-suite gate
+- Run the project linters and the **full test suite** — not just the files
+  you touched — before committing. Distinguish pre-existing or known-flaky
+  failures from regressions this fix pass introduced, and say which is which.
+- Do not proceed with an unexplained failure: a fix pass that breaks
+  something else has not resolved the review.
 
-### 6. Handoff
--   Run `{{CMD}}review-mr` to re-review the new HEAD (loop continues until all
-    personas approve, or the loop bound escalates).
+### 5. Commit and push
+
+<!-- glados:include vocabulary/git-conventions.md -->
+
+- Push the branch — the next review pass runs against the new HEAD.
+
+### 6. Report resolutions
+- This step produces a `progress` outcome mapping **each finding →
+  resolution**: fixed (how, citing the commit) or declined (the one-line
+  reason). Every consolidated finding appears exactly once; an unmentioned
+  finding is an unresolved one.
+
+### 7. Handoff
+
+<!-- glados:include vocabulary/loop-bounds.md -->
+
+- Check the cycle bound, then run the review-mr workflow against the new
+  HEAD. The loop continues until the panel approves or the bound escalates.

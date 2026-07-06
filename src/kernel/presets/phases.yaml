@@ -1,0 +1,162 @@
+# GLaDOS v2 phase presets — vendored into .glados/ at install so an upgrade
+# that changes what a phase means arrives as a reviewable diff.
+#
+# PRECEDENCE: baseline < phase preset < explicit manifest keys. Every resolved
+# value in the assembly report carries its provenance (baseline / phase:X /
+# explicit); a phase-derived value weaker than baseline is marked
+# RELAXED(phase); an explicit key weakening below the declared phase's preset
+# requires `relaxation-acknowledged:` in the manifest.
+#
+# ANTI-INFLATION CAP (compiler-checked): a preset may only set keys that exist
+# independently in the glados.yaml manifest schema. Phase is a spelling of
+# defaults, never a place where new policy is born. The one preset-native
+# value is `optimize-for` — the single sentence the compiler stamps into the
+# {{OPTIMIZE_FOR}} slot of every core's preamble; it must never contain the
+# phase's name.
+#
+# PHASE-UNTOUCHABLE INVARIANTS — the compiler rejects any preset (or explicit
+# phase-derived value) that touches these four:
+#   1. Outcome-sink visibility: presets may rebind channels but may never
+#      leave an emitted type without a team-visible sink, and may never set
+#      visibility-acknowledged.
+#   2. The state-key registry check: reads-without-writers is an install
+#      error in every phase.
+#   3. The run ledger and its enforcement hooks (Stop-hook / CI verify-ledger):
+#      always on, never tunable.
+#   4. The base-SHA yield rule: always on, never tunable.
+# Phase tunes attention and authority; it may never tune observability.
+
+# ---------------------------------------------------------------------------
+# Built-in baseline — the strictest sane values. Applies wherever neither the
+# phase preset nor an explicit manifest key sets a value.
+# ---------------------------------------------------------------------------
+baseline:
+  optimize-for: >-
+    Optimize for doing no harm; when the consequences of a choice are
+    unclear, stop and ask rather than guess.
+  channels:
+    progress:    [ledger]
+    verdict:     [mr-comment]
+    escalation:  [issue]
+    bug:         [issue]
+    decision:    [ledger]
+    observation: [ledger]
+  merge-authority: human
+  decisions:
+    schema-migration: escalate
+    public-api-break: escalate
+    new-dependency: record
+    delete-code: record
+    destructive-data-op: forbidden
+  default-modules: [review-panel, standards-gate]
+  params:
+    review-panel:
+      max-cycles: 3
+      # Default review roster: standing lenses only. Projects add named
+      # personas in glados.yaml; the empty default keeps the compiled
+      # `params.review-panel.personas` reference resolvable everywhere.
+      personas: []
+    evaluator:
+      # Safety bound for evaluator verify/fix cycles — the compiled
+      # `params.evaluator.max-cycles` reference must resolve in every install.
+      max-cycles: 3
+
+# ---------------------------------------------------------------------------
+# Phase presets
+# ---------------------------------------------------------------------------
+
+nascent:
+  optimize-for: >-
+    Optimize for learning per unit of attention; rework is cheap and there
+    are no users to harm.
+  channels:
+    progress:    [ledger]
+    verdict:     [mr-comment]
+    escalation:  [issue]
+    bug:         [issue]
+    decision:    [ledger]
+    observation: [ledger]
+  merge-authority: agent
+  decisions:
+    schema-migration: agent
+    public-api-break: agent
+    new-dependency: agent
+    delete-code: agent
+    destructive-data-op: record
+  default-modules: []
+  params:
+    review-panel:
+      max-cycles: 5
+
+evolving:
+  optimize-for: >-
+    Optimize for velocity with a memory; churn is licensed, but every
+    consequential change must be narrated where early adopters can see it.
+  channels:
+    progress:    [ledger]
+    verdict:     [mr-comment]
+    escalation:  [issue]
+    bug:         [issue]
+    decision:    [ledger]
+    observation: [ledger]
+  merge-authority: agent-integration-only
+  decisions:
+    schema-migration: record
+    public-api-break: record
+    new-dependency: agent
+    delete-code: record
+    destructive-data-op: escalate
+  default-modules: [standards-gate]
+  params:
+    review-panel:
+      max-cycles: 5
+
+production:
+  optimize-for: >-
+    Optimize for stability and the trust of people who do not forgive;
+    understanding preserved beats speed gained.
+  channels:
+    progress:    [ledger]
+    verdict:     [mr-comment]
+    escalation:  [issue]
+    bug:         [issue]
+    decision:    [ledger, mr-comment]
+    observation: [ledger]
+  merge-authority: human
+  decisions:
+    schema-migration: escalate
+    public-api-break: escalate
+    new-dependency: record
+    delete-code: record
+    destructive-data-op: forbidden
+  default-modules: [review-panel, standards-gate]
+  params:
+    review-panel:
+      max-cycles: 3
+
+sunset:
+  optimize-for: >-
+    Optimize for safe decay; preserve every behavior people still depend on
+    and make every removal visible before it lands.
+  # Sunset unloads new-feature construction structurally: the workflow is not
+  # installed. An explicit `disabled-workflows:` in glados.yaml replaces this
+  # list wholesale ([] re-enables build-feature, confessed by provenance).
+  disabled-workflows: [build-feature]
+  channels:
+    progress:    [ledger]
+    verdict:     [mr-comment]
+    escalation:  [issue]
+    bug:         [issue]
+    decision:    [ledger, issue]
+    observation: [ledger]
+  merge-authority: human
+  decisions:
+    schema-migration: forbidden
+    public-api-break: escalate
+    new-dependency: forbidden
+    delete-code: record
+    destructive-data-op: escalate
+  default-modules: [standards-gate]
+  params:
+    review-panel:
+      max-cycles: 2
