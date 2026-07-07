@@ -152,6 +152,19 @@ destination); `team-visible: false` opts a record-only sink out. Everything
 is freeform config the agent interprets at run time for that sink's medium; the
 compiler never parses it. See [guides/sinks.md](guides/sinks.md).
 
+## Ticket lifecycle
+
+Sinks *append* artifacts; the **`lifecycle:`** block *transitions* a tracker's
+work-item state as the run crosses stages — `claim-branch → In Progress`,
+`open-mr → In Review` — so the ticket mirrors what phase the work is actually
+in. It is opt-in (absent or `driver: none` is a no-op) and lane-2 (live). Keys
+are GLaDOS **canonical stages**, so one mapping serves every ticket-owning
+workflow; a `driver` (e.g. `gitlab-scoped-label`) selects the on-platform
+executor GLaDOS refuses to hardcode, and the agent performs the move with its
+own CLI. Transitions are `advance-only` by default (never regress, never clobber
+a manual park) and best-effort (a failed move escalates, it never gates the
+run). See [guides/lifecycle.md](guides/lifecycle.md).
+
 ## The state registry
 
 Every piece of state that workflows share — a reviewed commit SHA, an epic's

@@ -50,7 +50,7 @@ from pathlib import Path
 # 1. CONSTANTS
 # =============================================================================
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 # The fifteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
@@ -112,6 +112,21 @@ BUILTIN_SINKS = {
 # _sink_is_team_visible, which honours their `team-visible:` declaration).
 TEAM_VISIBLE_SINKS = {name for name, vis in BUILTIN_SINKS.items() if vis}
 LEDGER_OK_TYPES = {"progress", "decision", "observation"}
+
+# Ticket-lifecycle canonical stages a run can announce onto the tracker's
+# work-item state (display order; the advance-only forward order is
+# claim-branch -> open-mr -> merged, spelled in vocabulary/lifecycle.md). A
+# GLaDOS run fires claim-branch/open-mr/escalated; `merged` is realized
+# platform-side (e.g. `Closes #id` on merge), not by a run — it stays a valid
+# transition key so a team can map it, documented in guides/lifecycle.md.
+LIFECYCLE_STAGES = ["claim-branch", "open-mr", "merged", "escalated"]
+# The platform-specific executor the agent uses; GLaDOS refuses to hardcode it.
+# The *-status drivers are recognized names deferred to a follow-up (Work Items
+# / Projects-v2 discovery); `none` (or absent) makes the whole block inert.
+LIFECYCLE_DRIVERS = {"none", "gitlab-scoped-label", "github-label",
+                     "gitlab-work-item-status", "github-projects-status"}
+LIFECYCLE_DEFERRED_DRIVERS = {"gitlab-work-item-status", "github-projects-status"}
+LIFECYCLE_POLICIES = {"advance-only", "free"}
 
 # Merge-authority and decision strictness, STRICTEST first. "laxer = leftward"
 # in the spec's own ``agent<record<escalate<forbidden`` ordering, so these lists
@@ -745,7 +760,7 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
     # allowlist), and its bodies are freeform config the agent interprets at
     # run time — the compiler only checks structure and referential integrity.
     for key in ("platform", "phase", "branching", "workflows", "sinks",
-                "visibility-acknowledged", "relaxation-acknowledged"):
+                "lifecycle", "visibility-acknowledged", "relaxation-acknowledged"):
         if key in raw:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
@@ -996,6 +1011,51 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
                       f"{', '.join(sorted(TEAM_VISIBLE_SINKS))}), declare one in "
                       f"sinks:, or confess with 'visibility-acknowledged: ledger-only'")
 
+    # ---- (2c) lifecycle transitions ----------------------------------------
+    # The lifecycle: block is lane-2 (live) config the agent executes on-platform;
+    # the compiler validates its shape with channels-level rigor. A driver of
+    # `none`/absent leaves the block inert.
+    lifecycle = r.values.get("lifecycle")
+    if lifecycle is not None:
+        if not isinstance(lifecycle, dict):
+            errors.append("lifecycle: must be a mapping (driver, field, "
+                          "transitions, policy)")
+        else:
+            driver = lifecycle.get("driver", "none")
+            transitions = lifecycle.get("transitions")
+            if driver not in LIFECYCLE_DRIVERS:
+                errors.append(f"lifecycle.driver: '{driver}' is unknown — use one "
+                              f"of {', '.join(sorted(LIFECYCLE_DRIVERS))}")
+            elif driver in LIFECYCLE_DEFERRED_DRIVERS:
+                errors.append(f"lifecycle.driver: '{driver}' is recognized but not "
+                              f"yet implemented (deferred) — use gitlab-scoped-label "
+                              f"or github-label for now")
+            elif driver != "none" and not (isinstance(transitions, dict) and transitions):
+                errors.append(f"lifecycle.driver '{driver}' is set but "
+                              f"lifecycle.transitions is empty — map at least one "
+                              f"stage ({', '.join(LIFECYCLE_STAGES)}), or set "
+                              f"driver: none")
+            if transitions is not None and not isinstance(transitions, dict):
+                errors.append("lifecycle.transitions: must be a mapping of "
+                              "stage -> ticket-state value")
+            elif isinstance(transitions, dict):
+                for stage in transitions:
+                    if stage not in LIFECYCLE_STAGES:
+                        errors.append(f"lifecycle.transitions.{stage}: not a "
+                                      f"canonical stage — use one of "
+                                      f"{', '.join(LIFECYCLE_STAGES)}")
+            policy = lifecycle.get("policy", "advance-only")
+            if policy not in LIFECYCLE_POLICIES:
+                errors.append(f"lifecycle.policy: '{policy}' is invalid — use one "
+                              f"of {', '.join(sorted(LIFECYCLE_POLICIES))}")
+            field = lifecycle.get("field")
+            if field is not None and not isinstance(field, str):
+                errors.append(f"lifecycle.field: must be a string — got {field!r}")
+            elif driver == "gitlab-scoped-label" and not field:
+                errors.append("lifecycle.field is required for driver "
+                              "gitlab-scoped-label — it is the scoped-label prefix "
+                              "(e.g. \"Workflow\" for a Workflow::In Review label)")
+
     # ---- (3) requires satisfied --------------------------------------------
     # First: every module/workflow token the manifest names must exist. A typo
     # here otherwise SILENTLY drops the module from the compiled output —
@@ -1184,6 +1244,29 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
         out.append(f"| {name} | {vis} | {_fmt(declared_sinks.get(name) or {})} | "
                    f"(explicit) |")
     out.append("")
+
+    lifecycle = r.values.get("lifecycle")
+    if isinstance(lifecycle, dict) and lifecycle:
+        out.append("## Lifecycle")
+        out.append("")
+        out.append("Ticket-state transitions mirrored onto the tracker as the run "
+                   "crosses stages — GLaDOS declares, the agent executes on-platform "
+                   "via the driver. Absent/`driver: none` is inert.")
+        out.append("")
+        out.append(f"- driver: `{_fmt(lifecycle.get('driver', 'none'))}` (explicit)")
+        if lifecycle.get("field") is not None:
+            out.append(f"- field: `{_fmt(lifecycle['field'])}` (explicit)")
+        out.append(f"- policy: `{_fmt(lifecycle.get('policy', 'advance-only'))}` "
+                   f"(explicit)")
+        trans = lifecycle.get("transitions")
+        if isinstance(trans, dict) and trans:
+            out.append("")
+            out.append("| Stage | Ticket state |")
+            out.append("|-------|--------------|")
+            for stage in LIFECYCLE_STAGES:
+                if stage in trans:
+                    out.append(f"| {stage} | {_fmt(trans[stage])} |")
+        out.append("")
 
     out.append(f"## RELAXED(phase) markers: {len(r.relaxed_phase)}")
     out.append("")
