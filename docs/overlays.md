@@ -14,6 +14,11 @@ supported v2 customization surface is:
 - **Lane-2 manifest keys** in `glados.yaml` — channels, merge authority,
   decisions, params, the persona roster. Edit and the next run behaves
   differently; no reinstall.
+- **Declared sinks** under `sinks:` in `glados.yaml` — add a destination the
+  library never shipped (e.g. `slack`) and give it freeform config
+  (`channel:`, `grouping:`, `threads:`, …) the agent interprets at run time.
+  This is the v2 answer to "customize where and how results are delivered"
+  without touching workflow text; see [guides/sinks.md](guides/sinks.md).
 - **Project personas** in `product-knowledge/personas/` — searched before the
   library vendored into `.glados/personas/`, so a project file of the same
   name wins.

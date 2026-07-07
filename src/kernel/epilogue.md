@@ -24,12 +24,24 @@ the record rather than omitting it.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Review-only runs that must not
    touch the author's branch commit to the `glados/ledger` branch instead.
-5. **Publish outcomes**: read `glados.yaml` → `channels:` and post each
-   outcome type this run emitted to every bound sink (MR comment, issue,
-   issue-comment, label — using the project's own platform CLI/tooling).
-   `progress` always lands in the ledger at minimum. If a sink is unreachable,
-   record the failure in the run record and emit an `escalation` — do not
-   silently drop an outcome.
+5. **Publish outcomes**: read `glados.yaml` → `channels:` (which sinks each
+   outcome type goes to) and `sinks:` (how each sink behaves). For every
+   outcome type this run emitted, deliver it to each bound sink using the
+   project's own platform CLI/tooling (glab/gh/MCP), **rendering per that
+   sink's declared config** — interpret its keys (`channel:`, `format:`,
+   `grouping:`, `threads:`, …) sensibly for the sink's medium and this team's
+   conventions. Built-in sinks are `mr-comment`, `issue`, `issue-comment`,
+   `label`, and `ledger`; a project may declare others (e.g. `slack`). For a
+   `verdict` where `sinks.mr-comment.grouping: per-persona`, post one comment
+   per persona (as a resolvable thread when `threads: resolvable` and the
+   platform supports it) rather than one aggregated comment; `summary:`
+   controls whether a composed-verdict comment is also posted. `progress`
+   always lands in the ledger at minimum.
+   - **Delivery is verified, not assumed.** If a bound sink is unreachable or
+     the post fails but the outcome still reached at least one team-visible
+     sink, record the failed sink in the run record as a warning and continue.
+     If it reached **no** team-visible sink, emit an `escalation` — never
+     silently drop an outcome.
 6. **Release** anything held: leases (when enabled) and other in-flight
    markers — and delete `.glados/runs/current` unconditionally (the preamble
    always sets it; a leftover marker makes the run-record guard hooks block
