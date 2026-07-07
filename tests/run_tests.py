@@ -827,6 +827,53 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertEqual(rc, 1, "channels sink typo must fail:\n" + out)
         self.assertIn("legder", out)
 
+    def test_declared_custom_sink_passes(self):
+        # A team-declared sink, bound alongside a built-in, installs cleanly.
+        text = read(EXAMPLE).replace(
+            "  verdict:     [mr-comment]", "  verdict:     [mr-comment, slack]")
+        text += '\nsinks:\n  slack:\n    channel: "#code-reviews"\n    format: terse\n'
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 0, "declared custom sink must install:\n" + out)
+
+    def test_undeclared_sink_in_channels_fails(self):
+        # Binding a sink that is neither built-in nor declared is a typo/hole.
+        text = read(EXAMPLE).replace(
+            "  verdict:     [mr-comment]", "  verdict:     [mr-comment, slack]")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "undeclared sink must fail:\n" + out)
+        self.assertIn("slack", out)
+        self.assertIn("not declared", out)
+
+    def test_custom_team_visible_sink_satisfies_visibility(self):
+        # A declared sink is team-visible by default, so it alone satisfies a
+        # non-ledger-ok outcome's visibility requirement.
+        text = read(EXAMPLE).replace(
+            "  verdict:     [mr-comment]", "  verdict:     [slack]")
+        text += '\nsinks:\n  slack:\n    channel: "#code-reviews"\n'
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 0, "team-visible custom sink must satisfy:\n" + out)
+
+    def test_record_only_sink_alone_fails_visibility(self):
+        # team-visible: false opts a sink out; alone on verdict it must fail the
+        # same team-visibility check the built-in ledger fails.
+        text = read(EXAMPLE).replace(
+            "  verdict:     [mr-comment]", "  verdict:     [audit-log]")
+        text += '\nsinks:\n  audit-log:\n    team-visible: false\n'
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "record-only sink alone must fail:\n" + out)
+        self.assertIn("team-visible", out)
+
+    def test_malformed_sink_body_fails_cleanly(self):
+        # A scalar where a sink config belongs must be a clean install error,
+        # never a stack trace from the visibility helpers.
+        text = read(EXAMPLE).replace(
+            "  verdict:     [mr-comment]", "  verdict:     [mr-comment, slack]")
+        text += '\nsinks:\n  slack: "#code-reviews"\n'
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "malformed sink body must fail:\n" + out)
+        self.assertIn("slack", out)
+        self.assertNotIn("Traceback", out)
+
     def test_alias_shadowing_core_fails(self):
         src = make_doctored_source()
         aliases = src / "src" / "kernel" / "aliases.yaml"

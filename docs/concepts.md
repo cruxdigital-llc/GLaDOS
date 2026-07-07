@@ -134,12 +134,23 @@ is due.
 Workflows end by emitting typed results — six **outcome types**: `progress`,
 `verdict`, `escalation`, `bug`, `decision`, `observation` — and never name a
 destination themselves. The manifest's `channels:` block binds each type to
-**sinks**: `mr-comment`, `issue`, `issue-comment`, `label`, or `ledger` (the
-run record only). Example: with `escalation: [issue]`, a workflow that hits
-its retry limit files an issue a human will actually see. An outcome type
-that an enabled workflow emits but no team-visible sink receives is an
-install error — silence has to be confessed explicitly in the manifest
-(`visibility-acknowledged`), never defaulted into.
+**sinks**. Five sinks are built in — `mr-comment`, `issue`, `issue-comment`,
+`label`, and `ledger` (the run record only) — and a project can **declare its
+own** under a `sinks:` block (e.g. `slack`). Example: with `escalation:
+[issue]`, a workflow that hits its retry limit files an issue a human will
+actually see.
+
+The sink *name* set is open, but two guarantees keep an outcome from silently
+disappearing. **At install:** every sink named in `channels:` must be built-in
+or declared in `sinks:` (a typo like `[slak]` fails the install), and every
+emitted outcome type must reach at least one team-visible sink or be confessed
+(`visibility-acknowledged`) — never defaulted into. **At run time:** delivery
+is verified — an outcome that reaches no team-visible sink escalates instead of
+vanishing. A declared sink is team-visible by default (it names a real
+destination); `team-visible: false` opts a record-only sink out. Everything
+*inside* a sink declaration — `channel:`, `format:`, `grouping:`, `threads:` —
+is freeform config the agent interprets at run time for that sink's medium; the
+compiler never parses it. See [guides/sinks.md](guides/sinks.md).
 
 ## The state registry
 

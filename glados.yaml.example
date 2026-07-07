@@ -30,6 +30,23 @@ channels:
   decision:    [ledger]
   observation: [ledger]
 
+# Sinks — where outcomes physically land. Built-in sinks (mr-comment, issue,
+# issue-comment, label, ledger) need no declaration. Declare more here to bind
+# them in channels: above; a channels: entry naming an undeclared sink fails the
+# install (typo safety). Sink bodies are freeform config the AGENT interprets at
+# run time against your platform and conventions — the compiler never parses
+# them. A declared sink is team-visible by default; set `team-visible: false`
+# for a record-only sink. Delivery is verified at run time: an outcome that
+# reaches no team-visible sink escalates. Examples (uncomment to use):
+# sinks:
+#   mr-comment:
+#     grouping: per-persona     # aggregate | per-persona | per-finding
+#     threads: resolvable       # one resolvable thread per comment, if supported
+#     summary: false            # also post one composed-verdict comment?
+#   slack:
+#     channel: "#code-reviews"  # the agent posts here via its Slack tooling
+#     format: terse
+
 # Who may merge. No workflow file states an authority; they all read this key.
 merge-authority: human       # human | agent-integration-only | agent
 

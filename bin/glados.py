@@ -50,7 +50,7 @@ from pathlib import Path
 # 1. CONSTANTS
 # =============================================================================
 
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 
 # The fifteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
@@ -95,12 +95,23 @@ READER_FALLBACKS = {
 # the readers-without-writers check.
 PREAMBLE_OWNED_WRITES = ["work.base-sha", "run.record"]
 
-# Sink kinds that make an outcome team-visible. ``ledger`` is NOT here: it is a
-# valid sink only for progress/decision/observation.
-TEAM_VISIBLE_SINKS = {"mr-comment", "issue", "issue-comment", "label"}
+# Built-in sinks and whether each makes an outcome team-visible. Teams extend
+# this set by declaring sinks under `sinks:` in glados.yaml — a declared sink is
+# team-visible by default (it names an external destination people see), opt out
+# with `team-visible: false`. The sink *name* set is therefore OPEN; only the
+# built-ins are fixed. ``ledger`` is the one built-in that is NOT team-visible:
+# it is the committed run record, valid alone only for progress/decision/observation.
+BUILTIN_SINKS = {
+    "mr-comment": True,
+    "issue": True,
+    "issue-comment": True,
+    "label": True,
+    "ledger": False,
+}
+# Built-in sinks that make an outcome team-visible (custom sinks are handled by
+# _sink_is_team_visible, which honours their `team-visible:` declaration).
+TEAM_VISIBLE_SINKS = {name for name, vis in BUILTIN_SINKS.items() if vis}
 LEDGER_OK_TYPES = {"progress", "decision", "observation"}
-# The full closed sink vocabulary; a channels: binding outside it is a typo.
-KNOWN_SINKS = TEAM_VISIBLE_SINKS | {"ledger"}
 
 # Merge-authority and decision strictness, STRICTEST first. "laxer = leftward"
 # in the spec's own ``agent<record<escalate<forbidden`` ordering, so these lists
@@ -729,9 +740,12 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
                     r.provenance[f"params.{ns}.{k}"] = label
     r.values["params"] = params
 
-    # pass-through explicit-only keys
-    for key in ("platform", "phase", "branching", "workflows", "visibility-acknowledged",
-                "relaxation-acknowledged"):
+    # pass-through explicit-only keys. `sinks:` is project-declared like
+    # branching: presets never set it (it is not in the anti-inflation
+    # allowlist), and its bodies are freeform config the agent interprets at
+    # run time — the compiler only checks structure and referential integrity.
+    for key in ("platform", "phase", "branching", "workflows", "sinks",
+                "visibility-acknowledged", "relaxation-acknowledged"):
         if key in raw:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
@@ -852,6 +866,32 @@ def compile_all(source: Source, r: Resolved, manifest_hash: str) -> Compilation:
 # =============================================================================
 
 
+def _sinks_map(r: Resolved) -> dict:
+    """The manifest's sinks: block as a dict, coerced to {} when malformed (a
+    non-mapping is reported by run_type_checks; the helpers must not crash on it
+    before that error surfaces)."""
+    sinks = r.values.get("sinks")
+    return sinks if isinstance(sinks, dict) else {}
+
+
+def _declared_sinks(r: Resolved) -> set[str]:
+    """Every sink name a channels: binding may reference: the built-ins plus
+    whatever the manifest declares under sinks:."""
+    return set(BUILTIN_SINKS) | set(_sinks_map(r).keys())
+
+
+def _sink_is_team_visible(name: str, r: Resolved) -> bool:
+    """Does delivery to this sink satisfy the team-visibility invariant? A
+    built-in keeps its fixed classification (ledger is the only quiet one); a
+    team-declared sink is team-visible unless it sets `team-visible: false`."""
+    if name in BUILTIN_SINKS:
+        return BUILTIN_SINKS[name]
+    cfg = _sinks_map(r).get(name)
+    if not isinstance(cfg, dict):
+        return True   # malformed body is reported elsewhere; default to visible
+    return cfg.get("team-visible", True) is not False
+
+
 def run_type_checks(source: Source, comp: Compilation) -> list[str]:
     """Return a list of fatal error strings (empty == passes)."""
     r = comp.resolved
@@ -901,19 +941,40 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
         errors.append(f"state key '{key}' is read by [{', '.join(sorted(set(who)))}] "
                       f"but no enabled writer covers it — {fix}")
 
-    # ---- (2) zero-sink emits ------------------------------------------------
+    # ---- (2) sink bindings + zero-sink emits --------------------------------
     channels = r.values.get("channels") or {}
+    sinks_cfg = r.values.get("sinks")
     vis_ack = r.values.get("visibility-acknowledged")
-    # channels: typos are silent visibility loss — validate both sides of the
-    # binding against the closed vocabularies first.
+    # Validate the sinks: block shape. Sink *bodies* are freeform config the
+    # agent interprets at run time (channel, format, grouping, threads, …); the
+    # compiler checks only that a declaration is a mapping and that an explicit
+    # team-visible: is a bool — never the meaning of the other keys.
+    if sinks_cfg is not None and not isinstance(sinks_cfg, dict):
+        errors.append("sinks: must be a mapping of sink-name -> config (e.g. "
+                      "'slack:\\n    channel: \"#reviews\"')")
+        sinks_cfg = {}
+    for name, cfg in (sinks_cfg or {}).items():
+        if cfg is not None and not isinstance(cfg, dict):
+            errors.append(f"sinks.{name}: must be a mapping (e.g. 'channel: ...') "
+                          f"or empty — got {cfg!r}")
+        elif isinstance(cfg, dict) and "team-visible" in cfg \
+                and not isinstance(cfg["team-visible"], bool):
+            errors.append(f"sinks.{name}.team-visible: must be true or false — "
+                          f"got {cfg['team-visible']!r}")
+    declared = _declared_sinks(r)
+    # channels: the outcome-type on the left must be real; each sink on the
+    # right must be DECLARED (built-in or named in sinks:). A typo is silent
+    # visibility loss — the referential-integrity check catches it statically
+    # without the sink vocabulary being a closed enum.
     for otype in sorted(channels.keys()):
         if otype not in outcome_types:
             errors.append(f"channels.{otype}: not a registered outcome type — "
                           f"use one of {', '.join(sorted(outcome_types))}")
         for s in (channels.get(otype) or []):
-            if s not in KNOWN_SINKS:
-                errors.append(f"channels.{otype}: unknown sink '{s}' — sinks "
-                              f"are: {', '.join(sorted(KNOWN_SINKS))}")
+            if s not in declared:
+                errors.append(f"channels.{otype}: sink '{s}' is not declared — "
+                              f"declare it under sinks: in glados.yaml, or fix "
+                              f"the typo (declared: {', '.join(sorted(declared))})")
     emitted: set[str] = set()
     for u in all_units:
         emitted.update(u["emits"])
@@ -925,14 +986,15 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
             continue
         if otype in LEDGER_OK_TYPES:
             continue
-        if any(s in TEAM_VISIBLE_SINKS for s in sinks):
+        if any(_sink_is_team_visible(s, r) for s in sinks):
             continue
         if vis_ack == "ledger-only":
             continue
         errors.append(f"outcome '{otype}' has no team-visible sink "
-                      f"(has {sinks}); bind one of "
-                      f"{sorted(TEAM_VISIBLE_SINKS)} under channels.{otype}, or "
-                      f"confess with 'visibility-acknowledged: ledger-only'")
+                      f"(has {sinks}); bind a team-visible sink under "
+                      f"channels.{otype} (built-in: "
+                      f"{', '.join(sorted(TEAM_VISIBLE_SINKS))}), declare one in "
+                      f"sinks:, or confess with 'visibility-acknowledged: ledger-only'")
 
     # ---- (3) requires satisfied --------------------------------------------
     # First: every module/workflow token the manifest names must exist. A typo
@@ -1100,6 +1162,29 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
                    f"(explicit) |")
     out.append("")
 
+    out.append("## Sinks")
+    out.append("")
+    out.append("Where outcomes land, and whether delivery counts as team-visible. "
+               "Built-ins are always available; a project may declare more under "
+               "`sinks:` (bodies are freeform config the agent interprets at run "
+               "time). Runtime delivery is verified — an outcome that reaches no "
+               "team-visible sink escalates.")
+    out.append("")
+    out.append("| Sink | Team-visible | Config | Source |")
+    out.append("|------|--------------|--------|--------|")
+    declared_sinks = _sinks_map(r)
+    for name in sorted(BUILTIN_SINKS):
+        vis = "yes" if _sink_is_team_visible(name, r) else "no (record-only)"
+        out.append(f"| {name} | {vis} | {_fmt(declared_sinks.get(name) or {})} | "
+                   f"built-in |")
+    for name in sorted(declared_sinks):
+        if name in BUILTIN_SINKS:
+            continue
+        vis = "yes" if _sink_is_team_visible(name, r) else "no (record-only)"
+        out.append(f"| {name} | {vis} | {_fmt(declared_sinks.get(name) or {})} | "
+                   f"(explicit) |")
+    out.append("")
+
     out.append(f"## RELAXED(phase) markers: {len(r.relaxed_phase)}")
     out.append("")
     if r.relaxed_phase:
@@ -1159,6 +1244,8 @@ def _fmt(val) -> str:
         return "true" if val else "false"
     if isinstance(val, list):
         return "[" + ", ".join(str(v) for v in val) + "]"
+    if isinstance(val, dict):
+        return "{" + ", ".join(f"{k}: {_fmt(v)}" for k, v in val.items()) + "}"
     return str(val)
 
 
