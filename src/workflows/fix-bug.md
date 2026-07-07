@@ -22,6 +22,8 @@ verdict on it.
 
 ## Process
 
+<!-- glados:include vocabulary/lifecycle.md -->
+
 ### 1. Reproduce
 - Take the bug from the caller (an issue, an error report, or a user brief);
   derive a short slug from it.

@@ -886,6 +886,82 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertIn("intent", out)
 
 
+class TestLifecycle(unittest.TestCase):
+    """The lifecycle: block validates with channels-level rigor, is opt-in, and
+    its firing instruction compiles into the ticket-owning cores."""
+
+    LC = ('\nlifecycle:\n  driver: gitlab-scoped-label\n  field: "Workflow"\n'
+          '  transitions:\n    claim-branch: "In Progress"\n'
+          '    open-mr: "In Review"\n  policy: advance-only\n')
+
+    def test_lifecycle_valid_installs_and_reports(self):
+        t = make_target(read(EXAMPLE) + self.LC)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, "valid lifecycle must install:\n" + out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("## Lifecycle", report)
+        self.assertIn("gitlab-scoped-label", report)
+        self.assertIn("In Review", report)
+
+    def test_lifecycle_absent_has_no_section(self):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("## Lifecycle", read(t / ".glados" / "assembly-report.md"))
+
+    def test_lifecycle_unknown_driver_fails(self):
+        text = read(EXAMPLE) + self.LC.replace("gitlab-scoped-label", "gitlab-labels")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "unknown driver must fail:\n" + out)
+        self.assertIn("gitlab-labels", out)
+
+    def test_lifecycle_deferred_driver_fails(self):
+        text = read(EXAMPLE) + self.LC.replace("gitlab-scoped-label",
+                                               "gitlab-work-item-status")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "deferred driver must fail:\n" + out)
+        self.assertIn("deferred", out)
+
+    def test_lifecycle_unknown_stage_fails(self):
+        text = read(EXAMPLE) + self.LC.replace("claim-branch:", "clam-branch:")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "stage typo must fail:\n" + out)
+        self.assertIn("clam-branch", out)
+
+    def test_lifecycle_bad_policy_fails(self):
+        text = read(EXAMPLE) + self.LC.replace("advance-only", "yolo")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "bad policy must fail:\n" + out)
+        self.assertIn("policy", out)
+
+    def test_lifecycle_active_driver_requires_transitions(self):
+        text = read(EXAMPLE) + ('\nlifecycle:\n  driver: github-label\n'
+                                '  field: "Workflow"\n')
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "active driver with no transitions must fail:\n" + out)
+        self.assertIn("transitions", out)
+
+    def test_lifecycle_scoped_label_requires_field(self):
+        # gitlab-scoped-label without a field: has no label prefix to set.
+        text = read(EXAMPLE) + ('\nlifecycle:\n  driver: gitlab-scoped-label\n'
+                                '  transitions:\n    open-mr: "In Review"\n')
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "scoped-label without field must fail:\n" + out)
+        self.assertIn("field", out)
+
+    def test_lifecycle_fragment_compiled_into_ticket_cores_only(self):
+        # The firing instruction is always compiled into the ticket-owning cores
+        # (build-feature, fix-bug) and absent from a non-ticket core (review-mr).
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        base = t / "product-knowledge" / "glados"
+        marker = "Ticket lifecycle (when"
+        self.assertIn(marker, read(base / "build-feature.md"))
+        self.assertIn(marker, read(base / "fix-bug.md"))
+        self.assertNotIn(marker, read(base / "review-mr.md"))
+
+
 class TestSourceTreeAttacks(unittest.TestCase):
 
     def test_include_cycle_fatal_names_cycle(self):

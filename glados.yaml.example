@@ -47,6 +47,21 @@ channels:
 #     channel: "#code-reviews"  # the agent posts here via its Slack tooling
 #     format: terse
 
+# Ticket lifecycle — mirror this run's stage onto the tracker's work-item state
+# (In Progress -> In Review -> Done) as it crosses boundaries. Opt-in: absent or
+# `driver: none` is a no-op. GLaDOS declares the mapping; the agent executes it
+# with your platform CLI. Transitions are best-effort — a failed one escalates,
+# it never blocks the run. A run fires claim-branch/open-mr/escalated; `merged`
+# is realized platform-side (e.g. `Closes #id`). See docs/guides/lifecycle.md.
+# lifecycle:
+#   driver: gitlab-scoped-label   # gitlab-scoped-label | github-label | none
+#                                 # (gitlab-work-item-status, github-projects-status: deferred)
+#   field: "Workflow"             # scoped-label prefix (GitLab), or status field name
+#   transitions:                  # canonical stage -> your tracker's state value
+#     claim-branch: "In Progress"
+#     open-mr:      "In Review"
+#   policy: advance-only          # advance-only (never regress; respect manual parks) | free
+
 # Who may merge. No workflow file states an authority; they all read this key.
 merge-authority: human       # human | agent-integration-only | agent
 

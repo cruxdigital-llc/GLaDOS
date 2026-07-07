@@ -18,6 +18,8 @@ self-reviews the diff. It is the entry point of the review loop
 
 ## Process
 
+<!-- glados:include vocabulary/lifecycle.md -->
+
 ### 1. Select the feature
 - Take the feature from the caller (an epic ticket or a user brief). With no
   caller, pick the top actionable item from the project status file
