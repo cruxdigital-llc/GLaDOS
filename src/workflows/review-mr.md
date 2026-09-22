@@ -46,12 +46,29 @@ commits to it.
   change deliberately leaves undone, and a panel that never reads it spends
   a cycle reporting decisions back to the person who made them.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
-- **Cycle 2 and after brief the delta**: the commits written since the pass
-  that produced the open findings (`<review.reviewed-head>...<head>`),
-  together with that pass's findings, each one named and still open until
-  this pass says otherwise. Ground a previous cycle already judged is not
-  judged again — this cycle answers which open findings the new commits
-  closed, and what the new commits broke.
+- **Cycle 2 and after brief the delta**: what changed since the pass that
+  produced the open findings, together with that pass's findings, each one
+  named and still open until this pass says otherwise. Ground a previous
+  cycle already judged is not judged again — this cycle answers which open
+  findings the new commits closed, and what the new commits broke.
+- **Check first that the reviewed head is still an ancestor of this one.**
+  Where it is, the delta is the commit range `<review.reviewed-head>..<head>`.
+  Where it is **not**, the branch was rebased or rewritten, and that range is
+  not a delta at all: it lists every replayed commit as though it were new,
+  which sends the panel back over the whole branch — the outcome this step
+  exists to prevent. Patch-equivalence (`--cherry-pick`) does not rescue it,
+  because a rebase onto a moved base rewrites the patches it replays.
+  Build the delta from the trees instead: diff `<review.reviewed-head>` against
+  `<head>` **restricted to the files this MR itself touches** (the change's own
+  file list, taken against its current base). That carries the new work and
+  whatever the rebase re-expressed — both in scope — while leaving out what
+  the new base brought with it, which is not this change's to answer for.
+  Comparing the commit subjects on each side also says whether the rebase
+  dropped a commit, which is worth knowing before reading anything else.
+- Say in the brief which of the two the pass used, and that a rebase happened
+  where it did. A rebase is where a semantic conflict hides, and a panel that
+  thinks it is reading a simple delta will trust a hunk it should have checked
+  against the file.
 - A narrowed diff narrows what is **read**, never what is **owed**. A finding
   the delta pass does not mention stays open at its severity; it closes only
   when this pass says the new commits closed it. A pass that lets a finding
