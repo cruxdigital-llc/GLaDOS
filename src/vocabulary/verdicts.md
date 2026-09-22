@@ -20,6 +20,20 @@ Unsure whether a finding blocks? Then it is `advisory`, written as the
 question it is. A wrong `blocking` finding costs more than a missed one: it
 sends the author to refactor around a defect that does not exist.
 
+**A finding is about code the change introduced.** Most codebases predate the
+standards they are now held to, so a lens reading a touched file finds
+breaches the author never wrote. Those are not this review's findings. A
+breach that already existed in a file the change touches is noted, not
+blocking, and the whole set of them is worth **one line** pointing at
+wherever the project tracks bringing existing code up to standard — never one
+finding per instance. Listing them buries the three findings the author can
+act on among the fifteen they cannot, and an author who has skimmed one
+review skims the next one, which is how a real finding gets missed.
+
+Two things are not pre-existing, whatever their line numbers say: a breach
+the change makes worse, and one the change now depends on. Both are findings
+about this change and land at whatever tier they earn.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**

@@ -27,9 +27,16 @@ then judge the diff against that sentence:
 - A **symptom patch** whose cause is within this change's reach is a
   `blocking` finding: cite the cause, and name the change that would remove
   it.
-- A **scoped deferral** is `advisory` only when the deferral is deliberate and
-  written down — the cause named, the follow-up recorded so it outlives this
-  MR. An undeclared deferral is a symptom patch.
+- A **scoped deferral** the change declares — the cause named, the follow-up
+  recorded so it outlives this MR — is a decision the author already made,
+  and a review does not reopen a decision by reporting it as a gap. Raise it
+  only where the deferral is itself unsafe, and then say what breaks while it
+  stands rather than why the deferred thing would be good: the author knows
+  why it would be good, which is why they wrote it down. What breaks decides
+  the tier under the scale like any other finding — `blocking` where living
+  with the deferral breaks behaviour, an acceptance criterion, security,
+  tenancy or data, `advisory` otherwise. An undeclared deferral is a symptom
+  patch.
 - The ticket's framing does not settle this. A change that does exactly what
   the ticket asked can still be a symptom patch: the ticket is where the
   problem was noticed, not necessarily where it lives.

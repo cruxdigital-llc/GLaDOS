@@ -39,9 +39,24 @@ commits to it.
 - This pass is cycle `review.cycle + 1` for this MR (cycle 1 when unset).
 
 ### 4. Assemble the review brief
-- Gather: the MR id, the full diff (`<base>...<head>`), the changed-file
-  list, the spec or ticket, the test commands, and the personas active for
-  this feature (`run.active-personas`, when present).
+- Gather: the MR id, the diff, the changed-file list, **the merge-request
+  description**, the spec or ticket, the test commands, and the personas
+  active for this feature (`run.active-personas`, when present). The
+  description is not furniture: it is where the author states what this
+  change deliberately leaves undone, and a panel that never reads it spends
+  a cycle reporting decisions back to the person who made them.
+- **Cycle 1 briefs the whole change** (`<base>...<head>`).
+- **Cycle 2 and after brief the delta**: the commits written since the pass
+  that produced the open findings (`<review.reviewed-head>...<head>`),
+  together with that pass's findings, each one named and still open until
+  this pass says otherwise. Ground a previous cycle already judged is not
+  judged again — this cycle answers which open findings the new commits
+  closed, and what the new commits broke.
+- A narrowed diff narrows what is **read**, never what is **owed**. A finding
+  the delta pass does not mention stays open at its severity; it closes only
+  when this pass says the new commits closed it. A pass that lets a finding
+  lapse by not looking at it has approved a defect by omission, which is the
+  one way a shorter re-review can cost more than it saves.
 - Make the brief self-contained — each panelist runs with no authoring
   context and must be able to judge from the brief alone.
 
@@ -65,6 +80,17 @@ commits to it.
   as written; one that resolves neither way stands at its severity, reworded
   as the question it actually is. Everything below runs over the surviving
   list.
+- **Pool what is not about this change.** Advisories the panel raised against
+  code the change did not introduce collapse into the one line the severity
+  scale calls for, naming where the project tracks that work; the run record
+  keeps what was pooled. Advisories that remain and share a cause are
+  consolidated by the synthesis in step 7.
+- The tally is the **last** step permitted to shorten the list, because it is
+  the only one that reads every finding at once. Downstream — the synthesis,
+  the decision, the render, the publish — a finding may be reworded and
+  consolidated but never dropped. Put the shortening here, where the
+  reasoning is recorded, rather than leaving it to a renderer that will do it
+  silently and without a record.
 
 The tally is a validation step, not a collection step. Check every returned
 object before counting it:
@@ -98,6 +124,19 @@ pass, before deciding anything.
 ### 8. Decide
 - This step produces a `verdict` outcome carrying the per-persona verdicts,
   the root-cause synthesis, and the cycle's composed result.
+- On cycle 2 and after, the outcome also carries the **disposition of every
+  finding the previous pass left open** — closed, or still open — one line
+  each. That list is what tells the author their last round of work landed,
+  so it travels in the outcome to the sinks and not only into the run record.
+- **The head may move while a pass runs.** A pass reads the head once, at
+  step 4, and may find a newer one by the time it decides. It does not reach
+  back for it: splicing a fresh diff into a finished tally publishes findings
+  no panelist made against code no panelist read, and aborting spends a whole
+  panel to arrive back where it started. Decide on the commit that was read,
+  name that SHA in the verdict so the author knows what was judged, and
+  record it as `review.reviewed-head`. The commits that landed since are the
+  next cycle's delta, which step 4 makes cheap enough that this is a
+  postponement rather than a loss.
 - **Every panelist `APPROVE` (validated), and no `blocking` synthesis
   finding** → the MR is review-clean; the loop ends. What happens to the MR
   next is governed by `merge-authority`, resolved from `glados.yaml` — this
