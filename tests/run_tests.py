@@ -1177,6 +1177,137 @@ class TestRootCauseSynthesis(unittest.TestCase):
                 marker, read(core),
                 f"{core.name} seats a panel with no severity scale at all")
 
+    def _compiled_direct(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        return t / "product-knowledge" / "glados"
+
+    def test_a_suppressed_fragment_leaves_a_pointer_naming_it(self):
+        """A de-duplicated include must leave its lead-in a referent.
+
+        2.3.1 replaced the second copy of a fragment with nothing. The text
+        around an include was written to introduce it, so the evaluator brief
+        in verify-feature went on telling its reader to copy "the rules below,
+        verbatim" over a blank line and the next heading, and a colon
+        introducing the retry bound introduced nothing. `glados check` could
+        not see it: it recompiles with the same compiler. Asserted on the
+        core where it actually broke.
+        """
+        core = read(self._compiled_direct() / "verify-feature.md")
+        for heading in ("Verdicts and finding severities", "Loop bounds"):
+            self.assertIn(
+                f"*(See **{heading}**, earlier in this document.)*", core,
+                f"verify-feature suppressed {heading!r} without a pointer")
+
+    def test_no_lead_in_points_at_an_include_by_position(self):
+        """A fragment may be inlined here or earlier; only its NAME is stable.
+
+        Whether an include's own copy survives depends on what else the
+        document includes, which the author of a module cannot know. A
+        lead-in that says "below" is right in one core and false in the
+        next. Scanning the three lines above every include keeps the one
+        pattern that broke from being written again.
+        """
+        positional = ("below", "beneath", "following")
+        offenders = []
+        for path in sorted((REPO / "src").rglob("*.md")):
+            lines = read(path).splitlines()
+            for n, line in enumerate(lines):
+                if "glados:include" not in line:
+                    continue
+                for back in lines[max(0, n - 3):n]:
+                    if any(w in back.lower() for w in positional):
+                        offenders.append(f"{path.relative_to(REPO)}:{n + 1}: {back.strip()}")
+        self.assertEqual(offenders, [], "lead-ins that point by position:\n" + "\n".join(offenders))
+
+    def test_every_verdict_producing_core_carries_the_default_shape(self):
+        """A repo with no sink config still gets a shape, and it is this one.
+
+        The comment shape lived only in one project's `glados.yaml`, so every
+        repository without one composed its review comments from nothing but
+        "interpret the sink's keys sensibly". Every core that composes a
+        verdict — through a panel or an evaluator — now carries it.
+        Identified from the provenance header, not a hand-kept list, so a new
+        verdict-producing core is covered without editing this test.
+        """
+        glados_dir = self._compiled_direct()
+        producers = []
+        for core in sorted(glados_dir.glob("*.md")):
+            body = read(core)
+            header = next((l for l in body.splitlines() if "modules-inlined:" in l), "")
+            if "mr-review-panel" in header or "evaluator-spawn" in header:
+                producers.append(core.name)
+                self.assertIn("## Publishing a verdict", body,
+                              f"{core.name} composes a verdict with no default shape")
+        self.assertGreater(len(producers), 0, "no core composes a verdict")
+
+    def test_the_default_shape_governs_wording_and_never_classifies(self):
+        """The render step may not decide what is a finding.
+
+        Twice in one merge request a sink rule classified an item out of
+        findinghood and then told the renderer to say nothing about it; each
+        time the same file said, a screen later, that no rule there may omit a
+        finding. The two cannot both hold. Truth is settled upstream, where
+        the reasoning can be recorded, so the shape says so and carries none
+        of the phrasings that did the classifying.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "comment-shape.md").split())
+        self.assertIn("Everything here governs wording and order, never content", body)
+        for phrase in ("is not a finding", "does not go on the comment",
+                       "say nothing about", "one line or nothing",
+                       "preference rather than a finding"):
+            self.assertNotIn(phrase, body, f"the shape classifies: {phrase!r}")
+
+    def test_the_default_shape_renders_any_number_of_blocking_findings(self):
+        """A cap, "the only place asks are written" and "never fold an ask"
+        had no legal rendering together past four unconsolidated blockers.
+        Every blocking finding gets its line; length is a cue to consolidate.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "comment-shape.md").split())
+        self.assertIn("Every blocking finding gets its line", body)
+        self.assertIn("never a reason to leave one out", body)
+        for cap in ("at most four", "four bullets", "at most 4"):
+            self.assertNotIn(cap, body)
+
+    def test_the_default_shape_names_the_vocabulary_instead_of_restating_it(self):
+        """A second copy agrees with the first only until one of them changes.
+
+        A project's sink is read live and survives an upgrade that rewrites
+        the vendored vocabulary, so a rule restated there goes on stating the
+        superseded version. The shape points at *Verdicts and finding
+        severities* for the two rules it depends on and repeats neither.
+        """
+        shape = " ".join(read(REPO / "src" / "vocabulary" / "comment-shape.md").split())
+        verdicts = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("*Verdicts and finding severities* asks that each thing be said once", shape)
+        for sentence in ("A finding states a problem; a reader turns it into work",
+                         "The claim/evidence split makes a review shorter"):
+            self.assertIn(sentence, verdicts, "premise: the rule lives in the vocabulary")
+            self.assertNotIn(sentence, shape, "the shape restates the vocabulary")
+
+    def test_a_fold_is_cheap_not_free(self):
+        """The team reads reviews through `glab`, which renders the tags.
+
+        A budget that calls folded evidence free is false in the renderer the
+        comments are actually read in; there the proof is last, not hidden.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "comment-shape.md").split())
+        self.assertIn("A fold is cheap, not free", body)
+        self.assertIn("render the tags literally", body)
+
+    def test_the_evaluator_brief_carries_the_declared_deferral_rule(self):
+        """On the evaluator path the sink was the rule's only home.
+
+        verify-feature and fix-bug reach a verdict through evaluator-spawn,
+        whose brief carries the vocabulary but not the root-cause synthesis.
+        Moving the deferral rule out of the render sink would have left that
+        path without it, so it moves into the brief instead — upstream of
+        the verdict, where classifying is allowed.
+        """
+        body = " ".join(read(REPO / "src" / "modules" / "evaluator-spawn.md").split())
+        self.assertIn("What is deliberately out of scope", body)
+        self.assertIn("a decision already made, not a gap to report back", body)
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.

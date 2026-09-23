@@ -143,3 +143,10 @@ without a recorded verdict is a process failure worth naming in the record.
   one per persona: tallying them into the single composed `verdict` outcome —
   the per-persona verdicts plus the cycle's composed result — and making the
   approve/loop decision happen downstream in the workflow this panel serves.
+
+### Publishing the verdict
+
+The validated objects are composed downstream into one `verdict`. Where it
+lands on a merge request it is written as *Publishing a verdict* sets out.
+
+<!-- glados:include vocabulary/comment-shape.md -->
