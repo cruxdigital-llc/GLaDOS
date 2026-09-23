@@ -97,6 +97,21 @@ Answer it in two parts:
   the author added. Each is legitimate on its own; what matters is the size of
   the pile and whether it can be separated.
 
+**Work a review asked for is the case to be most careful about, because the
+review is not a neutral party to it.** A finding says a value is computed and
+dropped, or a reason is lost, or a count is only a page of ten. Each is a true
+observation, and each reads as a request to carry the thing further — which
+costs a field, a shape to hold it, a caller to thread it and a test apiece.
+Then the next pass finds nothing reads the new field, and asks for it back
+out. The change grew, every individual finding was correct, and the growth
+came from here.
+
+So when this question names review-requested work, it must be able to say the
+review was wrong to ask. Not "the author added this without being asked" —
+the honest sentence is "an earlier pass asked for this and should not have;
+the observation was right and the remedy was not." A synthesis that reports
+review-driven growth as the author's drift is reporting its own.
+
 This produces a **statement, not a finding**. Unrequested work is not a defect
 — the code may be correct and the review has no business calling correct code
 wrong. It goes on the merge request as one line when there is something to

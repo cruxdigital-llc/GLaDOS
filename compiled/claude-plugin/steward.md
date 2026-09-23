@@ -225,6 +225,28 @@ Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
+**For every type, field or parameter a change adds, name the line that reads
+it.** No reader, no field. Say which line, not that one probably exists —
+a reader you cannot point at is the finding.
+
+This cuts the opposite way from the observation it is usually confused with.
+"This value is computed and then dropped" is a true sentence that sounds like
+a request to carry the value further, and carrying it is the expensive answer:
+a field, a shape to hold it, a caller to thread it, and a test for each. The
+cheap answer is almost always that nobody wanted the value, and the fix is to
+stop computing it. Ask which before asking for plumbing. The same applies to a
+value carried across a step boundary that the later step never acts on: that
+is not information, it is coupling, and the step that stores a result does not
+need to know why the step before it kept one.
+
+A review can establish that nothing reads a field. It cannot establish that
+nothing *should* — a reader someone is about to write is invisible here, and
+"a later ticket will use it" is a real answer that only the people who know
+what the system is for can weigh. So this is stated as the fact and never as
+a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
+the author may decline like any other. It is `advisory` unless the unread
+thing also breaks something.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**

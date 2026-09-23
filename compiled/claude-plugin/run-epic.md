@@ -249,6 +249,28 @@ Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
+**For every type, field or parameter a change adds, name the line that reads
+it.** No reader, no field. Say which line, not that one probably exists —
+a reader you cannot point at is the finding.
+
+This cuts the opposite way from the observation it is usually confused with.
+"This value is computed and then dropped" is a true sentence that sounds like
+a request to carry the value further, and carrying it is the expensive answer:
+a field, a shape to hold it, a caller to thread it, and a test for each. The
+cheap answer is almost always that nobody wanted the value, and the fix is to
+stop computing it. Ask which before asking for plumbing. The same applies to a
+value carried across a step boundary that the later step never acts on: that
+is not information, it is coupling, and the step that stores a result does not
+need to know why the step before it kept one.
+
+A review can establish that nothing reads a field. It cannot establish that
+nothing *should* — a reader someone is about to write is invisible here, and
+"a later ticket will use it" is a real answer that only the people who know
+what the system is for can weigh. So this is stated as the fact and never as
+a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
+the author may decline like any other. It is `advisory` unless the unread
+thing also breaks something.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**
@@ -330,13 +352,19 @@ Your job is to find real problems, not to confirm success.
    of thing it is" lands in one read; "this is exactly the case that
    paragraph warns against" sends the reader to another file to find out
    what you meant.
-5. Classify each finding and choose your verdict using ONLY the severity
+5. For every type, field or parameter this change adds, find the line that
+   reads it. If you cannot point at one, say so — that is a finding, and it
+   is the fact ("nothing reads this") rather than the remedy. Before asking
+   for a dropped value to be carried further, ask whether anyone wanted it:
+   carrying it costs a field, a shape, a caller and a test, and the usual
+   answer is to stop computing it instead.
+6. Classify each finding and choose your verdict using ONLY the severity
    scale, verdict words, and composition rules in the brief.
-6. Before returning, step back from the individual findings: in one line,
+7. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
    `none` when they share no cause, or when you found nothing.
-7. Return the structured verdict object:
+8. Return the structured verdict object:
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.
@@ -466,6 +494,28 @@ review skims the next one, which is how a real finding gets missed.
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
+
+**For every type, field or parameter a change adds, name the line that reads
+it.** No reader, no field. Say which line, not that one probably exists —
+a reader you cannot point at is the finding.
+
+This cuts the opposite way from the observation it is usually confused with.
+"This value is computed and then dropped" is a true sentence that sounds like
+a request to carry the value further, and carrying it is the expensive answer:
+a field, a shape to hold it, a caller to thread it, and a test for each. The
+cheap answer is almost always that nobody wanted the value, and the fix is to
+stop computing it. Ask which before asking for plumbing. The same applies to a
+value carried across a step boundary that the later step never acts on: that
+is not information, it is coupling, and the step that stores a result does not
+need to know why the step before it kept one.
+
+A review can establish that nothing reads a field. It cannot establish that
+nothing *should* — a reader someone is about to write is invisible here, and
+"a later ticket will use it" is a real answer that only the people who know
+what the system is for can weigh. So this is stated as the fact and never as
+a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
+the author may decline like any other. It is `advisory` unless the unread
+thing also breaks something.
 
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 

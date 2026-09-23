@@ -947,6 +947,74 @@ class TestRootCauseSynthesis(unittest.TestCase):
         core = read(t / "product-knowledge" / "glados" / "address-review.md")
         self.assertIn("root-cause synthesis", core)
 
+    def test_the_pre_existing_rule_reaches_every_core_that_seats_a_panel(self):
+        """The scope rule is worthless in a core that does not carry it.
+
+        What it fixes is fifteen advisories about untouched code burying the
+        three findings the author can act on. Whether the pooling actually
+        FIRES is a property of a review, not of a compile, and only a real
+        review over a touched file with known pre-existing breaches can show
+        it. What a compile can prove is the half that silently rots: that
+        every core seating a panel carries the rule, and that no core tells a
+        reviewer to do the opposite.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        glados_dir = t / "product-knowledge" / "glados"
+        seats_a_panel = [
+            p for p in glados_dir.glob("*.md")
+            if "adversarial MR review panel" in read(p)
+        ]
+        self.assertGreater(len(seats_a_panel), 0, "no core seats a panel")
+        for core in seats_a_panel:
+            body = " ".join(read(core).split())
+            self.assertIn(
+                "A finding is about code the change introduced", body,
+                f"{core.name} seats a panel without the scope rule")
+            self.assertIn(
+                "worth **one line** pointing at", body,
+                f"{core.name}: no pooling instruction")
+            self.assertIn(
+                "a breach the change makes worse", body,
+                f"{core.name}: the scope rule without its exception is a rule "
+                "that hides a real finding")
+
+    def test_no_core_asks_for_a_finding_per_pre_existing_breach(self):
+        """The rule and its opposite must not both be in the compiled text.
+
+        Two instructions in conflict resolve unpredictably, which is why an
+        advisory CAP was declined in favour of shortening at the tally. The
+        same hazard applies to the rule itself: every mention of a finding
+        per instance must be the prohibition, never a request.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        phrase = "one finding per instance"
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            flat = " ".join(read(core).split())
+            mentions = flat.count(phrase)
+            prohibited = flat.count("never " + phrase)
+            self.assertEqual(
+                mentions, prohibited,
+                f"{core.name} mentions '{phrase}' {mentions} time(s) but "
+                f"prohibits it {prohibited} — an instruction to list them "
+                "one by one is the failure the rule exists to stop")
+
+    def test_the_reader_rule_states_the_fact_not_the_remedy(self):
+        """A review can say nothing reads a field. It cannot say nothing should.
+
+        The rule exists because carrying a dropped value costs a field, a
+        shape, a caller and a test, and the cheap answer is usually that
+        nobody wanted it. But a reader someone is about to write is invisible
+        to a review, so the rule is stated as the fact and never as a demand —
+        without that clause it becomes an instruction to delete work whose
+        reader is one ticket away.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("name the line that reads it", body)
+        self.assertIn("It cannot establish that nothing *should*", body)
+        self.assertIn("stated as the fact and never as a demand", body)
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.

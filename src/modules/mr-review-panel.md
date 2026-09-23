@@ -65,13 +65,19 @@ Your job is to find real problems, not to confirm success.
    of thing it is" lands in one read; "this is exactly the case that
    paragraph warns against" sends the reader to another file to find out
    what you meant.
-5. Classify each finding and choose your verdict using ONLY the severity
+5. For every type, field or parameter this change adds, find the line that
+   reads it. If you cannot point at one, say so — that is a finding, and it
+   is the fact ("nothing reads this") rather than the remedy. Before asking
+   for a dropped value to be carried further, ask whether anyone wanted it:
+   carrying it costs a field, a shape, a caller and a test, and the usual
+   answer is to stop computing it instead.
+6. Classify each finding and choose your verdict using ONLY the severity
    scale, verdict words, and composition rules in the brief.
-6. Before returning, step back from the individual findings: in one line,
+7. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
    `none` when they share no cause, or when you found nothing.
-7. Return the structured verdict object:
+8. Return the structured verdict object:
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.

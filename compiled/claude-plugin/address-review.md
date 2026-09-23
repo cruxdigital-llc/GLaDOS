@@ -115,6 +115,28 @@ Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
+**For every type, field or parameter a change adds, name the line that reads
+it.** No reader, no field. Say which line, not that one probably exists —
+a reader you cannot point at is the finding.
+
+This cuts the opposite way from the observation it is usually confused with.
+"This value is computed and then dropped" is a true sentence that sounds like
+a request to carry the value further, and carrying it is the expensive answer:
+a field, a shape to hold it, a caller to thread it, and a test for each. The
+cheap answer is almost always that nobody wanted the value, and the fix is to
+stop computing it. Ask which before asking for plumbing. The same applies to a
+value carried across a step boundary that the later step never acts on: that
+is not information, it is coupling, and the step that stores a result does not
+need to know why the step before it kept one.
+
+A review can establish that nothing reads a field. It cannot establish that
+nothing *should* — a reader someone is about to write is invisible here, and
+"a later ticket will use it" is a real answer that only the people who know
+what the system is for can weigh. So this is stated as the fact and never as
+a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
+the author may decline like any other. It is `advisory` unless the unread
+thing also breaks something.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**
@@ -224,6 +246,21 @@ Answer it in two parts:
   where it came from: work the ticket implies, work a review asked for, work
   the author added. Each is legitimate on its own; what matters is the size of
   the pile and whether it can be separated.
+
+**Work a review asked for is the case to be most careful about, because the
+review is not a neutral party to it.** A finding says a value is computed and
+dropped, or a reason is lost, or a count is only a page of ten. Each is a true
+observation, and each reads as a request to carry the thing further — which
+costs a field, a shape to hold it, a caller to thread it and a test apiece.
+Then the next pass finds nothing reads the new field, and asks for it back
+out. The change grew, every individual finding was correct, and the growth
+came from here.
+
+So when this question names review-requested work, it must be able to say the
+review was wrong to ask. Not "the author added this without being asked" —
+the honest sentence is "an earlier pass asked for this and should not have;
+the observation was right and the remedy was not." A synthesis that reports
+review-driven growth as the author's drift is reporting its own.
 
 This produces a **statement, not a finding**. Unrequested work is not a defect
 — the code may be correct and the review has no business calling correct code
@@ -417,6 +454,28 @@ review skims the next one, which is how a real finding gets missed.
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
+
+**For every type, field or parameter a change adds, name the line that reads
+it.** No reader, no field. Say which line, not that one probably exists —
+a reader you cannot point at is the finding.
+
+This cuts the opposite way from the observation it is usually confused with.
+"This value is computed and then dropped" is a true sentence that sounds like
+a request to carry the value further, and carrying it is the expensive answer:
+a field, a shape to hold it, a caller to thread it, and a test for each. The
+cheap answer is almost always that nobody wanted the value, and the fix is to
+stop computing it. Ask which before asking for plumbing. The same applies to a
+value carried across a step boundary that the later step never acts on: that
+is not information, it is coupling, and the step that stores a result does not
+need to know why the step before it kept one.
+
+A review can establish that nothing reads a field. It cannot establish that
+nothing *should* — a reader someone is about to write is invisible here, and
+"a later ticket will use it" is a real answer that only the people who know
+what the system is for can weigh. So this is stated as the fact and never as
+a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
+the author may decline like any other. It is `advisory` unless the unread
+thing also breaks something.
 
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
