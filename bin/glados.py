@@ -50,7 +50,7 @@ from pathlib import Path
 # 1. CONSTANTS
 # =============================================================================
 
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 
 # The fifteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
@@ -628,8 +628,7 @@ class Source:
         return {k for k, v in keys.items() if isinstance(v, dict) and v.get("home") == "manifest"}
 
 
-def include_fragment(source: Source, rel: str, _stack: tuple = (),
-                     seen: set | None = None) -> str:
+def include_fragment(source: Source, rel: str, _stack: tuple, seen: set) -> str:
     if rel in _stack:
         chain = " -> ".join(_stack + (rel,))
         raise Fatal(f"glados:include cycle: {chain} — remove one of the "
@@ -637,24 +636,6 @@ def include_fragment(source: Source, rel: str, _stack: tuple = (),
     if len(_stack) > 16:
         raise Fatal(f"glados:include recursion too deep at '{rel}' (chain: "
                     f"{' -> '.join(_stack)}) — flatten the fragment nesting")
-    if seen is not None:
-        if rel in seen:
-            # Already inlined in THIS document. A fragment reaches one core
-            # by more than one route whenever a workflow includes it and so
-            # does a module the workflow seats — the shared vocabulary is
-            # the usual case, being what both the panel and the tally judge
-            # by. Emitting it twice does not make the compiled core more
-            # correct, it makes it longer, and a core IS a panelist's whole
-            # brief: the second copy is a page the reader has already read,
-            # in the document where skipping is most expensive.
-            #
-            # First occurrence wins, which keeps the fragment where the
-            # document first needs it: the core body compiles ahead of its
-            # modules, so a workflow's own include survives and a module's
-            # is dropped, while a module inlined into a core that does not
-            # include the fragment itself still carries it.
-            return ""
-        seen.add(rel)
     root = source.src.resolve()
     path = (source.src / rel).resolve()
     if not path.is_relative_to(root):
@@ -665,17 +646,44 @@ def include_fragment(source: Source, rel: str, _stack: tuple = (),
         raise Fatal(f"dangling glados:include '{rel}' — no file at {path}; add "
                     f"the fragment or remove the directive")
     frag = read_text(path)
-    return resolve_includes(source, frag, _stack + (rel,), seen)
+    if rel in seen:
+        # Already inlined earlier in THIS document. A fragment reaches one
+        # core by more than one route whenever a workflow includes it and so
+        # does a module the workflow seats; inlining it twice made the one
+        # document a panelist reads as its whole brief longer without making
+        # it more correct.
+        #
+        # What replaces the second copy is a pointer, not nothing. The text
+        # around an include was written to introduce it, and a site that
+        # silently vanishes leaves that text introducing whatever happens to
+        # come next — in 2.3.1 an evaluator brief said "the rules below,
+        # copied verbatim" over a blank line and the next heading. The pointer
+        # names the fragment by its heading, so every lead-in still has a
+        # referent however the document happened to be assembled.
+        #
+        # Which copy survives is decided by emission order, documented at
+        # ``compile_core``: the first one emitted.
+        return _pointer_to(rel, frag)
+    seen.add(rel)
+    return resolve_includes(source, frag, _stack + (rel,), seen=seen)
 
 
-def resolve_includes(source: Source, text: str, _stack: tuple = (),
-                     seen: set | None = None) -> str:
-    """Inline every ``glados:include``.
+def _pointer_to(rel: str, frag: str) -> str:
+    """One line naming a fragment that is already in the document."""
+    heading = re.search(r"^#{1,6}\s+(.+?)\s*$", frag, re.MULTILINE)
+    name = heading.group(1) if heading else Path(rel).stem
+    return f"*(See **{name}**, earlier in this document.)*"
 
-    ``seen`` scopes de-duplication to one compiled document. Pass a fresh
-    set per core and share it across that core's body and its modules; pass
-    ``None`` to inline every occurrence, which is what a caller resolving a
-    fragment on its own wants.
+
+def resolve_includes(source: Source, text: str, _stack: tuple = (), *,
+                     seen: set) -> str:
+    """Inline every ``glados:include`` in ``text``.
+
+    ``seen`` is required and scopes de-duplication to one compiled document:
+    pass a fresh set per core and share it across that core's body and its
+    modules. There is deliberately no "inline everything" mode — every
+    compiled document de-duplicates, and a default that silently did not
+    would be the path nothing tests.
     """
     return INCLUDE_RE.sub(
         lambda m: include_fragment(source, m.group(1), _stack, seen), text
@@ -866,6 +874,13 @@ def compile_core(source: Source, core_name: str, r: Resolved, manifest_hash: str
     header = provenance_header(core_name, manifest_hash, modules)
     # One set for the whole document, so a fragment the core body and a
     # module both include is inlined once rather than once per route.
+    #
+    # EMISSION ORDER IS LOAD-BEARING. The body is resolved before its modules,
+    # and de-duplication keeps the first copy emitted, so a fragment the
+    # workflow includes for itself is the one that survives and a module's
+    # copy becomes a pointer. Reorder these and every document still compiles
+    # and still reads correctly — pointers name their fragment — but the
+    # full text moves into whichever module happens to come first.
     seen: set = set()
     core_body = resolve_includes(source, core["body"], seen=seen).strip("\n")
 

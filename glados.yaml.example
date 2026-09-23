@@ -45,9 +45,14 @@ channels:
 # Examples (uncomment to use):
 # sinks:
 #   mr-comment:
-#     grouping: per-persona     # aggregate | per-persona | per-finding
-#     threads: resolvable       # one resolvable thread per comment, if supported
-#     summary: false            # also post one composed-verdict comment?
+#     # A verdict comment already has a default shape: see "Publishing a
+#     # verdict" in any core that reviews. Configure only what differs for
+#     # this project; anything left unsaid keeps the default. These keys
+#     # govern wording and order, never whether something is a finding —
+#     # that is settled upstream, where it can be recorded.
+#     structure: |
+#       Breaches that predate the change point at #123, where this
+#       project tracks bringing existing code up to standard.
 #   slack:
 #     channel: "#code-reviews"  # the agent posts here via its Slack tooling
 #     format: terse

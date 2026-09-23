@@ -38,7 +38,8 @@ conversation:
 | What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`) — not the full diff; the evaluator reads files directly |
 | How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
-| Vocabulary | The severity and verdict rules below, copied verbatim |
+| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred — a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
+| Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
 
 <!-- glados:include vocabulary/verdicts.md -->
 
@@ -79,7 +80,8 @@ FAIL — list the blocking issues.
 - Reassemble the brief from scratch (the what-changed section is now stale)
   and spawn a **new** evaluator with a clean context. Never reuse, continue,
   or negotiate with the previous one — fix the code, not the evaluation.
-- Each spawn is one evaluator cycle:
+- Each spawn is one evaluator cycle, and the cycles are bounded as
+  *Loop bounds* sets out:
 
 <!-- glados:include vocabulary/loop-bounds.md -->
 
@@ -90,3 +92,8 @@ back into the workflow here and nowhere else. When the loop ends in an
 evaluation that stands, this step produces a `verdict` outcome, mapped exactly
 once, here: **PASS → `APPROVE`; FAIL → `REQUEST_CHANGES`**. A hit bound or
 stalemate produces the `escalation` described above instead of a verdict.
+
+That verdict is written, wherever it lands on a merge request, as
+*Publishing a verdict* sets out.
+
+<!-- glados:include vocabulary/comment-shape.md -->
