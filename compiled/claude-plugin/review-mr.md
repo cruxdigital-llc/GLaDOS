@@ -116,6 +116,12 @@ Rules:
   description is not furniture: it is where the author states what this
   change deliberately leaves undone, and a panel that never reads it spends
   a cycle reporting decisions back to the person who made them.
+- **Carry the ticket's acceptance criteria verbatim** — its "done when", its
+  checklist, whatever states when the work is finished. Not a summary of
+  them: the words, so the synthesis in step 7 can set them beside the diff
+  and so a panelist can tell a criterion from a wish. A ticket that states
+  none is itself worth one line in the record, because then nothing but the
+  author's memory says where this change ends.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
 - **Cycle 2 and after brief the delta**: what changed since the pass that
   produced the open findings, together with that pass's findings, each one
@@ -246,17 +252,19 @@ pass, before deciding anything.
 
 ## Root-cause synthesis
 
-Two questions no panelist can answer from inside its own lens: one about the
-change, one about the finding set. Both are answered once, over the whole diff
-and every panelist's findings together, and both are answered on **every** pass
-— including a pass where the tally came back clean, which is exactly where a
-shared cause hides. Neither may be skipped: "the change removes the cause" and
-"the findings do not converge" are *answers*, stated with their reasoning.
-Silence is not an answer.
+Three questions no panelist can answer from inside its own lens: one about the
+change, one about the finding set, one about the change's extent. All are
+answered once, over the whole diff and every panelist's findings together, and
+all are answered on **every** pass — including one where the tally came
+back clean, which is exactly where a shared cause hides. None may be
+skipped: "the change removes the cause", "the findings do not converge" and
+"the change is still the change that was asked for" are *answers*, stated
+with their reasoning. Silence is not an answer.
 
-Both answers belong in the run record. On the merge request the synthesis
-appears only as a consolidated finding, when it produced one; a pass whose
-findings do not converge says nothing about convergence to the author.
+All three answers belong in the run record. On the merge request the
+synthesis appears only as a consolidated finding, when it produced one, and
+as the scope statement of question 3, when that has something to say; a pass
+whose findings do not converge says nothing about convergence to the author.
 
 **1. Did the change attack the underlying cause?**
 
@@ -315,14 +323,57 @@ say whether it survives. If members survive, they were never one cluster.
 - Synthesis never lowers a severity and never collapses `blocking` findings
   into a single advisory suggestion.
 
+**3. Is this still the change that was asked for?**
+
+Set the ticket's acceptance criteria beside the diff and say whether the diff
+is still answering them. A change grows for good reasons — a review asks
+for a fix, the fix needs a mechanism, the mechanism raises a question
+nobody had asked — and every step can be right while the sum is no longer
+the work the ticket describes.
+
+No lens can see this. A panelist reviews the diff it is given and judges it
+well; the scope rule keeps it from raising findings about code the change did
+not touch, and nothing keeps the CHANGE from growing. So a panel can return
+correct finding after correct finding, cycle after cycle, all of them pointing
+away from what the ticket asked. That is the failure this question exists to
+catch, and the symptom is a review loop that converges on nothing while every
+individual finding stands up.
+
+Answer it in two parts:
+
+- **Which acceptance criteria does the diff meet?** Name them. A criterion the
+  diff does not meet is an ordinary finding under the severity scale — it
+  breaks an acceptance criterion, so it blocks.
+- **What is in the diff that no criterion asked for?** Name that too, with
+  where it came from: work the ticket implies, work a review asked for, work
+  the author added. Each is legitimate on its own; what matters is the size of
+  the pile and whether it can be separated.
+
+This produces a **statement, not a finding**. Unrequested work is not a defect
+— the code may be correct and the review has no business calling correct code
+wrong. It goes on the merge request as one line when there is something to
+say: what has grown, and what would be left if it were split out. Naming a
+follow-up is the author's call to make, not the review's to demand.
+
+Two cautions. A change that is entirely in scope gets one sentence saying so,
+not silence — the question is answered every pass. And this is not licence to
+relitigate a scope the description already settles: work the author declared
+is a decision already made, and the deferral rule above governs it.
+
 
 - Findings this step raises or consolidates are ordinary findings under the
   severity scale above — re-run the composition rules over the consolidated
   list before deciding. A `blocking` synthesis finding turns an
   otherwise-clean tally into `REQUEST_CHANGES`.
-- Both answers, the clusters, and the consolidated list join this cycle's
-  `review.verdicts` and ride in the composed `verdict` outcome. A pass whose
-  record answers neither question is an incomplete pass, not a clean one.
+- All three answers, the clusters, and the consolidated list join this
+  cycle's `review.verdicts` and ride in the composed `verdict` outcome. A
+  pass whose record leaves any of the three unanswered is an incomplete
+  pass, not a clean one.
+- The scope answer travels as a **statement**, not a finding: it carries no
+  severity, it cannot make a clean tally dirty, and it never becomes a
+  demand. A criterion the diff fails to meet is the separate thing — an
+  ordinary `blocking` finding, because an unmet acceptance criterion is what
+  the scale already names.
 
 ### 8. Decide
 - This step produces a `verdict` outcome carrying the per-persona verdicts,

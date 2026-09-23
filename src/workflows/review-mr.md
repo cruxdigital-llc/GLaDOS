@@ -45,6 +45,12 @@ commits to it.
   description is not furniture: it is where the author states what this
   change deliberately leaves undone, and a panel that never reads it spends
   a cycle reporting decisions back to the person who made them.
+- **Carry the ticket's acceptance criteria verbatim** — its "done when", its
+  checklist, whatever states when the work is finished. Not a summary of
+  them: the words, so the synthesis in step 7 can set them beside the diff
+  and so a panelist can tell a criterion from a wish. A ticket that states
+  none is itself worth one line in the record, because then nothing but the
+  author's memory says where this change ends.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
 - **Cycle 2 and after brief the delta**: what changed since the pass that
   produced the open findings, together with that pass's findings, each one
@@ -134,9 +140,15 @@ pass, before deciding anything.
   severity scale above — re-run the composition rules over the consolidated
   list before deciding. A `blocking` synthesis finding turns an
   otherwise-clean tally into `REQUEST_CHANGES`.
-- Both answers, the clusters, and the consolidated list join this cycle's
-  `review.verdicts` and ride in the composed `verdict` outcome. A pass whose
-  record answers neither question is an incomplete pass, not a clean one.
+- All three answers, the clusters, and the consolidated list join this
+  cycle's `review.verdicts` and ride in the composed `verdict` outcome. A
+  pass whose record leaves any of the three unanswered is an incomplete
+  pass, not a clean one.
+- The scope answer travels as a **statement**, not a finding: it carries no
+  severity, it cannot make a clean tally dirty, and it never becomes a
+  demand. A criterion the diff fails to meet is the separate thing — an
+  ordinary `blocking` finding, because an unmet acceptance criterion is what
+  the scale already names.
 
 ### 8. Decide
 - This step produces a `verdict` outcome carrying the per-persona verdicts,
