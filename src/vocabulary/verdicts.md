@@ -56,6 +56,21 @@ a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
 the author may decline like any other. It is `advisory` unless the unread
 thing also breaks something.
 
+**A finding is a claim and its evidence, and they are not the same length.**
+The claim is what breaks, where, and what to do about it — a few lines, in
+plain sentences. The evidence is the reproduction, the measurement, the walk
+through the mechanism, the reason the obvious fix is the wrong one. Both are
+owed. Only the claim is owed *on the first screen*.
+
+Wherever a verdict is published, write it so that a reader who expands
+nothing still learns every blocking thing they have to do. Evidence goes
+beneath its claim, folded where the platform can fold it and last where it
+cannot. This is what keeps two rules from fighting: a review may never drop a
+finding, and a review nobody finishes reading has dropped all of them. A
+comment gets shorter by putting its proof one click down, never by leaving
+the proof out — and a finding that cannot state its ask in one line at the
+top has not been understood well enough to post.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**

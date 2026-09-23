@@ -1015,6 +1015,47 @@ class TestRootCauseSynthesis(unittest.TestCase):
         self.assertIn("It cannot establish that nothing *should*", body)
         self.assertIn("stated as the fact and never as a demand", body)
 
+    def test_the_claim_survives_without_its_evidence(self):
+        """Folding proof is only safe if the ask is never folded with it.
+
+        "Never drop a finding" and "fits on one screen" pull against each
+        other, and the way that fight resolves in practice is a comment
+        nobody finishes — which drops every finding at once. Splitting claim
+        from evidence dissolves it, but only while the claim stands alone:
+        a fold that swallows the ask hides the one thing the author owes.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("A finding is a claim and its evidence", body)
+        self.assertIn("Only the claim is owed *on the first screen*", body)
+        self.assertIn(
+            "a reader who expands nothing still learns every blocking thing",
+            body,
+        )
+        # The rule must not read as licence to say less.
+        self.assertIn("may never drop a finding", body)
+
+    def test_every_panel_core_carries_the_claim_evidence_split(self):
+        """A rendering rule kept in one project's config fixes one project.
+
+        The split has to reach every compiled core that publishes a verdict,
+        or each project rediscovers the novel-length comment on its own.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        glados_dir = t / "product-knowledge" / "glados"
+        seats_a_panel = [
+            p for p in glados_dir.glob("*.md")
+            if "adversarial MR review panel" in read(p)
+        ]
+        self.assertGreater(len(seats_a_panel), 0, "no core seats a panel")
+        for core in seats_a_panel:
+            body = " ".join(read(core).split())
+            self.assertIn(
+                "A finding is a claim and its evidence",
+                body,
+                f"{core.name} publishes verdicts without the claim/evidence split",
+            )
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.
