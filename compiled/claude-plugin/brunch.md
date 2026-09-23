@@ -185,6 +185,41 @@ comment gets shorter by putting its proof one click down, never by leaving
 the proof out — and a finding that cannot state its ask in one line at the
 top has not been understood well enough to post.
 
+**An advisory earns its line by naming a consequence.** The two tiers say
+how much a finding is worth acting on. Neither says whether it was worth
+writing down, so `advisory` becomes where each lens files everything it
+noticed, and the list fills with items whose only effect is that the code
+would read differently to the person who raised them.
+
+Before publishing one, name what acting on it changes. One of:
+
+- **behaviour**, under some input;
+- **whether a defect would be caught**, where the finding is about a test;
+- **what someone has to work with when it fails**, where it is about a
+  message, a log or a record that somebody actually reads.
+
+A finding with none of the three is not being dropped, because it was
+never a finding — it is a preference. Fix it in passing if you are already
+in the file; otherwise let it go. Where you cannot tell whether a
+consequence exists, it stays: the rule for an uncertain finding is
+unchanged, and this is not a licence to argue yourself out of one.
+
+This does not exempt naming, interfaces or structure. A name that makes a
+reader believe something false about what the thing does has a
+consequence, and so does a boundary the architecture draws and the code
+crosses. What disqualifies a finding is that a different choice would
+merely be tidier — so the test is whether you can NAME the consequence,
+never which category the finding falls into.
+
+**And price what you ask for.** A finding states a problem; a reader turns
+it into work, and the size of that work is often invisible from the line
+that asked. "This message should carry the index" is one clause and can
+be a restructure. Where the fix is not obviously small, say what you think
+it costs — and if you have not looked, say that instead of implying it is
+cheap. A reviewer who has not priced the work has not finished the
+finding, and an advisory whose fix is large is either worth stating as
+that trade or not worth stating.
+
 **Say each thing once.** The claim/evidence split makes a review shorter
 by moving proof out of the way; it does nothing about the same POINT
 appearing twice on the surface, which in practice is the larger cost. A
@@ -359,6 +394,41 @@ comment gets shorter by putting its proof one click down, never by leaving
 the proof out — and a finding that cannot state its ask in one line at the
 top has not been understood well enough to post.
 
+**An advisory earns its line by naming a consequence.** The two tiers say
+how much a finding is worth acting on. Neither says whether it was worth
+writing down, so `advisory` becomes where each lens files everything it
+noticed, and the list fills with items whose only effect is that the code
+would read differently to the person who raised them.
+
+Before publishing one, name what acting on it changes. One of:
+
+- **behaviour**, under some input;
+- **whether a defect would be caught**, where the finding is about a test;
+- **what someone has to work with when it fails**, where it is about a
+  message, a log or a record that somebody actually reads.
+
+A finding with none of the three is not being dropped, because it was
+never a finding — it is a preference. Fix it in passing if you are already
+in the file; otherwise let it go. Where you cannot tell whether a
+consequence exists, it stays: the rule for an uncertain finding is
+unchanged, and this is not a licence to argue yourself out of one.
+
+This does not exempt naming, interfaces or structure. A name that makes a
+reader believe something false about what the thing does has a
+consequence, and so does a boundary the architecture draws and the code
+crosses. What disqualifies a finding is that a different choice would
+merely be tidier — so the test is whether you can NAME the consequence,
+never which category the finding falls into.
+
+**And price what you ask for.** A finding states a problem; a reader turns
+it into work, and the size of that work is often invisible from the line
+that asked. "This message should carry the index" is one clause and can
+be a restructure. Where the fix is not obviously small, say what you think
+it costs — and if you have not looked, say that instead of implying it is
+cheap. A reviewer who has not priced the work has not finished the
+finding, and an advisory whose fix is large is either worth stating as
+that trade or not worth stating.
+
 **Say each thing once.** The claim/evidence split makes a review shorter
 by moving proof out of the way; it does nothing about the same POINT
 appearing twice on the surface, which in practice is the larger cost. A
@@ -462,13 +532,19 @@ Your job is to find real problems, not to confirm success.
    for a dropped value to be carried further, ask whether anyone wanted it:
    carrying it costs a field, a shape, a caller and a test, and the usual
    answer is to stop computing it instead.
-6. Classify each finding and choose your verdict using ONLY the severity
+6. Before you write an advisory down, name what acting on it would
+   change: behaviour, whether a defect gets caught, or what someone has
+   to work with when it fails. If you cannot name one, it is a
+   preference, not a finding, and it does not go in the list. Say what
+   the fix costs where that is not obviously small, and say you have not
+   looked rather than implying it is cheap.
+7. Classify each finding and choose your verdict using ONLY the severity
    scale, verdict words, and composition rules in the brief.
-7. Before returning, step back from the individual findings: in one line,
+8. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
    `none` when they share no cause, or when you found nothing.
-8. Return the structured verdict object:
+9. Return the structured verdict object:
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.

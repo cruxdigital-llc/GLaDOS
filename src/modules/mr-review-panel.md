@@ -71,13 +71,19 @@ Your job is to find real problems, not to confirm success.
    for a dropped value to be carried further, ask whether anyone wanted it:
    carrying it costs a field, a shape, a caller and a test, and the usual
    answer is to stop computing it instead.
-6. Classify each finding and choose your verdict using ONLY the severity
+6. Before you write an advisory down, name what acting on it would
+   change: behaviour, whether a defect gets caught, or what someone has
+   to work with when it fails. If you cannot name one, it is a
+   preference, not a finding, and it does not go in the list. Say what
+   the fix costs where that is not obviously small, and say you have not
+   looked rather than implying it is cheap.
+7. Classify each finding and choose your verdict using ONLY the severity
    scale, verdict words, and composition rules in the brief.
-7. Before returning, step back from the individual findings: in one line,
+8. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
    `none` when they share no cause, or when you found nothing.
-8. Return the structured verdict object:
+9. Return the structured verdict object:
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.

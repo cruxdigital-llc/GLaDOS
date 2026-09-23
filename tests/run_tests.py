@@ -1099,6 +1099,46 @@ class TestRootCauseSynthesis(unittest.TestCase):
         # And it may never become a reason to publish less than was found.
         self.assertIn("cutting it removes no finding", body)
 
+    def test_an_advisory_has_to_name_a_consequence_without_becoming_a_gag(self):
+        """The tiers rank findings; nothing ranked whether one was worth writing.
+
+        So `advisory` filled with items whose only effect was that the code
+        would read differently, and the list they were buried in is what
+        teaches an author to skim. Tightening what QUALIFIES as a finding is
+        legitimate where capping the list was not: a preference is not a
+        finding being dropped, it never was one.
+
+        Which is exactly why the escapes are asserted too. A rule that lets a
+        reviewer decide something has no consequence is one rationalisation
+        away from silence, so the uncertain case must stay, and naming and
+        boundary findings must not read as exempted.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("earns its line by naming a consequence", body)
+        # The three, named. A test the reviewer applies from memory is no test.
+        self.assertIn("behaviour", body)
+        self.assertIn("whether a defect would be caught", body)
+        self.assertIn("what someone has to work with when it fails", body)
+        # The escapes, both of them.
+        self.assertIn("Where you cannot tell whether a consequence exists, it stays", body)
+        self.assertIn("does not exempt naming, interfaces or structure", body)
+        self.assertIn("never which category the finding falls into", body)
+        # And the pricing half, which is what keeps a one-clause ask from
+        # buying a restructure.
+        self.assertIn("price what you ask for", body)
+        self.assertIn("say that instead of implying it is cheap", body)
+
+    def test_the_consequence_test_reaches_the_panelists_themselves(self):
+        """A rule only the tally reads arrives after the list is already written.
+
+        The cost of a preference is paid when a lens writes it down and the
+        author reads past it, so the standing orders have to carry it too.
+        """
+        body = " ".join(read(REPO / "src" / "modules" / "mr-review-panel.md").split())
+        self.assertIn("name what acting on it would change", body)
+        self.assertIn("it is a preference, not a finding", body)
+        self.assertIn("say you have not looked rather than implying it is cheap", body)
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.
