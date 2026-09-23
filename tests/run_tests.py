@@ -947,6 +947,198 @@ class TestRootCauseSynthesis(unittest.TestCase):
         core = read(t / "product-knowledge" / "glados" / "address-review.md")
         self.assertIn("root-cause synthesis", core)
 
+    def test_the_pre_existing_rule_reaches_every_core_that_seats_a_panel(self):
+        """The scope rule is worthless in a core that does not carry it.
+
+        What it fixes is fifteen advisories about untouched code burying the
+        three findings the author can act on. Whether the pooling actually
+        FIRES is a property of a review, not of a compile, and only a real
+        review over a touched file with known pre-existing breaches can show
+        it. What a compile can prove is the half that silently rots: that
+        every core seating a panel carries the rule, and that no core tells a
+        reviewer to do the opposite.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        glados_dir = t / "product-knowledge" / "glados"
+        seats_a_panel = [
+            p for p in glados_dir.glob("*.md")
+            if "adversarial MR review panel" in read(p)
+        ]
+        self.assertGreater(len(seats_a_panel), 0, "no core seats a panel")
+        for core in seats_a_panel:
+            body = " ".join(read(core).split())
+            self.assertIn(
+                "A finding is about code the change introduced", body,
+                f"{core.name} seats a panel without the scope rule")
+            self.assertIn(
+                "worth **one line** pointing at", body,
+                f"{core.name}: no pooling instruction")
+            self.assertIn(
+                "a breach the change makes worse", body,
+                f"{core.name}: the scope rule without its exception is a rule "
+                "that hides a real finding")
+
+    def test_no_core_asks_for_a_finding_per_pre_existing_breach(self):
+        """The rule and its opposite must not both be in the compiled text.
+
+        Two instructions in conflict resolve unpredictably, which is why an
+        advisory CAP was declined in favour of shortening at the tally. The
+        same hazard applies to the rule itself: every mention of a finding
+        per instance must be the prohibition, never a request.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        phrase = "one finding per instance"
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            flat = " ".join(read(core).split())
+            mentions = flat.count(phrase)
+            prohibited = flat.count("never " + phrase)
+            self.assertEqual(
+                mentions, prohibited,
+                f"{core.name} mentions '{phrase}' {mentions} time(s) but "
+                f"prohibits it {prohibited} — an instruction to list them "
+                "one by one is the failure the rule exists to stop")
+
+    def test_the_reader_rule_states_the_fact_not_the_remedy(self):
+        """A review can say nothing reads a field. It cannot say nothing should.
+
+        The rule exists because carrying a dropped value costs a field, a
+        shape, a caller and a test, and the cheap answer is usually that
+        nobody wanted it. But a reader someone is about to write is invisible
+        to a review, so the rule is stated as the fact and never as a demand —
+        without that clause it becomes an instruction to delete work whose
+        reader is one ticket away.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("name the line that reads it", body)
+        self.assertIn("It cannot establish that nothing *should*", body)
+        self.assertIn("stated as the fact and never as a demand", body)
+
+    def test_the_claim_survives_without_its_evidence(self):
+        """Folding proof is only safe if the ask is never folded with it.
+
+        "Never drop a finding" and "fits on one screen" pull against each
+        other, and the way that fight resolves in practice is a comment
+        nobody finishes — which drops every finding at once. Splitting claim
+        from evidence dissolves it, but only while the claim stands alone:
+        a fold that swallows the ask hides the one thing the author owes.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("A finding is a claim and its evidence", body)
+        self.assertIn("Only the claim is owed *on the first screen*", body)
+        self.assertIn(
+            "a reader who expands nothing still learns every blocking thing",
+            body,
+        )
+        # The rule must not read as licence to say less.
+        self.assertIn("may never drop a finding", body)
+
+    def test_every_panel_core_carries_the_claim_evidence_split(self):
+        """A rendering rule kept in one project's config fixes one project.
+
+        The split has to reach every compiled core that publishes a verdict,
+        or each project rediscovers the novel-length comment on its own.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        glados_dir = t / "product-knowledge" / "glados"
+        seats_a_panel = [
+            p for p in glados_dir.glob("*.md")
+            if "adversarial MR review panel" in read(p)
+        ]
+        self.assertGreater(len(seats_a_panel), 0, "no core seats a panel")
+        for core in seats_a_panel:
+            body = " ".join(read(core).split())
+            self.assertIn(
+                "A finding is a claim and its evidence",
+                body,
+                f"{core.name} publishes verdicts without the claim/evidence split",
+            )
+
+    def test_the_brief_asks_for_jobs_and_a_comparison(self):
+        """A green rollup is a claim about the jobs it chose to count.
+
+        A job marked to allow failure reports nothing upward, so it is where
+        a defect goes to be invisible — and the ones teams mark that way are
+        the slow gates that catch what the fast ones miss. Asking for the job
+        list is half of it; the other half is that a red job proves nothing
+        on its own, because plenty are red everywhere. Only the comparison
+        against another merge request separates the change's fault from the
+        repository's, so the rule is worthless if the brief asks for the
+        first and not the second.
+        """
+        body = " ".join(read(REPO / "src" / "workflows" / "review-mr.md").split())
+        self.assertIn("Read the pipeline's JOBS, not its status", body)
+        self.assertIn("allow failure is not counted", body)
+        self.assertIn("run the same job's status on another open merge request", body)
+        # The comparison has to name BOTH outcomes, or it reads as "red is
+        # always yours" and puts the repository's breakage on this author.
+        self.assertIn("Red there too", body)
+        self.assertIn("green there and red here is this change's", body.lower())
+
+    def test_the_dedup_rule_names_the_pairs_and_keeps_every_finding(self):
+        """Shortening by repetition, not by omission.
+
+        The claim/evidence split moves proof out of the way and leaves the
+        surface free to say the same point twice, which is where the length
+        actually came from: a summary bullet and the finding's opening
+        sentence are one fact told twice. Naming the pairs is what makes the
+        rule usable — "do not repeat yourself" is advice nobody can act
+        on while reading their own draft.
+
+        The second assertion is the guard: a rule about saying less is one
+        word away from a rule about telling the author less, and this one has
+        to end with the count, not with a finding.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("Say each thing once", body)
+        # The pairs, named. Without them this is a platitude.
+        self.assertIn("summary bullet and the finding's opening sentence", body)
+        self.assertIn("ONLY place those asks are written", body)
+        # And it may never become a reason to publish less than was found.
+        self.assertIn("cutting it removes no finding", body)
+
+    def test_an_advisory_has_to_name_a_consequence_without_becoming_a_gag(self):
+        """The tiers rank findings; nothing ranked whether one was worth writing.
+
+        So `advisory` filled with items whose only effect was that the code
+        would read differently, and the list they were buried in is what
+        teaches an author to skim. Tightening what QUALIFIES as a finding is
+        legitimate where capping the list was not: a preference is not a
+        finding being dropped, it never was one.
+
+        Which is exactly why the escapes are asserted too. A rule that lets a
+        reviewer decide something has no consequence is one rationalisation
+        away from silence, so the uncertain case must stay, and naming and
+        boundary findings must not read as exempted.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("earns its line by naming a consequence", body)
+        # The three, named. A test the reviewer applies from memory is no test.
+        self.assertIn("behaviour", body)
+        self.assertIn("whether a defect would be caught", body)
+        self.assertIn("what someone has to work with when it fails", body)
+        # The escapes, both of them.
+        self.assertIn("Where you cannot tell whether a consequence exists, it stays", body)
+        self.assertIn("does not exempt naming, interfaces or structure", body)
+        self.assertIn("never which category the finding falls into", body)
+        # And the pricing half, which is what keeps a one-clause ask from
+        # buying a restructure.
+        self.assertIn("price what you ask for", body)
+        self.assertIn("say that instead of implying it is cheap", body)
+
+    def test_the_consequence_test_reaches_the_panelists_themselves(self):
+        """A rule only the tally reads arrives after the list is already written.
+
+        The cost of a preference is paid when a lens writes it down and the
+        author reads past it, so the standing orders have to carry it too.
+        """
+        body = " ".join(read(REPO / "src" / "modules" / "mr-review-panel.md").split())
+        self.assertIn("name what acting on it would change", body)
+        self.assertIn("it is a preference, not a finding", body)
+        self.assertIn("say you have not looked rather than implying it is cheap", body)
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.

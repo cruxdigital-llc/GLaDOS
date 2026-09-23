@@ -39,9 +39,62 @@ commits to it.
 - This pass is cycle `review.cycle + 1` for this MR (cycle 1 when unset).
 
 ### 4. Assemble the review brief
-- Gather: the MR id, the full diff (`<base>...<head>`), the changed-file
-  list, the spec or ticket, the test commands, and the personas active for
-  this feature (`run.active-personas`, when present).
+- Gather: the MR id, the diff, the changed-file list, **the merge-request
+  description**, the spec or ticket, the test commands, and the personas
+  active for this feature (`run.active-personas`, when present). The
+  description is not furniture: it is where the author states what this
+  change deliberately leaves undone, and a panel that never reads it spends
+  a cycle reporting decisions back to the person who made them.
+- **Read the pipeline's JOBS, not its status.** A pipeline reports success
+  when every job it chose to count succeeded, and a job configured to allow
+  failure is not counted — so a red job sits under a green rollup reporting
+  nothing upward, for as long as nobody lists them. Fetch the job list for
+  the head under review and carry any job that is not passing into the brief,
+  whatever its rollup says. Mutation scores, coverage gates, licence and
+  audit scans are the usual residents, because those are the jobs teams mark
+  advisory while they stabilise them, and then stop seeing.
+- A failing job is not automatically this change's. Some are broken on every
+  branch. The question is answered by comparison, not by reading the log:
+  **run the same job's status on another open merge request.** Red there too
+  is the repository's problem and belongs in the pre-existing line; green
+  there and red here is this change's, and lands at whatever tier the scale
+  gives it. A job that runs only on merge requests cannot be compared against
+  the target branch at all, which is exactly the kind that goes unwatched.
+- **Carry the ticket's acceptance criteria verbatim** — its "done when", its
+  checklist, whatever states when the work is finished. Not a summary of
+  them: the words, so the synthesis in step 7 can set them beside the diff
+  and so a panelist can tell a criterion from a wish. A ticket that states
+  none is itself worth one line in the record, because then nothing but the
+  author's memory says where this change ends.
+- **Cycle 1 briefs the whole change** (`<base>...<head>`).
+- **Cycle 2 and after brief the delta**: what changed since the pass that
+  produced the open findings, together with that pass's findings, each one
+  named and still open until this pass says otherwise. Ground a previous
+  cycle already judged is not judged again — this cycle answers which open
+  findings the new commits closed, and what the new commits broke.
+- **Check first that the reviewed head is still an ancestor of this one.**
+  Where it is, the delta is the commit range `<review.reviewed-head>..<head>`.
+  Where it is **not**, the branch was rebased or rewritten, and that range is
+  not a delta at all: it lists every replayed commit as though it were new,
+  which sends the panel back over the whole branch — the outcome this step
+  exists to prevent. Patch-equivalence (`--cherry-pick`) does not rescue it,
+  because a rebase onto a moved base rewrites the patches it replays.
+  Build the delta from the trees instead: diff `<review.reviewed-head>` against
+  `<head>` **restricted to the files this MR itself touches** (the change's own
+  file list, taken against its current base). That carries the new work and
+  whatever the rebase re-expressed — both in scope — while leaving out what
+  the new base brought with it, which is not this change's to answer for.
+  Comparing the commit subjects on each side also says whether the rebase
+  dropped a commit, which is worth knowing before reading anything else.
+- Say in the brief which of the two the pass used, and that a rebase happened
+  where it did. A rebase is where a semantic conflict hides, and a panel that
+  thinks it is reading a simple delta will trust a hunk it should have checked
+  against the file.
+- A narrowed diff narrows what is **read**, never what is **owed**. A finding
+  the delta pass does not mention stays open at its severity; it closes only
+  when this pass says the new commits closed it. A pass that lets a finding
+  lapse by not looking at it has approved a defect by omission, which is the
+  one way a shorter re-review can cost more than it saves.
 - Make the brief self-contained — each panelist runs with no authoring
   context and must be able to judge from the brief alone.
 
@@ -65,6 +118,17 @@ commits to it.
   as written; one that resolves neither way stands at its severity, reworded
   as the question it actually is. Everything below runs over the surviving
   list.
+- **Pool what is not about this change.** Advisories the panel raised against
+  code the change did not introduce collapse into the one line the severity
+  scale calls for, naming where the project tracks that work; the run record
+  keeps what was pooled. Advisories that remain and share a cause are
+  consolidated by the synthesis in step 7.
+- The tally is the **last** step permitted to shorten the list, because it is
+  the only one that reads every finding at once. Downstream — the synthesis,
+  the decision, the render, the publish — a finding may be reworded and
+  consolidated but never dropped. Put the shortening here, where the
+  reasoning is recorded, rather than leaving it to a renderer that will do it
+  silently and without a record.
 
 The tally is a validation step, not a collection step. Check every returned
 object before counting it:
@@ -91,13 +155,32 @@ pass, before deciding anything.
   severity scale above — re-run the composition rules over the consolidated
   list before deciding. A `blocking` synthesis finding turns an
   otherwise-clean tally into `REQUEST_CHANGES`.
-- Both answers, the clusters, and the consolidated list join this cycle's
-  `review.verdicts` and ride in the composed `verdict` outcome. A pass whose
-  record answers neither question is an incomplete pass, not a clean one.
+- All three answers, the clusters, and the consolidated list join this
+  cycle's `review.verdicts` and ride in the composed `verdict` outcome. A
+  pass whose record leaves any of the three unanswered is an incomplete
+  pass, not a clean one.
+- The scope answer travels as a **statement**, not a finding: it carries no
+  severity, it cannot make a clean tally dirty, and it never becomes a
+  demand. A criterion the diff fails to meet is the separate thing — an
+  ordinary `blocking` finding, because an unmet acceptance criterion is what
+  the scale already names.
 
 ### 8. Decide
 - This step produces a `verdict` outcome carrying the per-persona verdicts,
   the root-cause synthesis, and the cycle's composed result.
+- On cycle 2 and after, the outcome also carries the **disposition of every
+  finding the previous pass left open** — closed, or still open — one line
+  each. That list is what tells the author their last round of work landed,
+  so it travels in the outcome to the sinks and not only into the run record.
+- **The head may move while a pass runs.** A pass reads the head once, at
+  step 4, and may find a newer one by the time it decides. It does not reach
+  back for it: splicing a fresh diff into a finished tally publishes findings
+  no panelist made against code no panelist read, and aborting spends a whole
+  panel to arrive back where it started. Decide on the commit that was read,
+  name that SHA in the verdict so the author knows what was judged, and
+  record it as `review.reviewed-head`. The commits that landed since are the
+  next cycle's delta, which step 4 makes cheap enough that this is a
+  postponement rather than a loss.
 - **Every panelist `APPROVE` (validated), and no `blocking` synthesis
   finding** → the MR is review-clean; the loop ends. What happens to the MR
   next is governed by `merge-authority`, resolved from `glados.yaml` — this
