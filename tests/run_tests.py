@@ -1077,6 +1077,28 @@ class TestRootCauseSynthesis(unittest.TestCase):
         self.assertIn("Red there too", body)
         self.assertIn("green there and red here is this change's", body.lower())
 
+    def test_the_dedup_rule_names_the_pairs_and_keeps_every_finding(self):
+        """Shortening by repetition, not by omission.
+
+        The claim/evidence split moves proof out of the way and leaves the
+        surface free to say the same point twice, which is where the length
+        actually came from: a summary bullet and the finding's opening
+        sentence are one fact told twice. Naming the pairs is what makes the
+        rule usable — "do not repeat yourself" is advice nobody can act
+        on while reading their own draft.
+
+        The second assertion is the guard: a rule about saying less is one
+        word away from a rule about telling the author less, and this one has
+        to end with the count, not with a finding.
+        """
+        body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
+        self.assertIn("Say each thing once", body)
+        # The pairs, named. Without them this is a platitude.
+        self.assertIn("summary bullet and the finding's opening sentence", body)
+        self.assertIn("ONLY place those asks are written", body)
+        # And it may never become a reason to publish less than was found.
+        self.assertIn("cutting it removes no finding", body)
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.

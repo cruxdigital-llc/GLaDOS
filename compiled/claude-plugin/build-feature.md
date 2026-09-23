@@ -250,6 +250,22 @@ comment gets shorter by putting its proof one click down, never by leaving
 the proof out — and a finding that cannot state its ask in one line at the
 top has not been understood well enough to post.
 
+**Say each thing once.** The claim/evidence split makes a review shorter
+by moving proof out of the way; it does nothing about the same POINT
+appearing twice on the surface, which in practice is the larger cost. A
+summary bullet and the finding's opening sentence say the same thing. So
+does a line reporting a fix landed and the finding beneath it that closed.
+So does a scope statement and the advisory that implies it. Each pair
+reads as two facts and is one, and the second telling is always the weaker
+one, because by then it is competing with the detail around it.
+
+Where a review publishes a summary of what it is asking for, that summary
+is the ONLY place those asks are written, and each finding is presented
+under the line that summarises it rather than restating it. Before
+publishing, read only what a reader sees without expanding anything and
+count how many times the author is told the same thing: every count above
+one is length that bought nothing, and cutting it removes no finding.
+
 **Verdicts:** `APPROVE | REQUEST_CHANGES | ESCALATE`.
 
 **Composition rules (applied at the tally, not left to individual reviewers):**
