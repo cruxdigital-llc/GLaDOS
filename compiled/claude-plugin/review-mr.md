@@ -116,6 +116,21 @@ Rules:
   description is not furniture: it is where the author states what this
   change deliberately leaves undone, and a panel that never reads it spends
   a cycle reporting decisions back to the person who made them.
+- **Read the pipeline's JOBS, not its status.** A pipeline reports success
+  when every job it chose to count succeeded, and a job configured to allow
+  failure is not counted — so a red job sits under a green rollup reporting
+  nothing upward, for as long as nobody lists them. Fetch the job list for
+  the head under review and carry any job that is not passing into the brief,
+  whatever its rollup says. Mutation scores, coverage gates, licence and
+  audit scans are the usual residents, because those are the jobs teams mark
+  advisory while they stabilise them, and then stop seeing.
+- A failing job is not automatically this change's. Some are broken on every
+  branch. The question is answered by comparison, not by reading the log:
+  **run the same job's status on another open merge request.** Red there too
+  is the repository's problem and belongs in the pre-existing line; green
+  there and red here is this change's, and lands at whatever tier the scale
+  gives it. A job that runs only on merge requests cannot be compared against
+  the target branch at all, which is exactly the kind that goes unwatched.
 - **Carry the ticket's acceptance criteria verbatim** — its "done when", its
   checklist, whatever states when the work is finished. Not a summary of
   them: the words, so the synthesis in step 7 can set them beside the diff

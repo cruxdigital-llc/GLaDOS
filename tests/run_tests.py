@@ -1056,6 +1056,27 @@ class TestRootCauseSynthesis(unittest.TestCase):
                 f"{core.name} publishes verdicts without the claim/evidence split",
             )
 
+    def test_the_brief_asks_for_jobs_and_a_comparison(self):
+        """A green rollup is a claim about the jobs it chose to count.
+
+        A job marked to allow failure reports nothing upward, so it is where
+        a defect goes to be invisible — and the ones teams mark that way are
+        the slow gates that catch what the fast ones miss. Asking for the job
+        list is half of it; the other half is that a red job proves nothing
+        on its own, because plenty are red everywhere. Only the comparison
+        against another merge request separates the change's fault from the
+        repository's, so the rule is worthless if the brief asks for the
+        first and not the second.
+        """
+        body = " ".join(read(REPO / "src" / "workflows" / "review-mr.md").split())
+        self.assertIn("Read the pipeline's JOBS, not its status", body)
+        self.assertIn("allow failure is not counted", body)
+        self.assertIn("run the same job's status on another open merge request", body)
+        # The comparison has to name BOTH outcomes, or it reads as "red is
+        # always yours" and puts the repository's breakage on this author.
+        self.assertIn("Red there too", body)
+        self.assertIn("green there and red here is this change's", body.lower())
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.
