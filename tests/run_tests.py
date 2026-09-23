@@ -1139,6 +1139,44 @@ class TestRootCauseSynthesis(unittest.TestCase):
         self.assertIn("it is a preference, not a finding", body)
         self.assertIn("say you have not looked rather than implying it is cheap", body)
 
+    def test_a_fragment_is_inlined_once_per_document(self):
+        """A core IS a panelist's whole brief, so a second copy is dead weight.
+
+        The shared vocabulary reaches review-mr by two routes — the workflow
+        includes it for the tally and the panel module includes it for the
+        panelists — and nothing deduplicated them, so it landed twice. That
+        was tolerable while the fragment was short and stopped being so when
+        it grew: the compiled core went from 513 lines to 886, roughly 200 of
+        which were the same page twice, in the one document whose reader is
+        most expensive to lose.
+
+        Asserted per core rather than in aggregate, and paired with the
+        must-still-appear check, because a deduplicator that drops the last
+        copy as well is the failure this would otherwise hide.
+        """
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        glados_dir = t / "product-knowledge" / "glados"
+        marker = "There is exactly one severity scale and one verdict vocabulary"
+
+        seats_a_panel = [
+            p for p in glados_dir.glob("*.md")
+            if "adversarial MR review panel" in read(p)
+        ]
+        self.assertGreater(len(seats_a_panel), 0, "no core seats a panel")
+
+        for core in glados_dir.glob("*.md"):
+            body = read(core)
+            self.assertLessEqual(
+                body.count(marker), 1,
+                f"{core.name} inlines the verdict vocabulary "
+                f"{body.count(marker)} times")
+
+        for core in seats_a_panel:
+            self.assertIn(
+                marker, read(core),
+                f"{core.name} seats a panel with no severity scale at all")
+
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
         # them rather than inventing a third tier or a fourth verdict word.
