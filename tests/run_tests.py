@@ -110,9 +110,9 @@ def read(path: Path) -> str:
 class TestCompile(unittest.TestCase):
 
     def test_compile_all_modes_no_dangling(self):
-        """All six modes compile with zero unresolved includes/placeholders."""
+        """All seven modes compile with zero unresolved includes/placeholders."""
         forbidden = ["{{", "<!-- glados:include"]
-        for mode in ["claude", "direct", "gemini", "antigravity", "aistudio"]:
+        for mode in ["claude", "direct", "gemini", "antigravity", "aistudio", "pi"]:
             with self.subTest(mode=mode):
                 t = make_target()
                 rc, out = install(mode, t)
@@ -177,7 +177,7 @@ class TestCompile(unittest.TestCase):
     def test_determinism(self):
         """Two installs of the same mode produce byte-identical trees."""
         for mode in ("claude", "direct", "gemini", "antigravity", "aistudio",
-                     "claude-plugin"):
+                     "pi", "claude-plugin"):
             with self.subTest(mode=mode):
                 if mode == "claude-plugin":
                     a, b = make_plugin_target(), make_plugin_target()
@@ -494,7 +494,7 @@ class TestVendor(unittest.TestCase):
         src_personas = sorted((REPO / "src" / "personas").glob("*.md"))
         self.assertGreater(len(src_personas), 0, "library personas missing")
         for mode in ("claude", "claude-plugin", "direct", "gemini",
-                     "antigravity", "aistudio"):
+                     "antigravity", "aistudio", "pi"):
             with self.subTest(mode=mode):
                 t = make_plugin_target() if mode == "claude-plugin" else make_target()
                 rc, out = install(mode, t)
@@ -2301,6 +2301,35 @@ class TestMigrate(unittest.TestCase):
         self.assertIn("2026-05-01-migrated-login-timeout.md",
                       read(t2 / "product-knowledge" / "SPEC_LOG.md"))
 
+
+
+class TestPiAdapter(unittest.TestCase):
+
+    def test_pi_prompt_templates(self):
+        """pi mode emits flat .pi/prompts/glados-<core>.md templates with a
+        description and an argument trailer, and leaves user prompts alone."""
+        t = make_target()
+        user_prompt = t / ".pi" / "prompts" / "mine.md"
+        user_prompt.parent.mkdir(parents=True)
+        user_prompt.write_text("my own template\n", encoding="utf-8")
+        rc, out = install("pi", t)
+        self.assertEqual(rc, 0, out)
+        prompts = t / ".pi" / "prompts"
+        fix = prompts / "glados-fix-bug.md"
+        self.assertTrue(fix.is_file(), "glados-fix-bug.md missing")
+        text = read(fix)
+        self.assertTrue(text.startswith("---\ndescription: "), "no frontmatter")
+        self.assertIn("${ARGUMENTS:-", text, "argument trailer missing")
+        self.assertEqual(text.count("${ARGUMENTS"), 1,
+                         "only the trailer may carry a placeholder")
+        self.assertFalse(any(p.is_dir() for p in prompts.iterdir()),
+                         "pi loads only direct children; no subdirectories")
+        # reinstall keeps user files, prunes only glados-* leftovers
+        stale = prompts / "glados-retired.md"
+        stale.write_text("old\n", encoding="utf-8")
+        self.assertEqual(install("pi", t)[0], 0)
+        self.assertTrue(user_prompt.is_file(), "user prompt was removed")
+        self.assertFalse(stale.exists(), "stale glados-* prompt kept")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -7,7 +7,7 @@ agent runs one, it follows a disciplined, team-visible process — reviews get
 posted, decisions get recorded, every run leaves a committed record — instead
 of improvising.
 
-The installer is one Python script, `bin/glados.py`, with six install modes.
+The installer is one Python script, `bin/glados.py`, with seven install modes.
 Which mode you want depends entirely on **which tool your AI agent runs in**.
 Pick your row:
 
@@ -17,6 +17,7 @@ Pick your row:
 | Claude Code, and your team distributes GLaDOS as a Claude Code **plugin** shared across repos | `claude-plugin` | [claude-plugin.md](claude-plugin.md) |
 | [Google Antigravity](https://antigravity.google) (Google's agentic IDE; CLI `agy`) | `antigravity` | [google-antigravity.md](google-antigravity.md) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) (Google's open-source terminal agent) | `gemini` | [gemini-cli.md](gemini-cli.md) |
+| [pi](https://pi.dev) (terminal coding agent) | `pi` | [pi.md](pi.md) |
 | [Google AI Studio](https://aistudio.google.com) (browser chat, no file access) | `aistudio` | [google-ai-studio.md](google-ai-studio.md) |
 | Some other agent, or no agent-specific command surface at all | `direct` | [direct.md](direct.md) |
 | A repo with an existing **GLaDOS v1** install (any runtime) | run `migrate` first — it suggests your mode | [MIGRATION.md](../../MIGRATION.md) |

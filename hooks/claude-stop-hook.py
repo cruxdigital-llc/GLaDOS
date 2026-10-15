@@ -55,7 +55,7 @@ def in_flight_without_record(root: Path):
     # A record is committed when nothing under .glados/runs/ is dirty/untracked
     # (excluding the 'current' marker itself) and the marker's referenced record
     # is tracked by git.
-    porcelain = _git(root, "status", "--porcelain", "--", ".glados/runs")
+    porcelain = _git(root, "status", "--porcelain", "--untracked-files=all", "--", ".glados/runs")
     dirty = []
     for line in porcelain.splitlines():
         path = line[3:].strip()

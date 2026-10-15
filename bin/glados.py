@@ -130,7 +130,7 @@ AISTUDIO_CORES = [
     "retrospect",
 ]
 
-INSTALL_MODES = ["claude", "claude-plugin", "direct", "gemini", "antigravity", "aistudio"]
+INSTALL_MODES = ["claude", "claude-plugin", "direct", "gemini", "antigravity", "aistudio", "pi"]
 
 INCLUDE_RE = re.compile(r"<!--\s*glados:include\s+(\S+?)\s*-->")
 
@@ -1516,6 +1516,48 @@ def adapter_antigravity(source: Source, comp: Compilation) -> dict:
     return plan
 
 
+# ---- pi ---------------------------------------------------------------------
+
+# pi (pi.dev) prompt templates substitute shell-style argument placeholders in
+# the template text. A compiled core must not contain one, or pi would rewrite
+# the workflow; the adapter refuses rather than ship a silently altered core.
+_PI_PLACEHOLDER = re.compile(r"\$\{(\d+|ARGUMENTS|@)[:}]|\$(ARGUMENTS|@|\d)")
+_PI_ARGS_TRAILER = ("\n\n## Invocation arguments\n\n"
+                    "${ARGUMENTS:-(none given — ask if the workflow needs them)}\n")
+
+
+def _pi_template(desc: str, body: str, rel: str) -> str:
+    hit = _PI_PLACEHOLDER.search(body)
+    if hit:
+        raise Fatal(f"pi adapter: {rel} contains '{hit.group(0)}', which pi "
+                    f"would substitute as a prompt-template argument")
+    return f"---\ndescription: {desc}\n---\n\n{body}{_PI_ARGS_TRAILER}"
+
+
+def adapter_pi(source: Source, comp: Compilation) -> dict:
+    """Prompt templates in .pi/prompts/ — run `/glados-fix-bug` in pi.
+
+    pi loads only direct .md children of a prompt directory, so the namespace
+    is a `glados-` filename prefix (as in antigravity), not a subdirectory.
+    """
+    plan: dict = {}
+    base = ".pi/prompts"
+    for c in comp.enabled:
+        rel = f"{base}/glados-{c}.md"
+        desc = _yaml_quote(_one_line(source.cores[c]["description"]))
+        plan[rel] = ("text", _pi_template(desc, comp.cores[c], rel))
+    for alias, (target, enabled) in _alias_targets(source, comp).items():
+        rel = f"{base}/glados-{alias}.md"
+        if enabled:
+            desc = _yaml_quote(f"(renamed) {alias} is now {target}")
+            shim = f"The `{alias}` workflow was renamed. Run `/glados-{target}` instead.\n"
+        else:
+            desc = _yaml_quote(f"(renamed) {alias} is now {target} — disabled here")
+            shim = _disabled_alias_body(alias, target)
+        plan[rel] = ("text", f"---\ndescription: {desc}\n---\n\n{shim}")
+    return plan
+
+
 # ---- aistudio ---------------------------------------------------------------
 
 def _aistudio_preamble(title: str, advisory: bool) -> str:
@@ -1765,6 +1807,7 @@ ADAPTERS = {
     "gemini": adapter_gemini,
     "antigravity": adapter_antigravity,
     "aistudio": adapter_aistudio,
+    "pi": adapter_pi,
 }
 
 
@@ -1777,6 +1820,7 @@ OWNED_DIRS = {
     "gemini": [".gemini/commands/glados"],
     "antigravity": [".agents/workflows"],   # scoped to glados-*.md, see cleanup
     "aistudio": ["glados/adapters/aistudio/bundles"],
+    "pi": [".pi/prompts"],                 # scoped to glados-*.md, see cleanup
 }
 
 # Vendored subtrees EVERY mode owns. Cleaned like OWNED_DIRS so a renamed
@@ -2045,9 +2089,10 @@ def _cleanup_owned(target: Path, mode: str, plan: dict, source: Source,
             if not f.is_file():
                 continue
             rel = str(f.relative_to(target))
-            if mode == "antigravity" and owned == ".agents/workflows" \
+            if (mode, owned) in (("antigravity", ".agents/workflows"),
+                                 ("pi", ".pi/prompts")) \
                     and not f.name.startswith("glados-"):
-                continue  # only glados-*.md are ours under .agents/workflows
+                continue  # only glados-*.md are ours in these shared dirs
             if rel not in planned:
                 _force_unlink(f)
                 removed.append(rel)
@@ -2359,6 +2404,9 @@ def _detect_modes(target: Path) -> list[str]:
         modes.append("aistudio")
     if (target / "compiled/claude-plugin").is_dir():
         modes.append("claude-plugin")
+    if (target / ".pi/prompts").is_dir() and \
+            any((target / ".pi/prompts").glob("glados-*.md")):
+        modes.append("pi")
     return modes
 
 

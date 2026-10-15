@@ -48,7 +48,7 @@ Then install for your agent's runtime (here: Claude Code):
 
 ```bash
 python bin/glados.py install --mode claude --target /path/to/your/project
-# modes: claude | claude-plugin | direct | gemini | antigravity | aistudio
+# modes: claude | claude-plugin | direct | gemini | antigravity | aistudio | pi
 ```
 
 The installer prints an **assembly report** — every configuration value it
@@ -118,6 +118,7 @@ One compiled output feeds every mode, so behavior matches across runtimes.
 | Gemini CLI (Google's open-source terminal agent) | `gemini` | Commands in `.gemini/commands/glados/` — run `/glados:fix-bug` |
 | Google Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google) | `antigravity` | Workflow files in `.agents/workflows/` — run `/glados-fix-bug` |
 | Google AI Studio (aistudio.google.com) | `aistudio` | Paste-in bundles in `glados/adapters/aistudio/bundles/` — no command surface; you paste a bundle into the chat |
+| [pi](https://pi.dev) (terminal coding agent) | `pi` | Prompt templates in `.pi/prompts/glados-*.md` — run `/glados-fix-bug` |
 | Any agent that can read a markdown file | `direct` | Plain workflow documents in `product-knowledge/glados/` |
 
 ## The weekly rhythm

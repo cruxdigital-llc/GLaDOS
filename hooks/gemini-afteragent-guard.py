@@ -48,7 +48,7 @@ def in_flight_without_record(root: Path):
     marker = root / ".glados" / "runs" / "current"
     if not marker.exists():
         return None  # conditional-on-marker: silent on ordinary turns
-    porcelain = _git(root, "status", "--porcelain", "--", ".glados/runs")
+    porcelain = _git(root, "status", "--porcelain", "--untracked-files=all", "--", ".glados/runs")
     dirty = []
     for line in porcelain.splitlines():
         path = line[3:].strip()
