@@ -70,9 +70,17 @@ only the scaffolding is install-time):
 - **Before mutating** (preamble): the run appends a claim to `claims.md` —
   workflow, scope, holder, timestamp. An existing uncleared claim on the same
   scope is treated as contention: coordinate, do not clobber.
-- **Before ending** (epilogue): the run appends its work-unit row to
+- **Before ending** (epilogue): the run appends the work-unit row to
   `product-knowledge/SPEC_LOG.md` — date, workflow, scope, outcome, links —
   and clears its `claims.md` entry, both riding the run-record commit.
+- **Nested runs** (plan-feature, spec-feature and the other stages that
+  build-feature runs inside itself) do neither. One unit of work gets one
+  claim and one row, both owned by the outermost run: a row marks its subject
+  done, so a row from a nested plan would mark the whole feature done early,
+  and the enclosing run's claim is never contention for the runs inside it.
+  The one exception is a ticket's build inside `run-epic`: each ticket has its
+  own branch and MR, so its build claims and logs as a unit of work of its
+  own.
 
 With `sda: false` (or the key absent) the steps are skipped and nothing else
 changes: the compiled workflows are otherwise identical.
@@ -123,7 +131,7 @@ cover a single-team, single-agent project.
 
 | | |
 |---|---|
-| **Works today** | `sda: true` in `glados.yaml`: install scaffolds `claims.md`, `SPEC_LOG.md`, `SDA: v1.0` headers, and the standards docs (create-only); every mutating run records a claim and every run appends its `SPEC_LOG` work-unit row and clears its claim — native kernel behavior, no recompile to flip |
+| **Works today** | `sda: true` in `glados.yaml`: install scaffolds `claims.md`, `SPEC_LOG.md`, `SDA: v1.0` headers, and the standards docs (create-only); one claim and one `SPEC_LOG` work-unit row per unit of work, recorded by the outermost run (runs nested inside it add neither; each ticket run-epic builds is a unit of its own) — native kernel behavior, no recompile to flip |
 | **Coming in v2.1** | The lease module's lockfile backend writes `claims.md`-compatible entries when `sda: true` — claims become a view over enforced leases (direction, not shipped) |
 | **Your responsibility** | Set the key explicitly (no phase sets it for you) and re-run install to scaffold; keep `ROADMAP.md` inside the SDA grammar if consumers key on item IDs; relocate `claims.md` under `product-knowledge/` if pairing with Wheatley |
 

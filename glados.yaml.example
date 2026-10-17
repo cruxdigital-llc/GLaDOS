@@ -1,11 +1,15 @@
 # glados.yaml — the one project-owned GLaDOS configuration file.
 # Copy to your repo root as `glados.yaml` and edit. Lane-2 keys (channels,
-# decisions, merge-authority, params, personas, sinks) are read LIVE at run
-# time —
-# editing them changes agent behavior on the next run, no reinstall. Structural
-# keys (workflows' module lists, phase) take effect at `glados.py install`,
-# which stamps a manifest hash into the compiled output; `glados.py doctor`
-# flags stale compiles.
+# decisions, merge-authority, params (including the review-panel personas),
+# sinks, branching) are read LIVE at run time: editing them changes agent
+# behavior on the next run, with no reinstall, and never makes the compile
+# stale (`glados.py check` still type-checks their values, so an undeclared
+# sink or an unconfessed relaxation fails it). Structural keys (phase,
+# optimize-for, default-modules, workflows, disabled-workflows, sda) take
+# effect at `glados.py install`, which stamps a hash of those keys alone into
+# the compiled output; `glados.py check` and `glados.py doctor` flag a stale
+# compile when one of them changed. Keys this file omits take their defaults
+# from the preset table (.glados/presets.yaml after install).
 
 glados: 2
 
@@ -42,6 +46,9 @@ channels:
 # fixed. Delivery is verified at run time: a bound sink that fails to receive
 # its outcome escalates, whatever the other sinks got, and all of a run's
 # delivery failures ride in one escalation that is never itself escalated.
+# Exception: an outcome bound to mr-comment before any MR exists is recorded
+# under `## Pending MR delivery` and posted by the run that opens the MR (or
+# marked not applicable if none ever opens); that is not a failed delivery.
 # Examples (uncomment to use):
 # sinks:
 #   mr-comment:
@@ -117,7 +124,10 @@ params:
 # ROADMAP.md/PROJECT_STATUS.md, the sda-*.md standards docs into
 # product-knowledge/standards/), and every compiled workflow records claims
 # in claims.md before mutating and appends its work-unit row to SPEC_LOG.md
-# at run end. See docs/guides/sda.md.
+# at run end (a run nested inside another, such as plan-feature inside
+# build-feature, works under the outer run's claim and row; each ticket
+# run-epic builds is a unit of work of its own). See
+# docs/guides/sda.md.
 sda: false
 
 # Concurrency (v2.1 — the lease module; v2.0.0 ships only the base-SHA yield

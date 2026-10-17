@@ -2,7 +2,7 @@
 name: evaluator-spawn
 kind: module
 description: Spawn a context-isolated evaluator to verify finished work against a self-contained brief
-reads: [work.base-sha, standards.index]
+reads: [work.base-sha, standards.index, run.active-personas, manifest.panel-personas]
 writes: []
 # Inlines vocabulary/loop-bounds.md — a core enabling this module must declare
 # `escalation` in its emits (loop-bounds emits it on bound-hit/stalemate).
@@ -38,6 +38,7 @@ conversation:
 | What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`) — not the full diff; the evaluator reads files directly |
 | How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
+| Personas to consult | The feature's persona roster: `run.active-personas` (recorded by plan-feature); when that key is absent, the default roster in `params.review-panel.personas` from `glados.yaml`. List each persona as its name plus the path of its definition file so the evaluator reads it directly. Resolve each name project-first: `product-knowledge/personas/`, then the library personas in `.glados/personas/`. A name with no definition file in either is reported in the brief, not silently dropped |
 | What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred — a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
 | Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
 
@@ -62,7 +63,9 @@ what it actually does. Be skeptical. Be thorough.
 5. Mark each acceptance criterion PASS or FAIL, with the evidence you
    observed.
 6. Check the code against each standard listed in the brief.
-7. List every issue: what is wrong, where (file + line), and its severity per
+7. If the brief lists personas, read each definition file and critique the
+   change from that persona's mandate.
+8. List every issue: what is wrong, where (file + line), and its severity per
    the vocabulary in the brief.
 
 Write your evaluation to

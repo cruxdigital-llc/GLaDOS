@@ -326,11 +326,188 @@ class TestReporting(unittest.TestCase):
         t = make_target()
         self.assertEqual(install("direct", t)[0], 0)
         gy = t / "glados.yaml"
-        gy.write_text(read(gy) + "\n# structural edit\n",
+        gy.write_text(read(gy).replace("disabled-workflows: []",
+                                       "disabled-workflows: [brunch]"),
                       encoding="utf-8", newline="\n")
         rc, out = run_cli("check", "--target", t, "--source", REPO)
         self.assertEqual(rc, 1)
         self.assertIn("stale compile", out)
+
+
+class TestManifestHash(unittest.TestCase):
+    """The manifest hash covers the structural keys only (F1). Lane-2 keys are
+    read live at run time, so editing one must never make `check` fail; a
+    structural edit must; comments and whitespace change nothing."""
+
+    def _installed(self):
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        return t
+
+    def _edit(self, t, old, new):
+        gy = t / "glados.yaml"
+        text = read(gy)
+        self.assertIn(old, text, "doctoring failed")
+        gy.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+    def test_lane2_edits_keep_check_passing(self):
+        t = self._installed()
+        edits = [
+            # declare a sink and bind it
+            ("merge-authority: human",
+             "sinks:\n  slack:\n    channel: \"#reviews\"\n"
+             "    team-visible: true\nmerge-authority: human"),
+            ("  escalation:  [issue]", "  escalation:  [issue, slack]"),
+            # change a channel binding
+            ("  bug:         [issue]", "  bug:         [issue, issue-comment]"),
+            # change params
+            ("    max-cycles: 5", "    max-cycles: 4"),
+            # change a decision class (stricter than the preset: no confession)
+            ("  new-dependency: agent", "  new-dependency: escalate"),
+            # change branching
+            ("  default-target: main", "  default-target: develop"),
+        ]
+        for old, new in edits:
+            with self.subTest(edit=new.strip()[:40]):
+                self._edit(t, old, new)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, f"lane-2 edit failed check:\n{out}")
+                self.assertNotIn("stale compile", out)
+        # the vendored report now predates the edits — doctor says so, as
+        # information, and never as staleness
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest hash: current", out)
+        self.assertIn("the assembly report predates later glados.yaml edits",
+                      out)
+        self.assertIn("nothing is stale", out)
+        # a re-install refreshes it
+        self.assertEqual(install("direct", t)[0], 0)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("assembly report: current", out)
+
+    def test_structural_edits_make_check_stale(self):
+        edits = [
+            ("disabled-workflows: []", "disabled-workflows: [brunch]"),
+            ("default-modules: [standards-gate]", "default-modules: []"),
+            ("phase: evolving", "phase: nascent"),
+            ("sda: false", "sda: true"),
+            ("  brunch:         [mr-review-panel]",
+             "  brunch:         [mr-review-panel, standards-gate]"),
+        ]
+        for old, new in edits:
+            with self.subTest(edit=new):
+                t = self._installed()
+                self._edit(t, old, new)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, f"structural edit passed check:\n{out}")
+                self.assertIn("stale compile", out)
+                rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+                self.assertIn("STALE", out)
+
+    def test_comments_and_whitespace_change_nothing(self):
+        t = self._installed()
+        before = read(t / ".glados" / "manifest-hash").strip()
+        gy = t / "glados.yaml"
+        text = read(gy)
+        text = ("# a new leading comment\n\n" + text.replace(
+            "disabled-workflows: []", "disabled-workflows:   []   # aligned")
+            + "\n\n# trailing comment\n")
+        gy.write_text(text, encoding="utf-8", newline="\n")
+        self.assertEqual(glados.manifest_hash_of(gy), before)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+
+    def test_hash_is_the_structural_projection(self):
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertEqual(
+            sorted(glados.structural_projection(raw)),
+            sorted(k for k in glados.STRUCTURAL_KEYS if k in raw),
+            "the projection holds exactly the structural keys the manifest "
+            "sets")
+        base = glados.structural_hash(raw)
+        lane2 = dict(raw, channels={"progress": ["ledger"]},
+                     params={}, platform="github", sinks={"x": None})
+        self.assertEqual(glados.structural_hash(lane2), base,
+                         "lane-2 keys must not move the hash")
+        self.assertNotEqual(
+            glados.structural_hash(dict(raw, phase="production")), base)
+        # key order is irrelevant: the projection is canonicalised
+        self.assertEqual(
+            glados.structural_hash(dict(reversed(list(raw.items())))), base)
+        # the compiled header carries the same hash
+        t = self._installed()
+        core = read(t / "product-knowledge" / "glados" / "intent.md")
+        self.assertIn(f"manifest-sha256: {glados.manifest_hash_of(EXAMPLE)}",
+                      core)
+
+    def test_absent_and_null_structural_keys_hash_differently(self):
+        # An absent key takes the phase preset's value; an explicit null
+        # overrides it (`default-modules:` = no modules). The compiled cores
+        # differ, so the hash must too, or check reports drift instead of a
+        # stale compile and doctor calls the hash current.
+        raw = glados.load_manifest(EXAMPLE)
+        absent = {k: v for k, v in raw.items() if k != "default-modules"}
+        null = dict(absent, **{"default-modules": None})
+        self.assertNotEqual(glados.structural_hash(absent),
+                            glados.structural_hash(null))
+        line = "default-modules: [standards-gate]\n"
+        self.assertIn(line, read(EXAMPLE))
+        t = make_target(read(EXAMPLE).replace(line, ""))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        write(t / "glados.yaml",
+              read(EXAMPLE).replace(line, "default-modules:\n"))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("stale compile", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("manifest hash: STALE", out)
+        self.assertNotIn("nothing is stale", out)
+
+    def test_doctor_checks_before_saying_nothing_is_stale(self):
+        # The report also differs when GLaDOS itself changed (here: a newer
+        # VERSION). The manifest hash is still current, but every compiled
+        # file drifts, so doctor must not call the difference informational.
+        t = self._installed()
+        src = make_doctored_source()
+        script = src / "bin" / "glados.py"
+        old = f'VERSION = "{glados.VERSION}"'
+        text = read(script)
+        self.assertIn(old, text)
+        script.write_text(text.replace(old, 'VERSION = "99.0.0"', 1),
+                          encoding="utf-8", newline="\n")
+
+        def run(*args):
+            proc = subprocess.run(
+                [sys.executable, str(script), *args, "--target", str(t),
+                 "--source", str(src)], capture_output=True, text=True)
+            return proc.returncode, proc.stdout + proc.stderr
+
+        rc, out = run("doctor")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest hash: current", out)
+        self.assertNotIn("nothing is stale", out)
+        self.assertIn("installed file(s) drift", out)
+        rc, out = run("check")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("drift in installed file", out)
+
+    def test_check_still_requires_the_assembly_report(self):
+        t = self._installed()
+        (t / ".glados" / "assembly-report.md").unlink()
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("missing installed file: .glados/assembly-report.md", out)
+
+    def test_parse_error_fails_clearly(self):
+        t = self._installed()
+        write(t / "glados.yaml", "phase: evolving\nbranching:\n\tfeature: x\n")
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("glados.yaml:3", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestVendor(unittest.TestCase):
@@ -781,6 +958,85 @@ class TestYamlParserAttacks(unittest.TestCase):
         self.assertNotIn("Traceback", out)
 
 
+class TestYamlListOfMaps(unittest.TestCase):
+    """`- key: value` opens a mapping item, as in standard YAML (F6a). It
+    used to parse as the string 'key: value', silently."""
+
+    def parse(self, text):
+        return glados.parse_yaml(text, "t")
+
+    def test_single_key_item(self):
+        self.assertEqual(self.parse("items:\n  - name: a\n  - name: b\n"),
+                         {"items": [{"name": "a"}, {"name": "b"}]})
+
+    def test_multi_key_item(self):
+        parsed = self.parse("items:\n  - name: a\n    kind: gate  # note\n"
+                            "    count: 3\n  - name: b\n")
+        self.assertEqual(parsed["items"],
+                         [{"name": "a", "kind": "gate", "count": 3},
+                          {"name": "b"}])
+
+    def test_nested_blocks_under_an_item_key(self):
+        parsed = self.parse(
+            "- id: shape\n"
+            "  audits:\n"
+            "    - plan\n"
+            "    - spec\n"
+            "  options:\n"
+            "    review: in-context\n"
+            "    nested:\n"
+            "      - deep: 1\n"
+            "        deeper: [x, y]\n"
+            "  note: |\n"
+            "    line one\n"
+            "    line two\n"
+            "- id: open-mr\n")
+        self.assertEqual(parsed, [
+            {"id": "shape", "audits": ["plan", "spec"],
+             "options": {"review": "in-context",
+                         "nested": [{"deep": 1, "deeper": ["x", "y"]}]},
+             "note": "line one\nline two"},
+            {"id": "open-mr"},
+        ])
+
+    def test_quoted_and_colon_strings_unchanged(self):
+        parsed = self.parse('items:\n  - "a: b"\n  - \'c: d\'\n'
+                            "  - http://host/x\n  - plain\n  - [p, q]\n")
+        self.assertEqual(parsed["items"],
+                         ["a: b", "c: d", "http://host/x", "plain", ["p", "q"]])
+
+    def test_bare_dash_map_still_works(self):
+        parsed = self.parse("items:\n  -\n    name: a\n    kind: gate\n"
+                            "  - name: b\n")
+        self.assertEqual(parsed["items"],
+                         [{"name": "a", "kind": "gate"}, {"name": "b"}])
+
+    def test_misaligned_item_key_is_an_error(self):
+        with self.assertRaises(glados.YamlError) as ctx:
+            self.parse("items:\n  - name: a\n     kind: gate\n")
+        self.assertIn("t:3", str(ctx.exception))
+        with self.assertRaises(glados.YamlError) as ctx:
+            self.parse("- name: a\n  name: b\n")
+        self.assertIn("duplicate key 'name'", str(ctx.exception))
+
+    def test_shipped_yaml_parses_the_same_shape(self):
+        # Every shipped YAML file still parses, and nothing in them was a
+        # `- key: value` string the new rule would turn into a map.
+        def no_maps_in_lists(node):
+            if isinstance(node, dict):
+                return all(no_maps_in_lists(v) for v in node.values())
+            if isinstance(node, list):
+                return all(not isinstance(v, dict) and no_maps_in_lists(v)
+                           for v in node)
+            return True
+        for path in (EXAMPLE, REPO / "src" / "kernel" / "presets" / "phases.yaml",
+                     REPO / "src" / "kernel" / "state-registry.yaml",
+                     REPO / "src" / "kernel" / "aliases.yaml"):
+            with self.subTest(path=path.name):
+                self.assertTrue(no_maps_in_lists(
+                    glados.parse_yaml(read(path), path.name)))
+
+
 class TestManifestTokenAttacks(unittest.TestCase):
     """Typo'd manifest tokens must fail the install, not silently drop
     modules/workflows/sinks — the v1 flagship bug class."""
@@ -901,6 +1157,85 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertIn("slack", out)
         self.assertNotIn("Traceback", out)
 
+    # `- name: value` is a mapping item in YAML. In a list that holds names it
+    # must be a named error, never an unhashable-dict traceback (and never a
+    # hard exit from `check --report-only`).
+    MAPPING_ITEM_EDITS = [
+        ("disabled-workflows: []", "disabled-workflows:\n  - brunch: x",
+         "disabled-workflows: item 1 is a mapping ('brunch: x')"),
+        ("default-modules: [standards-gate]",
+         "default-modules:\n  - standards-gate: x",
+         "default-modules: item 1 is a mapping ('standards-gate: x')"),
+        ("  brunch:         [mr-review-panel]",
+         "  brunch:\n    - mr-review-panel: x",
+         "workflows.brunch: item 1 is a mapping ('mr-review-panel: x')"),
+        ("  bug:         [issue]", "  bug:\n    - issue: x",
+         "channels.bug: item 1 is a mapping ('issue: x')"),
+        ("relaxation-acknowledged: [delete-code]",
+         "relaxation-acknowledged:\n  - delete-code: yes",
+         "relaxation-acknowledged: item 1 is a mapping ('delete-code: yes')"),
+    ]
+
+    def test_mapping_item_in_a_name_list_is_a_named_error(self):
+        for old, new, msg in self.MAPPING_ITEM_EDITS:
+            with self.subTest(key=msg.split(":")[0]):
+                text = read(EXAMPLE)
+                self.assertIn(old, text, "doctoring failed")
+                rc, out = install("direct",
+                                  make_target(text.replace(old, new, 1)))
+                self.assertEqual(rc, 1, out)
+                self.assertIn(msg, out)
+                self.assertIn("'- name: value' is a mapping in YAML", out)
+                self.assertNotIn("Traceback", out)
+
+    def test_mapping_item_never_crashes_check_or_doctor(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        original = read(t / "glados.yaml")
+        for old, new, msg in self.MAPPING_ITEM_EDITS:
+            with self.subTest(key=msg.split(":")[0]):
+                write(t / "glados.yaml", original.replace(old, new, 1))
+                rc, out = run_cli("check", "--target", t, "--source", REPO,
+                                  "--report-only")
+                self.assertEqual(rc, 0, "--report-only must not hard-exit:\n"
+                                 + out)
+                self.assertIn(msg, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, "doctor must never fail:\n" + out)
+                self.assertNotIn("Traceback", out)
+
+    def test_wrong_shapes_are_named_errors(self):
+        # a list where a mapping belongs, and a scalar where a list belongs
+        workflows = ("workflows:\n"
+                     "  review-mr:      [mr-review-panel]\n"
+                     "  verify-feature: [evaluator-spawn]\n"
+                     "  fix-bug:        [evaluator-spawn, standards-gate]\n"
+                     "  run-epic:       [mr-review-panel, standards-gate]\n"
+                     "  brunch:         [mr-review-panel]\n")
+        listed = ("workflows:\n"
+                  "  - review-mr: [mr-review-panel]\n"
+                  "  - brunch: [mr-review-panel]\n")
+        cases = [
+            (workflows, listed, "'workflows:' must be a mapping"),
+            ("disabled-workflows: []", "disabled-workflows: true",
+             "disabled-workflows: must be a list of workflow names"),
+            ("params:\n", "params: 3\nunused:\n",
+             "'params:' must be a mapping"),
+        ]
+        for old, new, msg in cases:
+            with self.subTest(msg=msg):
+                text = read(EXAMPLE)
+                self.assertIn(old, text, "doctoring failed")
+                rc, out = install("direct",
+                                  make_target(text.replace(old, new, 1)))
+                self.assertEqual(rc, 1, out)
+                self.assertIn(msg, out)
+                self.assertNotIn("Traceback", out)
+
     def test_alias_shadowing_core_fails(self):
         src = make_doctored_source()
         aliases = src / "src" / "kernel" / "aliases.yaml"
@@ -911,6 +1246,85 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertEqual(rc, 1, "core-shadowing alias must fail:\n" + out)
         self.assertIn("shadows", out)
         self.assertIn("intent", out)
+
+
+class TestManifestKeysAndDecisions(unittest.TestCase):
+    """Unknown top-level keys warn without failing (F6b); a decision value
+    outside the four classes is fatal and names the leaf (F6c)."""
+
+    def test_unknown_top_level_key_warns_but_installs(self):
+        text = read(EXAMPLE) + "\nchanels:\n  bug: [issue]\n"
+        t = make_target(text)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, "an unknown key must not fail install:\n" + out)
+        self.assertIn("unknown top-level key 'chanels'", out)
+        self.assertIn("known keys:", out)
+        self.assertIn("channels", out.split("unknown top-level key 'chanels'")[1])
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, "an unknown key must not fail check:\n" + out)
+        self.assertEqual(out.count("unknown top-level key 'chanels'"), 1, out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest keys: unknown top-level key(s) chanels", out)
+
+    def test_unknown_key_is_reported_when_the_install_fails(self):
+        # The misspelt key is the cause of the failure: 'sinsk:' leaves the
+        # slack sink undeclared. The warning must not vanish with the run.
+        bad = (read(EXAMPLE).replace("  escalation:  [issue]",
+                                     "  escalation:  [issue, slack]")
+               + "\nsinsk:\n  slack:\n    team-visible: true\n")
+        rc, out = install("direct", make_target(bad))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unknown top-level key 'sinsk'", out)
+        self.assertIn("sink 'slack' is not declared", out)
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", bad)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unknown top-level key 'sinsk'", out)
+        self.assertIn("sink 'slack' is not declared", out)
+
+    def test_known_keys_cover_the_example_and_stay_quiet(self):
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertEqual(glados.unknown_manifest_keys(raw), [])
+        for key in ("pipelines", "steps", "canon", "lifecycle", "concurrency",
+                    "phase-declared"):
+            self.assertIn(key, glados.KNOWN_MANIFEST_KEYS)
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("unknown top-level key", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("manifest keys: all known", out)
+
+    def test_bad_decision_value_is_fatal_and_names_the_leaf(self):
+        text = read(EXAMPLE).replace("  new-dependency: agent",
+                                     "  new-dependency: agnet")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "a misspelt decision class must fail:\n" + out)
+        self.assertIn("decisions.new-dependency: 'agnet' is not a decision class",
+                      out)
+        self.assertIn("agent | record | escalate | forbidden", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_decision_leaf_names_stay_open(self):
+        text = read(EXAMPLE).replace("  new-dependency: agent",
+                                     "  new-dependency: agent\n"
+                                     "  vendor-swap: escalate")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 0, "a project-named decision leaf must install:\n"
+                         + out)
+
+    def test_non_mapping_decisions_fails_cleanly(self):
+        text = read(EXAMPLE).replace(
+            "decisions:\n  schema-migration: record\n",
+            "decisions:\n  - schema-migration\n  - delete-code\n"
+            "unused:\n  schema-migration: record\n")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'decisions:' must be a mapping", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestRootCauseSynthesis(unittest.TestCase):
@@ -1515,6 +1929,212 @@ class TestDeliveryAndPanelContract(unittest.TestCase):
                         "the call site must precede the definition")
 
 
+class TestKernelRunRules(unittest.TestCase):
+    """Run-lifecycle rules that exist only as compiled text: the nested-run
+    marker stack (F2), pending MR delivery (F3), preset defaults (F4), the
+    plugin path mapping (F4/F5), the standards-gate bound (F6d) and the
+    evaluator's persona slot (F6e). Asserted on compiled output, with
+    whitespace flattened so a re-wrap of the source does not break a test."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.direct = make_target(read(EXAMPLE))
+        rc, out = install("direct", cls.direct)
+        assert rc == 0, out
+        cls.plugin = make_plugin_target()
+        rc, out = install("claude-plugin", cls.plugin)
+        assert rc == 0, out
+
+    @staticmethod
+    def flat(text):
+        return " ".join(text.split())
+
+    def _cores(self):
+        cores = sorted((self.direct / "product-knowledge" / "glados").glob("*.md"))
+        cores = [c for c in cores if c.stem in glados.CORES]
+        self.assertEqual(len(cores), len(glados.CORES))
+        return cores
+
+    def _core(self, name):
+        return self.flat(read(
+            self.direct / "product-knowledge" / "glados" / f"{name}.md"))
+
+    def test_every_core_pushes_and_pops_the_marker_stack(self):
+        for core in self._cores():
+            with self.subTest(core=core.stem):
+                text = self.flat(read(core))
+                self.assertIn("`.glados/runs/stack` lists every run in flight, "
+                              "one filename per line, outermost first, and its "
+                              "last line always equals `current`", text)
+                # nesting is decided by who started the run, never by
+                # whether a leftover record looks unfinished
+                self.assertIn("**Nested run.** This run is nested only when a "
+                              "workflow you are running in this session "
+                              "started it as one of its own steps", text)
+                self.assertIn("under `## Nested runs`", text)
+                self.assertIn("**Fresh run.**", text)
+                self.assertIn("Any other `current` or `stack` is stale, "
+                              "whatever its record says", text)
+                self.assertIn("note the stale filename(s) in this record",
+                              text)
+                self.assertIn("A run that resumes earlier work (run-epic "
+                              "picking up its ticket table) is fresh too", text)
+                self.assertNotIn("its epilogue has not finalized it", text)
+                self.assertIn("pop this run off the marker stack: remove this "
+                              "run's line from `.glados/runs/stack`; if lines "
+                              "remain, write the last remaining line into "
+                              "`.glados/runs/current`", text)
+                self.assertIn("otherwise delete both `current` and `stack`", text)
+                self.assertNotIn("unconditionally", text.split(
+                    "## Before ending this run")[1])
+
+    def test_nested_runs_work_under_the_outer_claim_and_row(self):
+        text = self._core("plan-feature")
+        self.assertIn("A nested run (step 1) adds no claim of its own", text)
+        self.assertIn("works under that claim, which the outermost run clears",
+                      text)
+        self.assertIn("a run that is not nested (preamble step 1) appends the "
+                      "single work-unit row for the whole unit of work", text)
+        self.assertIn("A nested run does neither", text)
+        self.assertIn("a nested plan's row would mark the whole feature done "
+                      "early", text)
+
+    def test_run_epic_tickets_are_their_own_unit_of_work(self):
+        text = self._core("build-feature")
+        self.assertIn("a ticket's build inside run-epic is a unit of work of "
+                      "its own (its own branch and MR), so it records and "
+                      "clears its own claim", text)
+        self.assertIn("it appends the ticket's row and clears the ticket's "
+                      "claim; the runs nested inside it do neither", text)
+
+    def test_pending_mr_delivery_is_not_an_escalation(self):
+        text = self._core("verify-feature")
+        self.assertIn("**No MR yet is not a failed delivery.**", text)
+        self.assertIn("record it in the run record under `## Pending MR "
+                      "delivery`. This does not escalate.", text)
+        self.assertIn("posts every pending MR item from its own record and "
+                      "from the records of the runs nested inside it", text)
+        self.assertIn('"no MR for this work; mr-comment delivery not applicable"',
+                      text)
+        # the existing guarantees survive
+        self.assertIn("a verdict that never reached the MR leaves the change "
+                      "looking unreviewed", text)
+        self.assertIn("One escalation per run", text)
+        self.assertIn("Once the MR exists, a post that fails is a failed "
+                      "delivery", text)
+
+    def test_pending_mr_items_post_before_review_and_get_committed(self):
+        text = self._core("build-feature")
+        self.assertIn("as soon as the MR is open, before handing the MR to "
+                      "review (build-feature right after it opens the MR in "
+                      "its step 5, before its self-review", text)
+        # the end case is about the item's own work, not the whole unit
+        self.assertIn("no MR exists for the work an item is about (run-epic's "
+                      "backlog selection, a standalone plan)", text)
+        self.assertIn("even if nested runs opened MRs for their own work", text)
+        self.assertIn("one more `chore(glados): record <workflow> run` commit "
+                      "before step 6", text)
+        self.assertNotIn("Commit these record updates like any other", text)
+
+    def test_absent_keys_default_from_the_preset_table(self):
+        for core in self._cores():
+            with self.subTest(core=core.stem):
+                text = self.flat(read(core))
+                self.assertIn("## Reading glados.yaml", text)
+                self.assertIn("take its default from the preset table, "
+                              "`.glados/presets.yaml`", text)
+                self.assertIn("the table's `baseline`, then the preset named "
+                              "by the manifest's `phase:`, then the keys the "
+                              "manifest sets explicitly", text)
+                self.assertNotIn("**Plugin paths.**", text,
+                                 "the plugin mapping is plugin-only")
+
+    def test_plugin_maps_presets_and_personas_to_its_own_copies(self):
+        guard = glados.PLUGIN_BOOTSTRAP_GUARD
+        flat_guard = self.flat(guard)
+        self.assertIn("when `.glados/presets.yaml` is missing, the preset "
+                      "table is `src/kernel/presets/phases.yaml` there",
+                      flat_guard)
+        self.assertIn("when `.glados/personas/` is missing, the library "
+                      "personas are `src/personas/` there", flat_guard)
+        self.assertIn("two levels above this file", flat_guard)
+        # the mapping names exactly two read-only files; run state is never
+        # looked for in the plugin
+        self.assertIn("Run records and the `.glados/runs/` markers always "
+                      "live in this repo: create them here", flat_guard)
+        self.assertNotIn("When a file the text names under `.glados/` is "
+                         "missing", flat_guard)
+        for core in sorted((self.plugin / "compiled" / "claude-plugin").glob("*.md")):
+            with self.subTest(core=core.stem):
+                text = read(core)
+                self.assertTrue(text.startswith(guard), core.name)
+                self.assertIn("## Reading glados.yaml", text)
+        # the mapped files really are where the guard says, relative to the
+        # plugin root (the repo root holds compiled/claude-plugin/)
+        self.assertTrue((REPO / "src" / "kernel" / "presets" / "phases.yaml").is_file())
+        self.assertTrue(any((REPO / "src" / "personas").glob("*.md")))
+
+    def test_standards_gate_reruns_are_bounded(self):
+        source = glados.Source(REPO)
+        self.assertEqual(
+            source.presets["baseline"]["params"]["standards-gate"]["max-cycles"], 3)
+        self.assertIn("escalation", source.modules["standards-gate"]["emits"])
+        text = self._core("implement-feature")
+        self.assertIn("At `params.standards-gate.max-cycles`, do not re-run "
+                      "again: stop, emit an `escalation`", text)
+        self.assertIn("A run enclosing this one (preamble step 1) stops too, "
+                      "rather than advancing on an artifact the gate did not "
+                      "pass", text)
+        self.assertIn("| standards-gate re-runs per gated artifact | "
+                      "`params.standards-gate.max-cycles` |", text)
+        self.assertIn("## Loop bounds", text)
+        # where another module already inlined Loop bounds, the gate's copy is
+        # a pointer and the bound row is still in the document
+        fix = self._core("fix-bug")
+        self.assertIn("`params.standards-gate.max-cycles`", fix)
+        self.assertEqual(fix.count("## Loop bounds"), 1, "one copy per document")
+
+    def test_evaluator_brief_has_a_persona_slot(self):
+        text = self._core("verify-feature")
+        self.assertIn("| Personas to consult |", text)
+        self.assertIn("`run.active-personas` (recorded by plan-feature); when "
+                      "that key is absent, the default roster in "
+                      "`params.review-panel.personas`", text)
+        self.assertIn("`product-knowledge/personas/`, then the library personas "
+                      "in `.glados/personas/`", text)
+        self.assertIn("critique the change from that persona's mandate", text)
+
+
+class TestReleaseHygiene(unittest.TestCase):
+    """The version lives in three files and the release checks guard the
+    paths that change behaviour (F6f-h)."""
+
+    def test_versions_agree(self):
+        plugin = json.loads(read(REPO / ".claude-plugin" / "plugin.json"))
+        package = json.loads(read(REPO / "package.json"))
+        self.assertEqual(glados.VERSION, plugin["version"],
+                         "bin/glados.py VERSION != .claude-plugin/plugin.json")
+        self.assertEqual(glados.VERSION, package["version"],
+                         "bin/glados.py VERSION != package.json")
+
+    def test_version_check_covers_functional_paths(self):
+        wf = read(REPO / ".github" / "workflows" / "version-check.yml")
+        block = wf.split("FUNCTIONAL_PATHS=(")[1].split(")")[0]
+        for path in ("src/", "skills/", "bin/", "hooks/", "ci/", "compiled/",
+                     "glados.yaml.example", "package.json",
+                     ".claude-plugin/plugin.json"):
+            self.assertIn(f"'{path}'", block, f"{path} not a functional path")
+
+    def test_gitlab_verify_ledger_job_has_git(self):
+        ci = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        job = ci.split("glados-verify-ledger:")[1]
+        self.assertIn("python:3.12-slim", job)
+        self.assertIn("apt-get install -y --no-install-recommends git", job)
+        self.assertIn("safe.directory", job)
+        self.assertLess(job.index("before_script:"), job.index("  script:\n"),
+                        "git must be installed before verify-ledger runs")
+
+
 class TestSourceTreeAttacks(unittest.TestCase):
 
     def test_include_cycle_fatal_names_cycle(self):
@@ -1598,6 +2218,35 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("CI check wired: UNREADABLE", out)
         self.assertIn("never fails", out)
         self.assertNotIn("Traceback", out)
+
+    def test_doctor_survives_a_manifest_that_cannot_compile(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", read(EXAMPLE).replace(
+            "disabled-workflows: []", "disabled-workflows:\n  - brunch: x"))
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, "doctor must never fail:\n" + out)
+        self.assertIn("assembly report: could not render a fresh copy", out)
+        self.assertIn("never fails", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_assembly_report_line_survives_any_error(self):
+        # Not only a Fatal: any error while rendering becomes a report line.
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        original = glados._prepare_compilation
+
+        def boom(*_a, **_k):
+            raise RuntimeError("boom")
+
+        glados._prepare_compilation = boom
+        try:
+            line = glados._assembly_report_doctor_line(
+                glados.Source(REPO), t, ["direct"])
+        finally:
+            glados._prepare_compilation = original
+        self.assertIn("could not render a fresh copy to compare", line)
+        self.assertIn("RuntimeError: boom", line)
 
     def test_doctor_reports_codeowners(self):
         t = make_target()
@@ -1916,6 +2565,119 @@ class TestHookGuards(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stderr.strip(), "",
                          "committed record must not retry the turn")
+
+    # -- nested runs: .glados/runs/stack (F2) ---------------------------------
+
+    def _commit_records(self, repo, git, *names):
+        for name in names:
+            write(repo / ".glados" / "runs" / name, f"# {name}\n")
+            git("add", f".glados/runs/{name}")
+        git("commit", "-q", "-m", "chore(glados): record test runs")
+
+    def _assert_blocks(self, repo, name):
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(p.stdout.strip(), "claude hook must block")
+        payload = json.loads(p.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn(name, payload["reason"])
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 2, "exit 2 retries the gemini turn")
+        self.assertIn(name, p.stderr)
+
+    def _assert_allows(self, repo):
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), "", "claude hook must allow")
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr.strip(), "", "gemini guard must allow")
+
+    def test_stack_with_uncommitted_outer_record_blocks(self):
+        # build-feature (outer) runs plan-feature (inner): the inner record is
+        # committed, the outer one is not — the session must not end.
+        repo, git = self._repo()
+        self._commit_records(repo, git, "inner.md")
+        write(repo / ".glados" / "runs" / "outer.md", "# outer\n")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+
+    def test_stack_outer_record_never_tracked_blocks(self):
+        # The outer record is not on disk at all, so the dirty-tree check sees
+        # nothing; only reading the stack finds it. `current` alone (the
+        # pre-stack behaviour) names a committed record and would allow.
+        repo, git = self._repo()
+        self._commit_records(repo, git, "inner.md")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+
+    def test_stack_all_committed_allows(self):
+        repo, git = self._repo()
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_allows(repo)
+
+    def test_legacy_current_without_stack_still_guards(self):
+        # An install compiled before the stack existed writes only `current`.
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "current", "missing.md\n")
+        self._assert_blocks(repo, "missing.md")
+        self._commit_records(repo, git, "missing.md")
+        self._assert_allows(repo)
+
+    def test_stack_without_current_still_guards(self):
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "stack", "outer.md\n")
+        self._assert_blocks(repo, "outer.md")
+        # an empty leftover stack with no current means nothing is in flight
+        write(repo / ".glados" / "runs" / "stack", "")
+        self._assert_allows(repo)
+
+    def test_markers_in_any_shell_encoding(self):
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "run-1.md")
+        # a UTF-8 BOM must not make a committed record look untracked
+        (runs / "stack").write_bytes(b"\xef\xbb\xbfrun-1.md\n")
+        (runs / "current").write_bytes("run-1.md\n".encode("utf-8-sig"))
+        self._assert_allows(repo)
+        # UTF-16 (Windows PowerShell 5.1 redirection) naming an uncommitted
+        # record: decoded, and it blocks
+        (runs / "stack").unlink()
+        (runs / "current").write_bytes("run-2.md\r\n".encode("utf-16"))
+        write(runs / "run-2.md", "# run 2\n")
+        self._assert_blocks(repo, "run-2.md")
+        # an undecodable marker is still a run in flight: the dirty check
+        # runs and blocks, and the guard never crashes open
+        (runs / "current").write_bytes(b"\x80\x81run-2.md\n")
+        self._assert_blocks(repo, "run-2.md")
+        (runs / "current").unlink()
+        (runs / "stack").write_bytes(b"\x80\x81run-2.md\n")
+        self._assert_blocks(repo, "run-2.md")
+
+    def test_block_message_names_both_markers_and_the_way_out(self):
+        repo, _ = self._repo()
+        runs = repo / ".glados" / "runs"
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "inner.md", "# inner\n")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        way_out = "delete both .glados/runs/current and .glados/runs/stack"
+        for state in ("both markers", "stack only"):
+            with self.subTest(state=state):
+                if state == "stack only":
+                    # following half the hint keeps the guard on
+                    (runs / "current").unlink()
+                self._assert_blocks(repo, "outer.md")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertIn(".glados/runs/stack", reason)
+                self.assertIn(way_out, reason)
+                self.assertIn(way_out, self._run_gemini(repo).stderr)
+        (runs / "stack").unlink()
+        self._assert_allows(repo)
 
     def test_toml_special_chars_roundtrip(self):
         # Backslashes, quotes and a Python triple-quote inside a core body must

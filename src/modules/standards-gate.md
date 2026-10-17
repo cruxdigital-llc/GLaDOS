@@ -4,7 +4,9 @@ kind: module
 description: Gate the work artifact against the project's documented standards before advancing
 reads: [standards.index]
 writes: []
-emits: []
+# Inlines vocabulary/loop-bounds.md: at params.standards-gate.max-cycles the
+# gate stops and escalates, so every core that seats it can emit escalation.
+emits: [escalation]
 mutates: none
 requires: []
 ---
@@ -70,6 +72,15 @@ gate.
 - **Only `advisory` findings**: proceed. State each advisory finding's
   disposition as the severity scale requires — fixed, or declined with a
   one-line reason.
+
+Each re-run of the gate on a corrected artifact is one gate cycle. Count
+the cycles in the run record. At `params.standards-gate.max-cycles`, do not
+re-run again: stop, emit an `escalation` carrying the open blocking findings
+and the cycle history, and end the run. A run enclosing this one (preamble
+step 1) stops too, rather than advancing on an artifact the gate did not
+pass. Gate cycles are bounded as *Loop bounds* sets out:
+
+<!-- glados:include vocabulary/loop-bounds.md -->
 
 ### Report
 

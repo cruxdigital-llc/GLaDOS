@@ -19,10 +19,17 @@ the record rather than omitting it.
 2. **Yield check**: compare the recorded `work.base-sha` against the current
    base. If an external edit moved it, emit `yielded (external_edit)` in the
    record, then rebase or release — never force-push over someone else's work.
-3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: append this
-   run's work-unit row to `product-knowledge/SPEC_LOG.md` — date, workflow,
-   scope, outcome, links — and clear this run's entry in `claims.md`, so
-   both ride the record commit below.
+3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: a run that is
+   not nested (preamble step 1) appends the single work-unit row for the
+   whole unit of work to `product-knowledge/SPEC_LOG.md` — date, workflow,
+   scope, outcome, links — and clears its entry in `claims.md`, so both ride
+   the record commit below. A nested run does neither: it holds no claim of
+   its own, and a work-unit row marks its subject done, so a nested plan's
+   row would mark the whole feature done early. Its record path is already
+   listed in the parent's record, and the outermost run's row covers it.
+   The exception is the one the preamble names: a ticket's build inside
+   run-epic is a unit of work of its own, so it appends the ticket's row
+   and clears the ticket's claim; the runs nested inside it do neither.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -55,6 +62,27 @@ the record rather than omitting it.
      Delivery to a different sink does not cover the one that failed: a
      verdict that never reached the MR leaves the change looking unreviewed,
      however many other sinks got a copy. Never silently drop an outcome.
+   - **No MR yet is not a failed delivery.** When an outcome is bound to
+     `mr-comment` and no MR exists yet for the work it is about (a verdict
+     from verify-feature inside build-feature, a `decision` from a nested
+     plan-feature, run-epic's backlog selection), deliver it to its other
+     bound sinks and record it in the run record under `## Pending MR
+     delivery`. This does not escalate. The run that opens the MR posts
+     every pending MR item from its own record and from the records of the
+     runs nested inside it as soon as the MR is open, before handing the MR
+     to review (build-feature right after it opens the MR in its step 5,
+     before its self-review; a pipeline's open-mr step), then marks each
+     item delivered in the record that holds it. Any item still pending
+     when this step runs, with its MR open, is posted now. When the
+     outermost run ends and no MR exists for the work an item is about
+     (run-epic's backlog selection, a standalone plan), mark that item "no
+     MR for this work; mr-comment delivery not applicable" instead of
+     escalating, even if nested runs opened MRs for their own work. Once
+     the MR exists, a post that fails is a failed delivery as above. These
+     record updates (this run's record, and any nested record you marked
+     delivered) ride the step 4 commit when made before it; any made in
+     this step go in one more `chore(glados): record <workflow> run` commit
+     before step 6.
    - Reaching only the ledger is not itself a failure. `progress`, `decision`,
      and `observation` may be bound ledger-only by design, as may any outcome
      type in a project whose manifest confesses `visibility-acknowledged:
@@ -69,6 +97,9 @@ the record rather than omitting it.
      exactly the reason that produced it, and the run manufactures noise at
      the moment the team can least act on it.
 6. **Release** anything held: leases (when enabled) and other in-flight
-   markers — and delete `.glados/runs/current` unconditionally (the preamble
-   always sets it; a leftover marker makes the run-record guard hooks block
-   the next session).
+   markers. Then pop this run off the marker stack: remove this run's line
+   from `.glados/runs/stack`; if lines remain, write the last remaining line
+   into `.glados/runs/current` (the enclosing run is in flight again);
+   otherwise delete both `current` and `stack`. With no `stack` file, delete
+   `current`. Never leave a marker naming this finished run: a leftover
+   marker makes the run-record guard hooks block the next session.

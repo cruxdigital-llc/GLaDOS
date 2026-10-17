@@ -60,6 +60,11 @@ baseline:
       # Safety bound for evaluator verify/fix cycles — the compiled
       # `params.evaluator.max-cycles` reference must resolve in every install.
       max-cycles: 3
+    standards-gate:
+      # Safety bound for re-running the standards gate on a corrected
+      # artifact — the compiled `params.standards-gate.max-cycles` reference
+      # must resolve in every install.
+      max-cycles: 3
 
 # ---------------------------------------------------------------------------
 # Phase presets

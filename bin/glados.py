@@ -119,6 +119,39 @@ LEDGER_OK_TYPES = {"progress", "decision", "observation"}
 MERGE_AUTHORITY_ORDER = ["human", "agent-integration-only", "agent"]
 DECISION_ORDER = ["forbidden", "escalate", "record", "agent"]
 
+# The manifest keys whose values shape COMPILED output — the lane-1 keys. Only
+# these feed the manifest hash stamped into every compiled header and into
+# .glados/manifest-hash, so only an edit to one of them makes `check` report a
+# stale compile. Everything else in glados.yaml (channels, sinks, params,
+# decisions, branching, merge-authority, platform, ...) is lane 2: compiled
+# text tells the agent to read it at run time, so editing it changes behaviour
+# on the next run with no reinstall — and must never make `check` fail. A key
+# belongs here only if changing it changes the bytes the compiler emits:
+#   phase / optimize-for   -> the optimize-for sentence in every preamble, and
+#                             (phase) which preset defaults the module lists
+#   default-modules / workflows -> which modules each core inlines
+#   disabled-workflows     -> which cores and shims exist at all
+#   sda                    -> install-time scaffolding (create-only artifacts)
+# A derived projection of a lane-2 block can join the hash when it shapes
+# emitted files (see structural_projection). Comments, key order, and
+# whitespace never change the hash: it covers the parsed values, not bytes.
+STRUCTURAL_KEYS = ["phase", "optimize-for", "default-modules", "workflows",
+                   "disabled-workflows", "sda"]
+
+# Every top-level glados.yaml key the toolchain or the compiled text reads.
+# A key outside this list is almost always a typo ('chanels:') that would be
+# silently ignored, so install/check print a warning naming it (doctor too).
+# It is a warning, not a fatal error: rejecting unknown keys is a new rule
+# and arrives in a minor release. Extend this list whenever a part of the
+# toolchain starts reading a new top-level key.
+KNOWN_MANIFEST_KEYS = [
+    "glados", "platform", "phase", "phase-declared", "optimize-for",
+    "channels", "sinks", "merge-authority", "decisions",
+    "relaxation-acknowledged", "visibility-acknowledged", "branching",
+    "default-modules", "workflows", "disabled-workflows", "params", "sda",
+    "concurrency", "lifecycle", "pipelines", "steps", "canon",
+]
+
 # AI Studio is a planning/review/spec surface: only advisory-safe cores get a
 # paste bundle. fix-bug ships as its plan half, "fix-bug-advisory".
 AISTUDIO_CORES = [
@@ -152,6 +185,17 @@ PLUGIN_STUB_MARKER = "${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/"
 # the consumer's own: the compiler stamps the phase-neutral baseline
 # optimize-for instead, and this guard makes the consuming repo's manifest
 # govern at run time.
+#
+# A plugin-only repo also has no `.glados/` tree — nothing vendored it — so
+# the second paragraph maps the two vendored files compiled text points at
+# (the preset table that supplies defaults for keys the manifest omits, and
+# the library personas) onto the plugin's own copies. It names exactly those
+# two: a blanket "anything missing under .glados/" would also cover the run
+# records and `.glados/runs/` markers, which are missing by design on a first
+# run and must be created in the project, never read from the plugin. The
+# plugin root is located relative to this file, never through
+# ${CLAUDE_PLUGIN_ROOT}: that variable is expanded in SKILL.md stubs, not in
+# the compiled file the agent reads.
 PLUGIN_BOOTSTRAP_GUARD = (
     "<!-- claude-plugin bootstrap guard — this artifact was compiled from\n"
     "     glados.yaml.example, not from the repo it runs in. -->\n"
@@ -162,6 +206,15 @@ PLUGIN_BOOTSTRAP_GUARD = (
     "no `glados.yaml`, copy `glados.yaml.example` to `glados.yaml` (or run\n"
     "`/glados:init`) and set `phase:` before doing consequential work — do not\n"
     "guess a phase.\n\n"
+    "**Plugin paths.** This repo may have no `.glados/` directory. Two\n"
+    "read-only files then come from the plugin's own copy at the plugin root\n"
+    "(two levels above this file, the directory that holds\n"
+    "`compiled/claude-plugin/`): when `.glados/presets.yaml` is missing, the\n"
+    "preset table is `src/kernel/presets/phases.yaml` there, and when\n"
+    "`.glados/personas/` is missing, the library personas are `src/personas/`\n"
+    "there. Project personas in `product-knowledge/personas/` still win a\n"
+    "name collision. Run records and the `.glados/runs/` markers always live\n"
+    "in this repo: create them here, never in the plugin.\n\n"
 )
 
 # SDA (Structured Development Artifacts) — the version header stamped on
@@ -242,6 +295,8 @@ class Fatal(Exception):
 #
 # Supported subset (enough for the restricted GLaDOS schema and no more):
 #   * block maps and block lists, 2-space indentation
+#   * lists of maps: `- key: value` opens a mapping item whose later keys
+#     align with `key` (as in standard YAML); bare `-` + an indented map too
 #   * inline flow lists: [a, b], []
 #   * scalars: plain, single/double quoted, integers, true/false/null
 #   * block scalars: > >- | |- (folded / literal, clip / strip chomping)
@@ -252,6 +307,13 @@ class Fatal(Exception):
 
 class YamlError(Fatal):
     pass
+
+
+# A block-list item that opens a mapping: an unquoted plain key whose FIRST
+# colon is followed by whitespace or the end of the item (`- name: x`,
+# `- name:`). A quoted item (`- "a: b"`) stays a string, and so does a colon
+# with no space after it (`- http://host`), as in standard YAML.
+_MAP_ITEM_RE = re.compile(r"""^[^\s'"\[\]{}#][^:]*:(?:\s|$)""")
 
 
 def _strip_inline_comment(line: str) -> str:
@@ -481,6 +543,20 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
                 raise YamlError(f"{filename}:{i}: flow mapping '{{...}}' is not "
                                 f"supported — use a block map (nested 2-space-"
                                 f"indented 'key: value' lines)")
+            elif _MAP_ITEM_RE.match(item):
+                # `- key: value` starts a MAPPING item (standard YAML), not
+                # the string 'key: value'. The map's indent is the column of
+                # `key`; following keys aligned with it continue the same
+                # map, and blocks nested under them work as in any block map.
+                # Blank out the dash in place and hand the line to parse_map,
+                # which then sees an ordinary map starting at that column. A
+                # sibling '- ' line sits left of the map's column, so
+                # parse_map stops there and this loop takes the next item.
+                i -= 1
+                raw_line = lines[i]
+                lines[i] = raw_line[:ci] + " " + raw_line[ci + 1:]
+                sub, i = parse_map(i)
+                result.append(sub)
             else:
                 result.append(_parse_scalar(item, filename, i))
         return result, i
@@ -707,6 +783,10 @@ class Resolved:
 
 
 def _is_laxer(order: list[str], a, b) -> bool:
+    # An unknown value compares as "not laxer". That is safe only because
+    # run_type_checks rejects a decision value outside DECISION_ORDER as a
+    # fatal error of its own — without that check a typo ('agnet') would
+    # slip past the relaxation check silently.
     try:
         return order.index(a) > order.index(b)
     except ValueError:
@@ -717,7 +797,40 @@ def load_manifest(path: Path) -> dict:
     if not path.exists():
         raise Fatal(f"no manifest at {path} — copy glados.yaml.example to "
                     f"{path.name} in your repo root and edit it")
-    return parse_yaml(read_text(path), path.name)
+    raw = parse_yaml(read_text(path), path.name)
+    if not isinstance(raw, dict):
+        raise Fatal(f"{path.name}: the top level must be a mapping of "
+                    f"'key: value' lines, got a {type(raw).__name__} — start "
+                    f"from glados.yaml.example")
+    return raw
+
+
+def _require_name_list(value, where: str, origin: str, what: str) -> None:
+    """Fail with a named fix unless ``value`` is None or a list of names.
+
+    These lists (disabled-workflows, default-modules, workflows.<core>,
+    channels.<outcome>, relaxation-acknowledged) feed set lookups long before
+    the type checks run. The parser reads `- name: value` as a MAPPING item,
+    as standard YAML does, so a stray colon would otherwise surface as an
+    unhashable-dict TypeError instead of a sentence naming the key. A
+    non-string scalar item (a number) stays legal here: it is hashable, and
+    the token checks name it as an unknown workflow/module/sink."""
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise Fatal(f"{origin}: {where}: must be a list of {what} names — got "
+                    f"{value!r}; write '[a, b]' or one '- name' per line")
+    for idx, item in enumerate(value, 1):
+        if isinstance(item, dict):
+            shown = ", ".join(
+                f"{k}: {'' if v is None else _fmt(v)}".rstrip()
+                for k, v in item.items())
+            raise Fatal(f"{origin}: {where}: item {idx} is a mapping "
+                        f"('{shown}') — write one {what} name per '- ' line; "
+                        f"'- name: value' is a mapping in YAML")
+        if isinstance(item, list):
+            raise Fatal(f"{origin}: {where}: item {idx} is a nested list "
+                        f"({_fmt(item)}) — write one {what} name per item")
 
 
 def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
@@ -754,6 +867,10 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
 
     # channels + decisions: per-leaf layering
     for group in ("channels", "decisions"):
+        if raw.get(group) is not None and not isinstance(raw.get(group), dict):
+            raise Fatal(f"{manifest_name}: '{group}:' must be a mapping of "
+                        f"one 'name: value' line per leaf — got "
+                        f"{raw.get(group)!r}")
         merged: dict = {}
         for leaf, val in (baseline.get(group) or {}).items():
             merged[leaf] = val
@@ -765,6 +882,34 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
             merged[leaf] = val
             r.provenance[f"{group}.{leaf}"] = "explicit"
         r.values[group] = merged
+
+    # Shapes the compiler iterates or hashes before any type check runs. A
+    # wrong shape here used to escape as a TypeError/AttributeError traceback
+    # (and a hard exit from `check --report-only`, which never hard-exits);
+    # it must be a Fatal naming the key. The origin names where the value
+    # came from, so a malformed preset is not blamed on the manifest.
+    def origin(key: str) -> str:
+        prov = r.provenance.get(key, "explicit")
+        return manifest_name if prov == "explicit" else f"phases.yaml ({prov})"
+
+    opt = r.values.get("optimize-for")
+    if opt is not None and not isinstance(opt, str):
+        raise Fatal(f"{origin('optimize-for')}: optimize-for: must be one "
+                    f"sentence of text — got {opt!r}")
+    for key, what in (("default-modules", "module"),
+                      ("disabled-workflows", "workflow")):
+        _require_name_list(r.values.get(key), key, origin(key), what)
+    for leaf, sinks in r.values["channels"].items():
+        _require_name_list(sinks, f"channels.{leaf}",
+                           origin(f"channels.{leaf}"), "sink")
+    for key in ("workflows", "params"):
+        if raw.get(key) is not None and not isinstance(raw.get(key), dict):
+            raise Fatal(f"{manifest_name}: '{key}:' must be a mapping of one "
+                        f"'name: value' line per entry — got {raw.get(key)!r}")
+    for wf, mods in (raw.get("workflows") or {}).items():
+        _require_name_list(mods, f"workflows.{wf}", manifest_name, "module")
+    _require_name_list(raw.get("relaxation-acknowledged"),
+                       "relaxation-acknowledged", manifest_name, "key")
 
     # params: deep-ish merge (baseline<phase<explicit), review-panel.max-cycles tracked
     params: dict = {}
@@ -824,8 +969,62 @@ def resolved_subkey_exists(r: Resolved, dotted: str) -> bool:
     return node is not None and node != [] and node != {}
 
 
+def structural_projection(raw: dict) -> dict:
+    """The lane-1 slice of a parsed manifest: exactly what the compiled output
+    depends on. ``{key: raw[key]}`` for every STRUCTURAL_KEYS entry the
+    manifest SETS; an absent key is left out.
+
+    Absent and an explicit null must hash differently, because
+    resolve_manifest treats them differently: an absent key takes the phase
+    preset's value, while `default-modules:` with no value overrides the
+    preset with null (no modules). Projecting `raw.get(key)` hashed both as
+    None, so switching between them changed the compiled cores without
+    moving the hash (check reported drift, doctor said "current").
+
+    Derived projections of lane-2 blocks join here when they shape emitted
+    files (e.g. the names and descriptions of project pipelines, which name
+    the shims) — add them under their own key, never the whole block."""
+    return {key: raw[key] for key in STRUCTURAL_KEYS if key in raw}
+
+
+def structural_hash(raw: dict) -> str:
+    """sha256 of the canonical JSON of the structural projection. Sorted keys
+    and fixed separators make it independent of key order, comments and
+    whitespace in glados.yaml; only a changed structural VALUE moves it."""
+    canonical = json.dumps(structural_projection(raw), sort_keys=True,
+                           separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def manifest_hash_of(path: Path) -> str:
-    return hashlib.sha256(read_text(path).encode("utf-8")).hexdigest()
+    """Parse the manifest at ``path`` and hash its structural keys.
+
+    This hash is what every compiled header and .glados/manifest-hash carry,
+    and what `check` compares. It used to hash the whole file, which made
+    every lane-2 edit (a sink, a channel, a param) fail `check` as a stale
+    compile — the opposite of the lane-2 promise. A parse error raises the
+    parser's Fatal (file:line plus the fix)."""
+    return structural_hash(load_manifest(path))
+
+
+def unknown_manifest_keys(raw: dict) -> list[str]:
+    """Top-level manifest keys nothing reads, in manifest order."""
+    return [k for k in raw if k not in KNOWN_MANIFEST_KEYS]
+
+
+def manifest_warnings(raw: dict, manifest_name: str) -> list[str]:
+    """Non-fatal findings about the manifest itself (never block an install).
+    Today: unknown top-level keys, each named with the known set so a typo
+    is one glance from its fix."""
+    known = ", ".join(KNOWN_MANIFEST_KEYS)
+    return [f"{manifest_name}: unknown top-level key '{k}' is ignored — check "
+            f"the spelling (known keys: {known})"
+            for k in unknown_manifest_keys(raw)]
+
+
+def _print_warnings(warnings: list[str]) -> None:
+    for w in warnings:
+        print(f"glados: warning: {w}", file=sys.stderr)
 
 
 # =============================================================================
@@ -904,6 +1103,9 @@ class Compilation:
                         if c not in set(r.values.get("disabled-workflows") or [])]
         self.cores = {c: compile_core(source, c, r, manifest_hash) for c in self.enabled}
         self.modules_for = {c: effective_modules(source, c, r) for c in self.enabled}
+        # Non-fatal findings (manifest_warnings and any later warning rules).
+        # install/check print them; they never fail a command.
+        self.warnings: list[str] = []
 
 
 def compile_all(source: Source, r: Resolved, manifest_hash: str) -> Compilation:
@@ -1120,6 +1322,18 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
 
     # ---- (6) phase invariants ----------------------------------------------
     errors.extend(_check_phase_invariants(source, r))
+
+    # ---- (6b) decision values ------------------------------------------------
+    # Leaf NAMES under decisions: are open (a project names its own decision
+    # points), but every VALUE must be one of the four classes the preamble's
+    # decision-rights table defines. A misspelt class has no defined behaviour
+    # at run time, and _is_laxer would wave it through the relaxation check.
+    for leaf, val in sorted((r.values.get("decisions") or {}).items()):
+        if val not in DECISION_ORDER:
+            prov = r.provenance.get(f"decisions.{leaf}", "baseline")
+            errors.append(f"decisions.{leaf}: '{val}' is not a decision class "
+                          f"— use one of agent | record | escalate | "
+                          f"forbidden (value from {prov})")
 
     # ---- (7) alias-map integrity -------------------------------------------
     for alias, target in source.aliases.items():
@@ -1619,9 +1833,13 @@ code. The api-runner path (paid API key) is the governed alternative.
 
 ## Staleness rule
 
-These bundles inline `glados.yaml` values at compile time. Re-run
-`glados.py install --mode aistudio` whenever the manifest changes; `MANIFEST.md`
-records the compile hash each bundle was built against.
+These bundles are compiled from `glados.yaml`. `MANIFEST.md` records the
+compile hash each bundle was built against; it covers the structural keys only
+(phase, optimize-for, default-modules, workflows, disabled-workflows, sda), so
+re-run `glados.py install --mode aistudio` whenever one of those changes or
+GLaDOS is upgraded. The live keys (channels, decisions, merge-authority,
+params, sinks, branching) are not baked in and do not move the hash: paste the
+current `glados.yaml` with the repo context so the model sees them.
 """
 
 AISTUDIO_RUN_RECORD_SCHEMA = {
@@ -2174,23 +2392,35 @@ def _prepare_compilation(source: Source, target: Path, mode: str):
     else:
         manifest_path = target / "glados.yaml"
     raw = load_manifest(manifest_path)
-    resolved = resolve_manifest(raw, source.presets, manifest_path.name)
-    if mode == "claude-plugin":
-        # Never bake the example manifest's phase-resolved optimize-for into
-        # artifacts every plugin consumer runs: stamp the phase-neutral
-        # baseline sentence, and prepend the bootstrap guard to every core so
-        # the consuming repo's own glados.yaml governs at run time.
-        resolved.values["optimize-for"] = (
-            source.presets.get("baseline") or {}).get("optimize-for")
-        resolved.provenance["optimize-for"] = "baseline (claude-plugin is phase-neutral)"
-    manifest_hash = manifest_hash_of(manifest_path)
-    comp = compile_all(source, resolved, manifest_hash)
-    if mode == "claude-plugin":
-        for name in list(comp.cores):
-            comp.cores[name] = PLUGIN_BOOTSTRAP_GUARD + comp.cores[name]
-    errors = run_type_checks(source, comp)
-    if errors:
-        raise Fatal("install checks failed:\n  - " + "\n  - ".join(errors))
+    # Computed before anything can fail: when resolution or a type check
+    # fails, a misspelt top-level key ('sinsk:') is often the cause, so the
+    # warnings ride on the Fatal (exc.warnings) for install/check to print.
+    warnings = manifest_warnings(raw, manifest_path.name)
+    try:
+        resolved = resolve_manifest(raw, source.presets, manifest_path.name)
+        if mode == "claude-plugin":
+            # Never bake the example manifest's phase-resolved optimize-for
+            # into artifacts every plugin consumer runs: stamp the
+            # phase-neutral baseline sentence, and prepend the bootstrap
+            # guard to every core so the consuming repo's own glados.yaml
+            # governs at run time.
+            resolved.values["optimize-for"] = (
+                source.presets.get("baseline") or {}).get("optimize-for")
+            resolved.provenance["optimize-for"] = "baseline (claude-plugin is phase-neutral)"
+        # The structural hash of the manifest already parsed above (identical
+        # to manifest_hash_of(manifest_path), without a second parse).
+        manifest_hash = structural_hash(raw)
+        comp = compile_all(source, resolved, manifest_hash)
+        comp.warnings.extend(warnings)
+        if mode == "claude-plugin":
+            for name in list(comp.cores):
+                comp.cores[name] = PLUGIN_BOOTSTRAP_GUARD + comp.cores[name]
+        errors = run_type_checks(source, comp)
+        if errors:
+            raise Fatal("install checks failed:\n  - " + "\n  - ".join(errors))
+    except Fatal as exc:
+        exc.warnings = warnings
+        raise
     return comp, manifest_hash
 
 
@@ -2213,7 +2443,14 @@ def cmd_install(args) -> int:
               "history, then set phase: and re-run install (MIGRATION.md "
               "documents the details)", file=sys.stderr)
 
-    comp, manifest_hash = _prepare_compilation(source, target, mode)
+    try:
+        comp, manifest_hash = _prepare_compilation(source, target, mode)
+    except Fatal as exc:
+        # Warnings first, then main() prints the error: an unknown key is
+        # most useful exactly when the install fails.
+        _print_warnings(getattr(exc, "warnings", []))
+        raise
+    _print_warnings(comp.warnings)
     report = build_assembly_report(source, comp)
 
     # Read the previously vendored report BEFORE the plan overwrites it, so a
@@ -2410,6 +2647,42 @@ def _detect_modes(target: Path) -> list[str]:
     return modes
 
 
+# Planned files `check` requires to EXIST but never byte-compares. The
+# assembly report is an informational record of the last install: it renders
+# live lane-2 values (channels, sinks, params, decisions, branching), so it
+# legitimately goes stale on every lane-2 edit, and byte-checking it made
+# those edits fail `check` — the opposite of the lane-2 promise. Doctor says
+# when it predates later edits.
+CHECK_PRESENCE_ONLY = {".glados/assembly-report.md"}
+
+
+def _installed_drift(source: Source, target: Path, mode: str,
+                     comp: Compilation, manifest_hash: str,
+                     report: str) -> list[tuple[str, str]]:
+    """(relpath, problem) for every planned file of ``mode`` that is missing
+    or differs from a fresh render. Files in CHECK_PRESENCE_ONLY need only
+    exist. Shared by `check` (each pair is a failure) and `doctor` (which
+    must know whether anything besides the report is stale before saying
+    nothing is)."""
+    plan = ADAPTERS[mode](source, comp)
+    plan.update(vendor_plan(source, manifest_hash, report))
+    out: list[tuple[str, str]] = []
+    for rel, (kind, data) in plan.items():
+        path = target / rel
+        if not path.exists():
+            out.append((rel, "missing installed file"))
+            continue
+        if rel in CHECK_PRESENCE_ONLY:
+            continue
+        if kind == "bytes":
+            drift = path.read_bytes() != data
+        else:
+            drift = read_text(path) != data
+        if drift:
+            out.append((rel, "drift in installed file"))
+    return out
+
+
 def cmd_check(args) -> int:
     target = Path(args.target).resolve()
     report_only = args.report_only
@@ -2451,32 +2724,31 @@ def cmd_check(args) -> int:
             vendored = read_text(hash_path).strip()
             current = manifest_hash_of(manifest_path)
             if vendored != current:
-                problems.append(f"stale compile: manifest-hash {vendored[:12]}… != "
-                                f"current {current[:12]}… — re-run glados install")
+                problems.append(f"stale compile: a structural glados.yaml key "
+                                f"({', '.join(STRUCTURAL_KEYS)}) changed since "
+                                f"install — manifest-hash {vendored[:12]}… != "
+                                f"current {current[:12]}…; re-run glados install")
     except Fatal as exc:
         problems.append(f"cannot compare manifest hash: {exc}")
 
+    warnings: list[str] = []
     for mode in (modes if source is not None else []):
         try:
             comp, manifest_hash = _prepare_compilation(source, target, mode)
         except Fatal as exc:
             problems.append(f"[{mode}] {exc}")
+            # A failing mode still reports its manifest warnings: a misspelt
+            # top-level key is often the cause of the failure itself.
+            warnings += [w for w in getattr(exc, "warnings", [])
+                         if w not in warnings]
             continue
+        warnings += [w for w in comp.warnings if w not in warnings]
         report = build_assembly_report(source, comp)
-        plan = ADAPTERS[mode](source, comp)
-        plan.update(vendor_plan(source, manifest_hash, report))
-        for rel, (kind, data) in plan.items():
-            path = target / rel
-            if not path.exists():
-                problems.append(f"[{mode}] missing installed file: {rel}")
-                continue
-            if kind == "bytes":
-                drift = path.read_bytes() != data
-            else:
-                drift = read_text(path) != data
-            if drift:
-                problems.append(f"[{mode}] drift in installed file: {rel}")
+        for rel, why in _installed_drift(source, target, mode, comp,
+                                         manifest_hash, report):
+            problems.append(f"[{mode}] {why}: {rel}")
 
+    _print_warnings(warnings)
     _emit_check(problems, report_only)
     if report_only:
         return 0
@@ -2509,12 +2781,15 @@ def cmd_doctor(args) -> int:
         if hash_path.exists() and manifest_path.exists():
             vendored = read_text(hash_path).strip()
             current = manifest_hash_of(manifest_path)
-            state = "current" if vendored == current else "STALE — re-run install"
+            state = ("current" if vendored == current else
+                     "STALE — a structural key changed; re-run install")
             print(f"  manifest hash: {state} ({current[:12]}…)")
         else:
             print("  manifest hash: not vendored (no .glados/manifest-hash)")
     except Fatal as exc:
         print(f"  manifest hash: UNREADABLE — {exc}")
+
+    print(_assembly_report_doctor_line(source, target, modes))
 
     try:
         if _ci_check_wired(target):
@@ -2569,6 +2844,13 @@ def cmd_doctor(args) -> int:
             declared = raw.get("phase-declared")
             print(f"  phase: {raw.get('phase')} "
                   f"(declared: {declared or 'undated — add phase-declared:'})")
+            unknown = unknown_manifest_keys(raw)
+            if unknown:
+                print(f"  manifest keys: unknown top-level key(s) "
+                      f"{', '.join(unknown)} — ignored; known keys: "
+                      f"{', '.join(KNOWN_MANIFEST_KEYS)}")
+            else:
+                print("  manifest keys: all known")
             for key in ("visibility-acknowledged", "relaxation-acknowledged"):
                 if key in raw:
                     print(f"  confession restated: {key}: {_fmt(raw[key])}")
@@ -2577,6 +2859,71 @@ def cmd_doctor(args) -> int:
 
     print("glados doctor: informational only — never fails")
     return 0
+
+
+def _assembly_report_doctor_line(source: Source, target: Path,
+                                 modes: list[str]) -> str:
+    """Whether the vendored assembly report matches a fresh render.
+
+    `check` no longer byte-compares the report (CHECK_PRESENCE_ONLY): it
+    renders lane-2 values, so it goes stale on every lane-2 edit without
+    anything being wrong. Doctor still says so, because a reader of the report
+    deserves to know it shows the manifest as of the last install.
+
+    "Nothing is stale" is a claim, so it is checked before it is printed: the
+    report also differs when the GLaDOS source changed (a newer VERSION, a
+    preset edit) or after a structural edit the hash cannot see, and then
+    the compiled files drift too. Every planned file is byte-compared as
+    `check` does (_installed_drift), and the informational wording is used
+    only when the report is the only thing that differs.
+
+    Never raises: doctor never fails, so any error while rendering (not only
+    a Fatal) becomes the "could not render" line."""
+    path = target / ".glados" / "assembly-report.md"
+    if not path.exists():
+        return "  assembly report: not vendored (no .glados/assembly-report.md)"
+    if not modes:
+        return "  assembly report: present (no install mode detected to compare)"
+    try:
+        vendored = read_text(path)
+    except Fatal as exc:
+        return f"  assembly report: UNREADABLE — {exc}"
+    fresh: list[str] = []
+    hashes: set[str] = set()
+    drifted: set[str] = set()
+    for mode in modes:
+        try:
+            comp, manifest_hash = _prepare_compilation(source, target, mode)
+            report = build_assembly_report(source, comp)
+            drift = _installed_drift(source, target, mode, comp,
+                                     manifest_hash, report)
+        except Exception as exc:  # deliberately broad: doctor never fails
+            text = str(exc)
+            first = text.splitlines()[0] if text else type(exc).__name__
+            if not isinstance(exc, Fatal):
+                first = f"{type(exc).__name__}: {first}"
+            return (f"  assembly report: could not render a fresh copy to "
+                    f"compare ({first}) — run check for details")
+        fresh.append(report)
+        hashes.add(manifest_hash)
+        drifted.update(rel for rel, _ in drift)
+    if vendored in fresh:
+        return "  assembly report: current"
+    hash_path = target / ".glados" / "manifest-hash"
+    try:
+        vendored_hash = read_text(hash_path).strip() if hash_path.exists() else ""
+    except (Fatal, OSError):
+        vendored_hash = ""
+    if vendored_hash and vendored_hash not in hashes:
+        return ("  assembly report: predates later glados.yaml edits, "
+                "including a structural one — re-run install")
+    if drifted:
+        return (f"  assembly report: differs from a fresh render and "
+                f"{len(drifted)} installed file(s) drift — re-run install "
+                f"(glados.py check lists them)")
+    return ("  assembly report: the assembly report predates later glados.yaml "
+            "edits; re-run install to refresh it — informational, nothing is "
+            "stale")
 
 
 def _sda_doctor_lines(target: Path, raw: dict) -> list[str]:

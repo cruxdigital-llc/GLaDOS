@@ -28,6 +28,12 @@ jobs:
           FUNCTIONAL_PATHS=(
             'src/'
             'skills/'
+            'bin/'
+            'hooks/'
+            'ci/'
+            'compiled/'
+            'glados.yaml.example'
+            'package.json'
             '.claude/commands/'
             '.claude-plugin/plugin.json'
           )

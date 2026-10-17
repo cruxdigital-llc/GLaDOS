@@ -51,7 +51,11 @@ Two rules make this safe without freezing the vocabulary:
    or a confessed `visibility-acknowledged: ledger-only`). All of a run's
    delivery failures ride in **one** escalation, and that escalation is never
    itself escalated — otherwise one unreachable platform produces an unbounded
-   chain.
+   chain. One exception: an outcome bound to `mr-comment` before any MR exists
+   (a verification verdict inside build-feature, for example) is recorded
+   under `## Pending MR delivery` in the run record and posted by the run that
+   opens the MR, or marked not applicable if no MR ever opens for that work.
+   That is not a failed delivery and does not escalate.
 
 Bodies are yours. Everything under a sink name — `channel:`, `format:`,
 `grouping:`, `threads:`, anything — is freeform config the **agent** interprets

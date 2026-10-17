@@ -23,11 +23,18 @@ keys:
   run.current:
     home: ledger
     doc: >
-      The in-flight marker at .glados/runs/current, holding the current run
-      record's filename. Written by every core's compiled preamble at run
-      start; deleted unconditionally by the compiled epilogue's release step;
-      read by the host-agent run-record guard hooks (.glados/hooks/). Transient
-      run state — never committed.
+      The in-flight markers. .glados/runs/current holds the filename of the
+      innermost run in flight (one line, so older hooks keep working);
+      .glados/runs/stack lists every run in flight, one filename per line,
+      outermost first, its last line equal to current. A run nested inside
+      another (plan-feature inside build-feature) pushes onto the stack; a
+      run is nested only when a workflow running in the same session started
+      it, so any other leftover marker is stale and a fresh run replaces it.
+      Written by every core's compiled preamble at run start; popped by the
+      compiled epilogue's release step, which rewrites current to the
+      enclosing run or deletes both files when the stack empties; read by the
+      host-agent run-record guard hooks (.glados/hooks/), which check every
+      listed record. Transient run state — never committed.
   run.active-personas:
     home: run-record
     doc: >
@@ -105,16 +112,20 @@ keys:
       The SDA claims file at the repo root (grammar: SDA standard v1.0,
       Claims; mapping: docs/standards/sda-profile-glados-v2.md). Written by
       the compiled preamble's claim step and cleared by the compiled epilogue
-      when `sda: true`; read by run-epic for contention awareness and,
+      when `sda: true` (by the outermost run only: nested runs work under
+      the enclosing run's claim; a ticket's build inside run-epic is a unit
+      of work of its own); read by run-epic for contention awareness and,
       externally, by Wheatley's claims overlay. Inert when `sda:` is absent
       or false.
   sda.spec-log:
     home: "repo:product-knowledge/SPEC_LOG.md"
     doc: >
-      The SDA work-unit log — one appended row per run (date, workflow,
-      scope, outcome, links), newest first. Written by the compiled epilogue
-      when `sda: true`; consumed outside the compile graph by SDA tooling
-      and audits.
+      The SDA work-unit log — one appended row per unit of work (date,
+      workflow, scope, outcome, links), newest first: the outermost run
+      appends it, and runs nested inside it append none (a ticket's build
+      inside run-epic is a unit of work of its own). Written by the
+      compiled epilogue when `sda: true`; consumed outside the compile graph
+      by SDA tooling and audits.
 
   # ---- manifest keys (lane 2: runtime-read; writer is the human via MR) ----
   manifest.platform:

@@ -50,9 +50,12 @@ team states policy. Its load-bearing keys:
   or `agent`.
 - **`sda:`** — explicit-only, default `false`: opts the project into SDA
   (Structured Development Artifacts) conformance. Install scaffolds the
-  artifacts (`claims.md`, the work-unit log), and every run then records a
-  claim before mutating and appends its work-unit row before ending. No
-  phase preset may set it — see [guides/sda.md](guides/sda.md).
+  artifacts (`claims.md`, the work-unit log), and every run that is not
+  nested inside another then records a claim before mutating and appends
+  the work-unit row before ending. A nested run, such as plan-feature inside
+  build-feature, works under the outer run's claim and row; a ticket's build
+  inside run-epic counts as a unit of work of its own. No phase preset may
+  set it — see [guides/sda.md](guides/sda.md).
 
 Workflow text never states any of these; it reads the keys at run time. Two
 workflows therefore cannot contradict each other about who merges — the
@@ -86,12 +89,15 @@ what was decided, how it ended — into `.glados/runs/` and commits it. Example:
 fresh session, a teammate, or a CI job resumes an epic or audits a decision
 from `git pull` alone, with no access to anyone's chat transcript.
 
-Two sentences on enforcement: at run start the workflow writes an in-flight
-marker file, `.glados/runs/current` (never committed), and deletes it when the
-record is finalized. Small guard scripts vendored into `.glados/hooks/` block
-the agent session from ending while that marker exists without a committed
-record, and a CI check (`glados.py verify-ledger`) is the backstop on runtimes
-without hooks — wiring recipes in [hooks/README.md](../hooks/README.md).
+On enforcement: at run start the workflow writes in-flight marker files
+(never committed). `.glados/runs/current` names the run in flight and
+`.glados/runs/stack` lists every run in flight, because runs nest:
+build-feature runs plan-feature inside itself, and the inner run must not
+erase the outer run's marker. The epilogue pops its own entry when the record
+is finalized. Small guard scripts vendored into `.glados/hooks/` block the
+agent session from ending while any listed run lacks a committed record, and
+a CI check (`glados.py verify-ledger`) is the backstop on runtimes without
+hooks — wiring recipes in [hooks/README.md](../hooks/README.md).
 
 ## Cores, modules, and vocabulary
 
@@ -125,9 +131,24 @@ changes instantly?
   standards documents. Drop a file in the right directory, name it in the
   manifest, and the next run picks it up.
 
-`python bin/glados.py doctor --target /path/to/your/project` reports when a
-lane-1 (structural) key changed after the last install, i.e. when a recompile
-is due.
+Only the structural keys feed the manifest hash stamped into compiled output:
+`phase`, `optimize-for`, `default-modules`, `workflows`, `disabled-workflows`,
+and `sda`. `glados.py check` reports a stale compile when one of them
+changed after the last install, i.e. when a recompile is due; a lane-2 edit
+never makes the compile stale, and comments or reformatting change nothing.
+`check` still type-checks every value, lane 2 included, so a lane-2 edit
+fails it only when the new value is itself invalid: an undeclared sink, a
+relaxation nobody confessed, a misspelt decision class. `python
+bin/glados.py doctor --target /path/to/your/project` reports the same, and
+also notes when the vendored assembly report predates later edits. When the
+report is the only thing that differs, the note is informational: the report
+records the last install, and an older report makes nothing stale. When the
+installed files differ too (a newer GLaDOS checkout, for example), doctor
+says so and tells you to re-run install.
+
+When a key the agent resolves from `glados.yaml` is absent, its default comes
+from the preset table vendored at `.glados/presets.yaml`: `baseline`, then
+the preset for your `phase:`, then your explicit keys.
 
 ## Outcome types and sinks
 
@@ -146,7 +167,10 @@ or declared in `sinks:` (a typo like `[slak]` fails the install), and every
 emitted outcome type must reach at least one team-visible sink or be confessed
 (`visibility-acknowledged`) — never defaulted into. **At run time:** delivery
 is verified — an outcome that reaches no team-visible sink escalates instead of
-vanishing. A declared sink is team-visible by default (it names a real
+vanishing. The one exception is an outcome bound to `mr-comment` before any MR
+exists: it is recorded under `## Pending MR delivery` and posted by the run
+that opens the MR (or marked not applicable if none ever opens), which is not
+a failed delivery. A declared sink is team-visible by default (it names a real
 destination); `team-visible: false` opts a record-only sink out. Everything
 *inside* a sink declaration — `channel:`, `format:`, `grouping:`, `threads:` —
 is freeform config the agent interprets at run time for that sink's medium; the

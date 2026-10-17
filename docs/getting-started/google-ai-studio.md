@@ -46,7 +46,7 @@ your-project/
 ├── glados.yaml                      # your config (you created this)
 ├── glados/adapters/aistudio/
 │   ├── README.md                    # the paste flow, step by step
-│   ├── MANIFEST.md                  # bundle list + the config fingerprint
+│   ├── MANIFEST.md                  # bundle list + the structural-key fingerprint
 │   │                                #   each bundle was compiled from
 │   ├── bundles/                     # 7 paste bundles (intent, plan-feature,
 │   │   ├── plan-feature.aistudio.md #   spec-feature, review-mr,
@@ -105,7 +105,11 @@ block headed `=== WRITE FILE: <repo-relative-path> ===` for any file it wants
 written, and `=== RUN: ===` for any git or platform command. **Nothing has
 happened until you apply those blocks yourself** — including committing the
 run record to `.glados/runs/`. Don't read a transcript as work done. Two
-related cautions: bundles inline your `glados.yaml` values at compile time,
-so re-run the install whenever the config changes (`MANIFEST.md` records the
-fingerprint); and pasting proprietary code into free-tier AI Studio may
+related cautions: bundles are compiled from your `glados.yaml`, so re-run the
+install whenever a structural key changes (`phase`, `optimize-for`,
+`default-modules`, `workflows`, `disabled-workflows`, `sda`; `MANIFEST.md`
+records the fingerprint of those keys only). The live keys (`channels`,
+`decisions`, `merge-authority`, `params`, `sinks`, `branching`) are not baked
+into the bundle, so paste your current `glados.yaml` with the repo context;
+and pasting proprietary code into free-tier AI Studio may
 expose it to product-improvement use — check your tier's data policy first.

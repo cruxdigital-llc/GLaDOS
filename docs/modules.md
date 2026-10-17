@@ -18,7 +18,7 @@ that omits them.
 
 | Module | Emits | Does |
 |---|---|---|
-| `standards-gate` | — | Gate the work artifact against the project's documented standards before advancing. |
+| `standards-gate` | escalation | Gate the work artifact against the project's documented standards before advancing. Re-runs are bounded by `params.standards-gate.max-cycles`. |
 | `mr-review-panel` | verdict | Run one adversarial, parallel, fresh-agent review panel over the open merge request. Seats the standing lenses plus manifest and feature personas; parameterized by `params.review-panel`. |
 | `evaluator-spawn` | verdict | Spawn a context-isolated evaluator to verify finished work against a self-contained brief. Parameterized by `params.evaluator`. |
 

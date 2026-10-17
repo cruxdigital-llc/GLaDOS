@@ -46,7 +46,7 @@ your-project/
 ├── .glados/                         # committed support folder
 │   ├── glados.py                    # vendored installer/checker (for CI + verify)
 │   ├── assembly-report.md           # what compiled, from which settings
-│   ├── manifest-hash                # fingerprint of the glados.yaml it was built from
+│   ├── manifest-hash                # fingerprint of the structural glados.yaml keys it was built from
 │   ├── src/                         # vendored workflow sources
 │   ├── ci/                          # CI check templates (GitLab + GitHub)
 │   ├── hooks/                       # session-end guard scripts
