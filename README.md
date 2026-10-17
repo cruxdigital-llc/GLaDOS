@@ -180,8 +180,9 @@ In increasing depth:
 3. **[docs/guides/](docs/guides/)** — task-oriented guides, including your
    own workflows ([pipelines.md](docs/guides/pipelines.md)), canon
    ([canon.md](docs/guides/canon.md)), SDA
-   conformance (`sda: true` in `glados.yaml` — claims + work-unit log
-   maintained by every run) and the Wheatley board; see also
+   conformance (`sda: true` in `glados.yaml` — one claim and one work-unit
+   row per unit of work, recorded by its outermost run) and the Wheatley
+   board; see also
    [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
 4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
    file, and the run records actually work.
@@ -193,4 +194,5 @@ In increasing depth:
 
 Upgrading from GLaDOS v1? Every old command name keeps working as an alias,
 and `python bin/glados.py migrate` converts the rest;
-[MIGRATION.md](MIGRATION.md) is the guided path.
+[MIGRATION.md](MIGRATION.md) is the guided path. Upgrading a v2 install to
+2.5? See [its upgrade notes](MIGRATION.md#upgrading-a-v2-install-to-25).

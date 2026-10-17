@@ -69,6 +69,13 @@ commits to it.
   none is itself worth one line in the record, because then nothing but the
   author's memory says where this change ends.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
+- **Findings handed over with the MR.** When the run that opened the MR
+  hands over blocking findings it already posted on it (a self-review, or a
+  step a project workflow runs after opening the MR), cycle 1 carries them
+  in the brief, each named and open until this pass refutes or closes it.
+  One still open after the pass joins the consolidated list in step 7 at
+  its severity, as a synthesis finding does: it reaches address-review, and
+  a `blocking` one keeps the MR from review-clean.
 - **Cycle 2 and after brief the delta**: what changed since the pass that
   produced the open findings, together with that pass's findings, each one
   named and still open until this pass says otherwise. Ground a previous

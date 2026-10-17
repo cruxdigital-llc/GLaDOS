@@ -74,3 +74,6 @@ after its opening paragraph.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.
+- [Upgrading a v2 install to 2.5](../MIGRATION.md#upgrading-a-v2-install-to-25)
+  — for 2.x users: the manifests that need a look before you reinstall, and
+  how to check them first.

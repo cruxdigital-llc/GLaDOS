@@ -129,7 +129,7 @@ CODEOWNERS file exists and covers `glados.yaml` (informational only).
 | | |
 |---|---|
 | **Works today** | `platform: github`; all five sink kinds via `gh`; the vendored Actions check (report-only by default); `doctor` wiring and CODEOWNERS reports |
-| **Coming in v2.1–v2.2** | Lease files for multi-agent coordination (v2.1); `verify-ledger` comparing emitted events against manifest claims (v2.1); attention-tier reporting (v2.2) |
+| **Coming later** | Lease files for multi-agent coordination; `verify-ledger` comparing emitted events against manifest claims; attention-tier reporting (direction, not shipped) |
 | **Your responsibility** | Install and authenticate `gh` for the agent; copy the Actions template into `.github/workflows/` and commit it; add the CODEOWNERS line and branch protection |
 
 See also: [gitlab.md](gitlab.md) for the GitLab equivalent,

@@ -35,9 +35,3 @@ were waiting for it: the `## Pending MR delivery` items of this run's record,
 of the runs nested inside it, and of a parked run this run resumed (with the
 runs nested inside that one), as *No MR yet is not a failed delivery* (step 5
 of *Before ending this run*) sets out for the run that opens the MR.
-
-### Hand off
-
-The MR goes to review-mr once the pipeline is done with it: after the
-sequence's last step, as run-pipeline's step 5 sets out. A self-review step
-later in the sequence runs first.

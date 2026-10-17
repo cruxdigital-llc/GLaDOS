@@ -186,6 +186,13 @@ Rules:
   none is itself worth one line in the record, because then nothing but the
   author's memory says where this change ends.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
+- **Findings handed over with the MR.** When the run that opened the MR
+  hands over blocking findings it already posted on it (a self-review, or a
+  step a project workflow runs after opening the MR), cycle 1 carries them
+  in the brief, each named and open until this pass refutes or closes it.
+  One still open after the pass joins the consolidated list in step 7 at
+  its severity, as a synthesis finding does: it reaches address-review, and
+  a `blocking` one keeps the MR from review-clean.
 - **Cycle 2 and after brief the delta**: what changed since the pass that
   produced the open findings, together with that pass's findings, each one
   named and still open until this pass says otherwise. Ground a previous
@@ -943,10 +950,11 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that parks its unit of work to wait for an approval (run-pipeline
-   at an unattended `human` checkpoint) has not finished it: it keeps its
-   claim and appends no row, and the run that resumes the work does both
-   when the unit ends.
+   A run that ends with its unit of work still waiting on an approval has
+   not finished it: run-pipeline parking at a `human` checkpoint or
+   resuming a park that has no approval yet, and run-epic stopping with
+   only parked tickets left. It keeps its claim and appends no row, and the
+   run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -996,8 +1004,9 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that parks its unit of work (step 3) has not ended it: its items stay
-     pending for the run that resumes the work and opens the MR. Once
+     that ends with its unit still waiting on an approval (step 3) has not
+     ended it: its items stay pending for the run that resumes the work and
+     opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These
      record updates (this run's record, and any nested record you marked
      delivered) ride the step 4 commit when made before it; any made in

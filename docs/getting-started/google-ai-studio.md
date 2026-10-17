@@ -70,8 +70,9 @@ Commit all of it.
 2. Paste the contents of
    `glados/adapters/aistudio/bundles/review-codebase.aistudio.md` into the
    **System Instructions** field.
-3. Paste the repo context the workflow needs (relevant files, the issue
-   text) as your first user message, then run.
+3. Paste the repo context the workflow needs (your current `glados.yaml`
+   and `.glados/presets.yaml`, the relevant files, the issue text) as your
+   first user message, then run.
 4. Save the prompt to reuse the workflow later (AI Studio autosaves prompts
    to your Google Drive).
 
@@ -112,7 +113,8 @@ names and descriptions; `MANIFEST.md` records the fingerprint of those keys
 only). The live keys (`channels`,
 `decisions`, `merge-authority`, `params`, `sinks`, `branching`, `canon`) are
 not baked into the bundle, so paste your current `glados.yaml` with the repo
-context, and when it declares `canon:`, the digest files the workflow
-consults (the model cannot open them itself); and pasting proprietary code
+context, together with `.glados/presets.yaml` (the defaults of any key the
+manifest leaves unset), and when it declares `canon:`, the digest files the
+workflow consults (the model cannot open them itself); and pasting proprietary code
 into free-tier AI Studio may expose it to product-improvement use — check
 your tier's data policy first.

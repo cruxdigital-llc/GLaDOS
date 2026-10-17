@@ -133,10 +133,13 @@ run**:
   runs nested inside the ticket's build do neither.
 - **A `run-pipeline` run is the outermost run of its pipeline.** The stage
   cores it runs follow the nested-run rules.
-- **A parked run has not finished.** A `run-pipeline` run that parks at an
-  unattended `human` checkpoint keeps its claim and appends no row. The run
-  that resumes the work after the approval builds on that claim (it is not
-  contention) and clears it, with the row, when the unit ends.
+- **A parked run has not finished.** A run that ends with its unit of work
+  still waiting on an approval keeps its claim and appends no row: a
+  `run-pipeline` run that parks at a `human` checkpoint or resumes a park
+  that has no approval yet, and a `run-epic` run that stops with only
+  parked tickets left. The run that resumes the work after the approval
+  builds on that claim (it is not contention) and clears it, with the row,
+  when the unit ends.
 - **Nesting is decided by who started the run.** A leftover marker or an
   unfinished-looking record from another session never makes a run nested: it
   is stale, and a fresh run replaces it.

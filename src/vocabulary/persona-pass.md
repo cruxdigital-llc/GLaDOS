@@ -22,4 +22,6 @@ the adversarial review loop, which runs later against the diff.
 - **For a gate, the pass is the audit.** The personas check what the gate's
   body says to check. Each problem is a finding, on the *Verdicts and finding
   severities* scale, in the gate's own file; the audited artifact changes
-  only through the gate's revise loop.
+  only through the gate's revise loop. With no persona seated, this agent
+  does the audit itself against the body, as under `review: none`, and the
+  gate's file says so: an empty pass never passes a gate.

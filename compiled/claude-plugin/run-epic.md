@@ -135,11 +135,14 @@ mid-epic.
     status file (`intent.status`), taken top-down. Each item is already a
     ticket — no decomposition, no integration branch; MRs target
     `branching.default-target`.
-- **Pipeline per ticket** (only when `glados.yaml` declares `pipelines:`):
-  give each ticket the pipeline that fits it, matching the ticket against
-  each pipeline's `when:`. An epic integrates MRs, so only a pipeline whose
-  sequence contains `open-mr` qualifies; a ticket none fits gets
-  `build-feature`. In `--backlog` mode, assign it as each item is taken.
+- **Pipeline per ticket** (only when `glados.yaml` declares `pipelines:`
+  and run-pipeline is enabled): give each ticket the pipeline that fits it,
+  matching the ticket against each pipeline's `when:`. An epic integrates
+  MRs, so only a pipeline whose sequence contains `open-mr`, and not as
+  `optional`, qualifies; a ticket none fits gets `build-feature`. In
+  `--backlog` mode, assign it as each item is taken. With run-pipeline in
+  the effective `disabled-workflows` (the phase preset's list included),
+  every ticket gets `build-feature`.
   Write a pipeline you chose as `<name> (agent)`. A value without that mark
   was set by a person (in the ticket table or on the tracker) and is never
   overwritten.
@@ -153,25 +156,31 @@ mid-epic.
   (`work.base-sha`, recorded at run start).
 - **Write `epic.progress`** to the ledger: the mandate, the ticket table
   (`id | depends-on | pipeline | holder | status`; with no `pipelines:`
-  declared, every pipeline cell is `build-feature`), the integration branch,
+  declared, or run-pipeline disabled, every pipeline cell is
+  `build-feature`), the integration branch,
   operating rules, and any environment facts a resuming session needs.
 
 ### 2. Per-ticket loop (sequential, dependency order)
 For each ticket, on a working branch off the integration branch (named per
-`branching.feature`):
+`branching.feature`); a parked ticket resumes on the branch its row notes:
 
-1. **Build** — run the run-pipeline workflow with the ticket's pipeline; a
-   `build-feature` row runs the build-feature workflow instead. Either way
-   the MR targets the integration branch. When the run switched an
+1. **Build** — run the run-pipeline workflow for the ticket, handing it the
+   ticket's row (its pipeline included) as caller context, never the
+   pipeline name as an argument; a `build-feature` row runs the
+   build-feature workflow instead. Either way the MR targets the
+   integration branch. When the run switched an
    `(agent)` pipeline (its record says so), update the row to the new one,
    still marked `(agent)`. A ticket whose run parks at a checkpoint waits
-   for its approval: mark its row `awaiting-approval:<step>`, hold its
+   for its approval: mark its row `awaiting-approval:<step>` and note the
+   parked branch and record the park's escalation names, hold its
    dependents, and carry on with tickets that do not depend on it. Once no
    other ticket can run, check each parked ticket's approval once and
    resume the approved ones. When every remaining row is parked or waits on
    a parked row, end this run with a `progress` outcome listing each parked
    row and the approval it waits for; a later run-epic run resumes them
-   through step 0. Never loop over the queue again within one run.
+   through step 0. This run has not finished the epic: it keeps its claim
+   and appends no work-unit row, as *Before ending this run* sets out.
+   Never loop over the queue again within one run.
 2. **Review** — run the review-mr workflow.
 3. **Address** — while the panel's verdict demands changes, run the
    address-review workflow, then re-review. Bounds and stalemate handling:
@@ -802,10 +811,11 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that parks its unit of work to wait for an approval (run-pipeline
-   at an unattended `human` checkpoint) has not finished it: it keeps its
-   claim and appends no row, and the run that resumes the work does both
-   when the unit ends.
+   A run that ends with its unit of work still waiting on an approval has
+   not finished it: run-pipeline parking at a `human` checkpoint or
+   resuming a park that has no approval yet, and run-epic stopping with
+   only parked tickets left. It keeps its claim and appends no row, and the
+   run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -855,8 +865,9 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that parks its unit of work (step 3) has not ended it: its items stay
-     pending for the run that resumes the work and opens the MR. Once
+     that ends with its unit still waiting on an approval (step 3) has not
+     ended it: its items stay pending for the run that resumes the work and
+     opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These
      record updates (this run's record, and any nested record you marked
      delivered) ride the step 4 commit when made before it; any made in

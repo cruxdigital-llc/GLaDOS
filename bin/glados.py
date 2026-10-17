@@ -1704,6 +1704,22 @@ def _name_list_problem(value, what: str = "step id"):
     return None
 
 
+def _prose_problem(value):
+    """Why ``value`` is not one line of prose, or None. Absent (or blank) is
+    'required'; a value the YAML subset read as something else (`when:
+    true`, `description: 5`) is named as such, because "required" sends the
+    user looking for a key they did write."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "required"
+    if not isinstance(value, str):
+        read_as = ("a list" if isinstance(value, list) else
+                   "a mapping" if isinstance(value, dict) else
+                   "a number or a boolean")
+        return (f"must be one line of prose — got {_fmt(value)}, which YAML "
+                f"reads as {read_as}; quote it if you meant text")
+    return None
+
+
 def _option(opts: dict, key: str, values, default):
     """A step option's value when it is valid, else the default (an
     invalid one is already an error; the row still renders)."""
@@ -1805,8 +1821,9 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
                     f"{', '.join(STEP_KEYS)} (these drive gating, so a typo "
                     f"is an error, not a warning)")
         desc = decl.get("description")
-        if not isinstance(desc, str) or not desc.strip():
-            err(f"{where}.description: required — one line saying what the "
+        problem = _prose_problem(desc)
+        if problem:
+            err(f"{where}.description: {problem} — one line saying what the "
                 f"step does")
         else:
             norm["description"] = desc
@@ -1874,8 +1891,9 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
                 err(f"{where}.{key}: unknown key — a pipeline takes "
                     f"{', '.join(PIPELINE_KEYS)}")
         desc = cfg.get("description")
-        if not isinstance(desc, str) or not desc.strip():
-            err(f"{where}.description: required — one line; it becomes the "
+        problem = _prose_problem(desc)
+        if problem:
+            err(f"{where}.description: {problem} — one line; it becomes the "
                 f"pipeline's shortcut command description")
             desc = None
         elif len(_one_line(desc)) > PIPELINE_DESCRIPTION_MAX:
@@ -1884,8 +1902,9 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
                 f"the shortcut command's description, and Antigravity "
                 f"truncates longer ones)")
         when = cfg.get("when")
-        if not isinstance(when, str) or not when.strip():
-            err(f"{where}.when: required — the prose run-pipeline matches a "
+        problem = _prose_problem(when)
+        if problem:
+            err(f"{where}.when: {problem} — the prose run-pipeline matches a "
                 f"brief against when nobody names a pipeline")
             when = None
 
@@ -1963,9 +1982,9 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
                     err(f"{ow}.when: only an optional step takes when: (the "
                         f"agent evaluates it to decide whether the step "
                         f"runs) — set modifier: optional or remove when:")
-                elif not isinstance(o["when"], str) or not o["when"].strip():
-                    err(f"{ow}.when: must be prose saying when the step "
-                        f"applies")
+                elif _prose_problem(o["when"]):
+                    err(f"{ow}.when: {_prose_problem(o['when'])} — prose "
+                        f"saying when the step applies")
             elif modifier == "optional":
                 err(f"{ow}: modifier: optional needs a when: saying when the "
                     f"step applies — the agent evaluates it, and records that "
@@ -2070,10 +2089,10 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
             pc.warnings.append(f"steps.{sid}: declared but no pipeline uses "
                                f"it — add it to a sequence or remove it")
     if raw_pipes and "run-pipeline" not in enabled:
-        pc.warnings.append("pipelines: declared, but run-pipeline is disabled "
-                           "(disabled-workflows) — no pipeline can run until "
-                           "it is re-enabled, and each pipeline's shortcut "
-                           "command says so")
+        pc.warnings.append(f"pipelines: declared, but run-pipeline is "
+                           f"disabled {_disabled_by(r)} — no pipeline can run "
+                           f"until it is re-enabled, and each pipeline's "
+                           f"shortcut command says so")
 
     # V7: the body of every project step a pipeline runs. Only kebab-case
     # ids reach the filesystem, so an id can never point outside the steps
@@ -2559,8 +2578,8 @@ def _pipelines_report(source: Source, comp: Compilation) -> list[str]:
            "what they said at install. Script installs also carry one "
            "shortcut command per pipeline.", ""]
     if "run-pipeline" not in comp.enabled:
-        out += ["**run-pipeline is disabled** (`disabled-workflows`): none of "
-                "these pipelines can run until it is re-enabled.", ""]
+        out += [f"**run-pipeline is disabled** {_disabled_by(comp.resolved)}: "
+                f"none of these pipelines can run until it is re-enabled.", ""]
     for name, p in pc.pipelines.items():
         out.append(f"### `{name}`")
         out.append("")
@@ -2680,10 +2699,28 @@ def _alias_targets(source: Source, comp: "Compilation") -> dict[str, tuple[str, 
     return {a: (t, t in comp.cores) for a, t in source.aliases.items()}
 
 
-def _disabled_alias_body(alias: str, target: str) -> str:
+def _disabled_by(r: Resolved) -> str:
+    """Where the effective `disabled-workflows` list came from, as the end
+    of a sentence "<workflow> is disabled ...". A phase preset can disable a
+    workflow (sunset unloads build-feature and run-pipeline) with no
+    `disabled-workflows:` line in glados.yaml, and naming that key sent
+    people looking for a line that is not there."""
+    prov = r.provenance.get("disabled-workflows", "explicit")
+    if prov.startswith("phase:"):
+        return (f"by the {prov.split(':', 1)[1]} phase preset (glados.yaml "
+                f"sets no `disabled-workflows:`; an explicit list there that "
+                f"leaves it out re-enables it)")
+    if prov == "baseline":
+        return ("by GLaDOS's baseline preset (an explicit "
+                "`disabled-workflows:` list in glados.yaml that leaves it out "
+                "re-enables it)")
+    return "in this project's glados.yaml (`disabled-workflows:`)"
+
+
+def _disabled_alias_body(alias: str, target: str, comp: Compilation) -> str:
     """Shim body for an alias whose target core is disabled in the manifest."""
     return (f"The `{alias}` workflow was renamed to `{target}`, which is "
-            f"disabled in this project's glados.yaml (`disabled-workflows:`). "
+            f"disabled {_disabled_by(comp.resolved)}. "
             f"Do not reconstruct it from memory — ask a maintainer to "
             f"re-enable it or pick a different workflow.\n")
 
@@ -2725,10 +2762,9 @@ def _pipeline_shim_body(comp: Compilation, name: str, runner: str,
     if "run-pipeline" not in comp.cores:
         return (f"`{name}` is a project workflow declared under `pipelines:` "
                 f"in glados.yaml, but run-pipeline, the workflow that runs "
-                f"it, is disabled in this project's glados.yaml "
-                f"(`disabled-workflows:`). Do not reconstruct it from memory "
-                f"— ask a maintainer to re-enable run-pipeline or pick a "
-                f"different workflow.\n")
+                f"it, is disabled {_disabled_by(comp.resolved)}. Do not "
+                f"reconstruct it from memory — ask a maintainer to re-enable "
+                f"run-pipeline or pick a different workflow.\n")
     same = f" This is the same run as `{invoke} {name} <brief>`." if invoke else ""
     given = "this command" if invoke else "this file"
     return (f"`{name}` is a project workflow declared under `pipelines:` in "
@@ -2747,7 +2783,7 @@ def adapter_claude(source: Source, comp: Compilation) -> dict:
         plan[f"{base}/{c}.md"] = ("text", comp.cores[c])
     for alias, (target, enabled) in _alias_targets(source, comp).items():
         body = (f"The `{alias}` workflow was renamed. Run `/glados:{target}` "
-                f"instead.\n" if enabled else _disabled_alias_body(alias, target))
+                f"instead.\n" if enabled else _disabled_alias_body(alias, target, comp))
         plan[f"{base}/{alias}.md"] = ("text", body)
     for name, desc in _pipeline_shims(comp):
         body = _pipeline_shim_body(comp, name, f"{base}/run-pipeline.md",
@@ -2798,7 +2834,7 @@ def adapter_direct(source: Source, comp: Compilation) -> dict:
     for alias, (target, enabled) in _alias_targets(source, comp).items():
         body = (f"The `{alias}` workflow was renamed. Read and follow "
                 f"`product-knowledge/glados/{target}.md` instead.\n"
-                if enabled else _disabled_alias_body(alias, target))
+                if enabled else _disabled_alias_body(alias, target, comp))
         plan[f"product-knowledge/glados/{alias}.md"] = ("text", body)
     for name, _desc in _pipeline_shims(comp):
         plan[f"product-knowledge/glados/{name}.md"] = ("text", _pipeline_shim_body(
@@ -2854,7 +2890,7 @@ def adapter_gemini(source: Source, comp: Compilation) -> dict:
             body = f"The `{alias}` workflow was renamed. Run `/glados:{target}` instead.\n"
         else:
             desc = f"(renamed) {alias} is now {target} — disabled here"
-            body = _disabled_alias_body(alias, target)
+            body = _disabled_alias_body(alias, target, comp)
         toml = (f"description = {_toml_basic(desc)}\n"
                 f"prompt = {_toml_multiline(body)}\n")
         plan[f"{base}/{alias}.toml"] = ("text", toml)
@@ -2891,7 +2927,7 @@ def adapter_antigravity(source: Source, comp: Compilation) -> dict:
         else:
             desc = _yaml_quote(_agy_description(
                 f"(renamed) {alias} is now {target} — disabled here"))
-            shim = _disabled_alias_body(alias, target)
+            shim = _disabled_alias_body(alias, target, comp)
         body = f"---\ndescription: {desc}\n---\n\n{shim}"
         plan[f"{base}/glados-{alias}.md"] = ("text", body)
     for name, desc in _pipeline_shims(comp):
@@ -2940,14 +2976,23 @@ def adapter_pi(source: Source, comp: Compilation) -> dict:
             shim = f"The `{alias}` workflow was renamed. Run `/glados-{target}` instead.\n"
         else:
             desc = _yaml_quote(f"(renamed) {alias} is now {target} — disabled here")
-            shim = _disabled_alias_body(alias, target)
+            shim = _disabled_alias_body(alias, target, comp)
         plan[rel] = ("text", f"---\ndescription: {desc}\n---\n\n{shim}")
     for name, desc in _pipeline_shims(comp):
         # A real prompt template, trailer included: the brief arrives as the
-        # template's arguments.
+        # template's arguments. The runner it points at is a template too,
+        # and read as a file (not run as a command) its own trailer is the
+        # raw placeholder, whose default text says no arguments were given.
+        # The shim says which Invocation arguments section counts.
         rel = f"{base}/glados-{name}.md"
         shim = _pipeline_shim_body(comp, name, f"{base}/glados-run-pipeline.md",
                                    "/glados-run-pipeline")
+        if "run-pipeline" in comp.cores:
+            shim += ("\nThat file is itself a prompt template: ignore its "
+                     "closing `## Invocation arguments` section, which is an "
+                     "unexpanded placeholder when the file is read. The "
+                     "brief is in the `## Invocation arguments` section at "
+                     "the end of this command.\n")
         plan[rel] = ("text", _pi_template(_yaml_quote(desc), shim, rel))
     return plan
 
@@ -2971,9 +3016,13 @@ def _aistudio_preamble(title: str, advisory: bool) -> str:
         "`=== WRITE FILE: <repo-relative-path> ===` with the full contents.\n"
         "- When a step performs a git/platform action, emit the exact command "
         "in a fenced block headed `=== RUN: ===`.\n"
-        "- glados.yaml could not be read at runtime; its values were inlined at "
-        "compile time (see the compile stamp in the provenance header). If the "
-        "pasted repo context contradicts them, warn the operator.\n"
+        "- You cannot read `glados.yaml` here. Only its optimize-for sentence "
+        "was compiled in (see the compile stamp in the provenance header); "
+        "every other key a step resolves comes from the copy the operator "
+        "pastes with the repo context. If a step needs `glados.yaml` and it "
+        "was not pasted, ask for it rather than guess. A key the pasted "
+        "manifest leaves unset takes its default from the preset table, "
+        "`.glados/presets.yaml`: ask for that file too when you need it.\n"
         "- End EVERY response with the `## Before ending this run` epilogue "
         "checklist as a mandatory response suffix; if you cannot complete it, "
         "say so explicitly rather than omitting it.\n"
@@ -2996,7 +3045,8 @@ Interactions API runner for unattended read-mostly routines.
 2. Paste the contents of `bundles/<workflow>.aistudio.md` into the **System
    Instructions** field.
 3. Paste (or attach from Drive) the repo context the workflow needs — the
-   relevant files, the issue text — as your first user message.
+   current `glados.yaml` and `.glados/presets.yaml`, the relevant files, the
+   issue text — as your first user message.
 4. Run. The model emits `=== WRITE FILE: ... ===` and `=== RUN: ... ===`
    blocks; you (the operator) apply them to the repo and commit the run record.
 
@@ -3017,11 +3067,14 @@ These bundles are compiled from `glados.yaml`. `MANIFEST.md` records the
 compile hash each bundle was built against; it covers the structural keys only
 (phase, optimize-for, default-modules, workflows, disabled-workflows, sda, and
 the names and descriptions of any pipelines), so re-run `glados.py install
---mode aistudio` whenever one of those changes or GLaDOS is upgraded. The live keys (channels, decisions, merge-authority,
-params, sinks, branching, canon) are not baked in and do not move the hash: paste the
-current `glados.yaml` with the repo context so the model sees them. When it
-declares `canon:`, paste the digest files the workflow consults too: the
-bundles tell the model to read a digest, never to fetch the work itself.
+--mode aistudio` whenever one of those changes or GLaDOS is upgraded. The live
+keys (channels, decisions, merge-authority, params, sinks, branching, canon)
+are not baked in and do not move the hash: paste the current `glados.yaml`
+with the repo context so the model sees them, together with
+`.glados/presets.yaml`, where the model looks up the default of any key the
+manifest leaves unset. When it declares `canon:`, paste the digest files the
+workflow consults too: the bundles tell the model to read a digest, never to
+fetch the work itself.
 """
 
 AISTUDIO_RUN_RECORD_SCHEMA = {
@@ -3164,7 +3217,7 @@ def adapter_aistudio(source: Source, comp: Compilation) -> dict:
     for alias, (target, enabled) in _alias_targets(source, comp).items():
         rel = f"{base}/bundles/{alias}.aistudio.md"
         if not enabled:
-            plan[rel] = ("text", _disabled_alias_body(alias, target))
+            plan[rel] = ("text", _disabled_alias_body(alias, target, comp))
             continue
         if target in AISTUDIO_CORES:
             bundle_target = target
@@ -3564,7 +3617,12 @@ def _resolve_source(args) -> Source:
     # root (here.parent) has src/kernel/ and wins; for a vendored
     # .glados/glados.py, here.parent is the consuming repo (whose unrelated
     # src/ has no kernel/) so it falls through to here (.glados/), which does.
-    for cand in (here.parent, here):
+    # A vendored copy tries its own .glados/ FIRST: a consuming repo can
+    # have a src/kernel/ of its own (an OS project's kernel sources), and
+    # resolving to it failed every vendored check and validate, which
+    # run-pipeline runs before its first step.
+    order = (here, here.parent) if here.name == ".glados" else (here.parent, here)
+    for cand in order:
         if (cand / "src" / "kernel").is_dir():
             return Source(cand)
     raise Fatal("could not locate the GLaDOS source tree — pass --source <repo>")
@@ -3877,6 +3935,35 @@ def _installed_drift(source: Source, target: Path, mode: str,
     return out
 
 
+def _installed_version(target: Path) -> str | None:
+    """The GLaDOS version that built the install at ``target``: the VERSION
+    line of its vendored .glados/glados.py. None when there is no vendored
+    copy or it carries no VERSION line."""
+    try:
+        text = (target / ".glados" / "glados.py").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    m = re.search(r'^VERSION = "([^"]+)"', text, re.M)
+    return m.group(1) if m else None
+
+
+def _version_skew(target: Path) -> str | None:
+    """When the install at ``target`` was built by another GLaDOS version
+    than this one, the sentence that says so; else None.
+
+    A hash mismatch then proves nothing about glados.yaml: 2.5 changed the
+    manifest hash from the whole file to its structural keys, so the first
+    2.5 check of an untouched 2.4 install mismatches, and blaming "a
+    structural key changed" sends the user hunting for an edit nobody made.
+    The cause is the version, and the fix is the same reinstall."""
+    installed = _installed_version(target)
+    if installed is None or installed == VERSION:
+        return None
+    return (f"this install was built by GLaDOS {installed} and this is "
+            f"GLaDOS {VERSION} — re-run install with {VERSION} to upgrade it "
+            f"(its own .glados/glados.py checks it as it stands)")
+
+
 def cmd_check(args) -> int:
     target = Path(args.target).resolve()
     report_only = args.report_only
@@ -3917,7 +4004,14 @@ def cmd_check(args) -> int:
         if hash_path.exists() and manifest_path.exists():
             vendored = read_text(hash_path).strip()
             current = manifest_hash_of(manifest_path)
-            if vendored != current:
+            skew = _version_skew(target)
+            if skew:
+                # The compiled headers carry glados-version, so a version
+                # change always drifts every installed file too; this line
+                # says why, and a hash mismatch then proves nothing about
+                # glados.yaml.
+                problems.append(f"stale compile: {skew}")
+            elif vendored != current:
                 problems.append(f"stale compile: a structural glados.yaml key "
                                 f"({', '.join(STRUCTURAL_KEYS)}, or a "
                                 f"pipelines: name or description) changed since "
@@ -4016,7 +4110,9 @@ def cmd_doctor(args) -> int:
         if hash_path.exists() and manifest_path.exists():
             vendored = read_text(hash_path).strip()
             current = manifest_hash_of(manifest_path)
+            skew = _version_skew(target)
             state = ("current" if vendored == current else
+                     f"STALE — {skew}" if skew else
                      "STALE — a structural key changed; re-run install")
             print(f"  manifest hash: {state} ({current[:12]}…)")
         else:
@@ -4222,13 +4318,16 @@ def _assembly_report_doctor_line(source: Source, target: Path,
         vendored_hash = read_text(hash_path).strip() if hash_path.exists() else ""
     except (Fatal, OSError):
         vendored_hash = ""
+    skew = _version_skew(target)
     if vendored_hash and vendored_hash not in hashes:
+        if skew:
+            return f"  assembly report: {skew}"
         return ("  assembly report: predates later glados.yaml edits, "
                 "including a structural one — re-run install")
     if drifted:
         return (f"  assembly report: differs from a fresh render and "
-                f"{len(drifted)} installed file(s) drift — re-run install "
-                f"(glados.py check lists them)")
+                f"{len(drifted)} installed file(s) drift — "
+                + (skew or "re-run install (glados.py check lists them)"))
     return ("  assembly report: the assembly report predates later glados.yaml "
             "edits; re-run install to refresh it — informational, nothing is "
             "stale")

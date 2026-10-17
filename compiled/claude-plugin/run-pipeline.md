@@ -122,16 +122,20 @@ team can see, and no step that was not declared.
   nothing is actionable, this run produces an `escalation` outcome and
   stops. A defect report goes to fix-bug: run the fix-bug workflow with it
   as a nested run, then end this run with no step table.
-- **Resuming parked work.** When a prior record for this work (preamble
-  step 4) is a run-pipeline record with a `parked` row, this run resumes
-  it: take that record's pipeline, record `pipeline: <name> (selected by:
-  resume)`, and go on as **Resume** in step 4 sets out. The rules are not
-  applied again.
+- **Resuming parked work.** A parked run's record is committed on its own
+  branch, which the park's `escalation` and run-epic's ticket row name.
+  When the caller, the brief or a prior record (preamble step 4) points at
+  a park of this work, fetch that branch and check it out first, whatever
+  branch this run started on, and read the record with the `parked` row
+  there. This run resumes it: take that record's pipeline, record
+  `pipeline: <name> (selected by: resume)`, and check the approval as
+  **Resume** in step 4 sets out before step 2. The rules are not applied
+  again.
 - Otherwise the first rule that applies picks the pipeline:
 
 | # | Rule | Selected by |
 |---|---|---|
-| 1 | The first word of the arguments names a pipeline: a declared one, or a kebab-case word close to a declared name | `invoker` |
+| 1 | A person invoked this run, and the first word of their arguments names a pipeline: a declared one, or a kebab-case word close to a declared name | `invoker` |
 | 2 | The ticket or brief names one, for example with a tracker label | `ticket` |
 | 3 | run-epic's ticket row names one | `epic`, or `epic (agent)` for a row run-epic marked `(agent)` |
 | 4 | The brief matches a pipeline's `when:`; of several, the one with stricter required steps | `agent` |
@@ -223,8 +227,11 @@ takes its spec from the caller.
   changed mid-run") and a stop.
 - A resumed run (step 1) copies the parked run's step table instead,
   finished rows and their artifacts kept, and compares its fresh pins with
-  the parked run's. Any difference, including a sequence edited while the
-  work was parked, is "gating inputs changed mid-run".
+  the parked run's. It takes the fresh pins from the branch the work
+  targets (`git rev-parse <target>:<path>` after a fetch), since the parked
+  branch still holds the copies pinned at the park. Any difference,
+  including a sequence edited while the work was parked, is "gating inputs
+  changed mid-run".
 
 ### 4. Run the sequence
 Run the rows in order. Never fold steps together, skip ahead, or run a step
@@ -234,7 +241,8 @@ the sequence does not list.
   (implement-feature or a `change` step), or a `human` checkpoint, works on
   its own branch from before its first step, so every commit this run and
   its nested runs make lands there. When the caller already put this run on
-  a working branch (run-epic does), stay on it. Otherwise resolve
+  a working branch (run-epic does), stay on it; a resumed run stays on the
+  parked branch (step 1). Otherwise resolve
   `branching` from `glados.yaml` and create one per its `feature` pattern,
   cut from `epic.integration-branch` inside an epic, else from
   `branching.default-target`. Never work on the default target.
@@ -283,25 +291,34 @@ the sequence does not list.
   on. `human`: commit the run record and step artifacts first, with any
   working diff a step left uncommitted, on the run's branch, and push the
   branch (the Stop hook blocks ending a turn on an uncommitted record). If
-  a person invoked the run, ask them in the session and record who answered
-  what. A refusal, with the person's reasons, is a blocking finding: revise
-  the artifact as `required` does, whatever the modifier, and ask again
-  within the step's bound; a person who says stop ends the run. Unattended
-  (run-epic, headless), park: mark the row `parked`, keep the branch, emit
-  one `escalation` with the artifact paths and the approval needed, and end
-  the run. Push the branch again once the epilogue has committed the record
-  and before it publishes the escalation, so every path the escalation
-  names resolves for the approver and for a run in another session. A
-  parked run has not finished its unit of work, so its SDA claim and
-  work-unit row follow the parked-run rule in step 3 of *Before ending this
-  run*, and its pending MR items stay pending (step 5 there).
-- **Resume.** A later run-pipeline run on the same work (step 1) continues
-  after the checkpoint once a maintainer, or a CODEOWNER of `glados.yaml` or
-  `product-knowledge/steps/`, has approved on that escalation. Check the
-  approver's role with the platform CLI and quote the approval in the new
-  record. Check out the parked run's branch and build on its record and
-  step table (step 3); a claim the parked run left is the one this run
-  resumes, not contention. With no approval yet, say so and end the run.
+  a person invoked the run, mark the row `parked` in that commit, ask them
+  in the session, record who answered what, and set the row as the answer
+  decides; a session that ends before the answer leaves a park that a later
+  run resumes. A refusal, with the person's reasons, is a blocking finding:
+  revise the artifact as `required` does, whatever the modifier, and ask
+  again within the step's bound; a person who says stop ends the run.
+  Unattended (run-epic, headless), park: mark the row `parked`, keep the
+  branch, emit one `escalation` naming the branch, this run's record, the
+  artifact paths and the approval needed, and end the run. Push the branch
+  again once the epilogue has committed the record and before it publishes
+  the escalation, so every path the escalation names resolves for the
+  approver and for a run in another session. A parked run has not finished
+  its unit of work, so its SDA claim and work-unit row follow the
+  parked-run rule in step 3 of *Before ending this run*, and its pending MR
+  items stay pending (step 5 there).
+- **Resume.** A run resuming parked work (step 1) continues after the
+  checkpoint once a maintainer, or a CODEOWNER of `glados.yaml` or
+  `product-knowledge/steps/`, has approved on the park's escalation. Check
+  the approver's role with the platform CLI and quote the approval in the
+  new record. A park left by a session that ended before its in-session
+  answer has no escalation: a person who invoked this run answers as at the
+  checkpoint, and an unattended run parks it as above. Build on the parked
+  record and step table (step 3); a claim the parked run left is the one
+  this run resumes, not contention. With no approval yet, say so in the
+  record and end the run there, running no step and copying no step table.
+  It ends as a park does, with no new escalation: the claim stays, no
+  work-unit row is appended, pending MR items stay pending, and the branch
+  is pushed again once the epilogue has committed the record.
 - **Selection re-check.** After the first step that produces a plan or spec,
   re-test `when:` against what that artifact says the work touches. A
   pipeline the agent chose (rules 4 to 6, or a rule 3 row marked `(agent)`)
@@ -316,9 +333,11 @@ the sequence does not list.
 - **After the MR opens.** A step later in the sequence than open-mr reviews
   work that is already under review, so its blocking findings start no
   revise loop and the branch is not edited for them. They go into a
-  `verdict` on the MR, as *Publishing a verdict* sets out, for review-mr and
-  address-review to settle, and the row ends `done` once that verdict is
-  produced. self-review is such a step.
+  `verdict` on the MR, as *Publishing a verdict* sets out, delivered to its
+  bound sinks when the step ends, not at the end of the run, and marked
+  delivered in the record so the epilogue does not post it again. The row
+  ends `done` once it is posted, and step 5 hands its blocking findings to
+  review-mr. self-review is such a step.
 
 ### 5. Finish
 - Bring the step table up to date: it indexes every artifact of the run.
@@ -326,11 +345,15 @@ the sequence does not list.
   `record` checkpoint and, when `decisions.pipeline-discretion` is `record`,
   every discretionary act. This holds on every way the run ends: here, at a
   park, and at a stop on an `escalation`, each listing the acts made so far.
-- With an open-mr step, hand the MR to review after the last step: run the
-  review-mr workflow to begin the adversarial review loop.
-- Without an open-mr step, the artifacts in the record are the deliverable.
-  Code changes stay on the branch for a human: commit any working diff on
-  it, push it, and say so in the record.
+- When this run, or the parked run it resumed, opened an MR, hand it to
+  review after the last step: run the review-mr workflow to begin the
+  adversarial review loop, handing it the blocking findings of every
+  verdict a step after open-mr posted, each named, as findings still open.
+- When no MR was opened, the artifacts in the record are the deliverable.
+  A run on a branch of its own (step 4) leaves its work there for a human:
+  commit any working diff on it, push it, and say so in the record. Push it
+  again once the epilogue has committed the record, as at a park, so the
+  record reaches the remote too.
 - This run produces a `progress` outcome carrying the pipeline, the step
   table, and the MR reference if there is one.
 - Known gap: build-feature can still be run directly, outside any pipeline.
@@ -624,7 +647,9 @@ the adversarial review loop, which runs later against the diff.
 - **For a gate, the pass is the audit.** The personas check what the gate's
   body says to check. Each problem is a finding, on the *Verdicts and finding
   severities* scale, in the gate's own file; the audited artifact changes
-  only through the gate's revise loop.
+  only through the gate's revise loop. With no persona seated, this agent
+  does the audit itself against the body, as under `review: none`, and the
+  gate's file says so: an empty pass never passes a gate.
 
 
 ## Fresh-agent design review
@@ -756,17 +781,11 @@ of the runs nested inside it, and of a parked run this run resumed (with the
 runs nested inside that one), as *No MR yet is not a failed delivery* (step 5
 of *Before ending this run*) sets out for the run that opens the MR.
 
-### Hand off
-
-The MR goes to review-mr once the pipeline is done with it: after the
-sequence's last step, as run-pipeline's step 5 sets out. A self-review step
-later in the sequence runs first.
-
 
 ## Self-review
 
 The self-review step reviews the MR's diff as a critic, before the review
-panel sees it.
+panel runs.
 
 - Review the diff against the spec (or the project step that stood in for
   it), the shape when there is one, and the closest in-tree precedent. Hunt
@@ -775,13 +794,11 @@ panel sees it.
 - Classify each finding on the *Verdicts and finding severities* scale. This
   step produces a `verdict` outcome, which lands on the MR as *Publishing a
   verdict* sets out.
-- Its findings start no revise loop, whatever the step's modifier: they
-  travel in that `verdict` to review-mr and address-review, and the step's
-  row ends `done` once the verdict is produced.
+- Its verdict follows **After the MR opens** in run-pipeline's step 4: it is
+  posted when the step ends, and its findings start no revise loop,
+  whatever the step's modifier.
 - Do not edit the branch while findings are open; queue fixes so review line
   references stay stable.
-- Hand off: the MR goes to review-mr after the sequence's last step, as
-  run-pipeline's step 5 sets out; with self-review last, that is now.
 
 ## Publishing a verdict
 
@@ -1008,10 +1025,11 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that parks its unit of work to wait for an approval (run-pipeline
-   at an unattended `human` checkpoint) has not finished it: it keeps its
-   claim and appends no row, and the run that resumes the work does both
-   when the unit ends.
+   A run that ends with its unit of work still waiting on an approval has
+   not finished it: run-pipeline parking at a `human` checkpoint or
+   resuming a park that has no approval yet, and run-epic stopping with
+   only parked tickets left. It keeps its claim and appends no row, and the
+   run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -1061,8 +1079,9 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that parks its unit of work (step 3) has not ended it: its items stay
-     pending for the run that resumes the work and opens the MR. Once
+     that ends with its unit still waiting on an approval (step 3) has not
+     ended it: its items stay pending for the run that resumes the work and
+     opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These
      record updates (this run's record, and any nested record you marked
      delivered) ride the step 4 commit when made before it; any made in

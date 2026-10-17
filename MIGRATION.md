@@ -1,5 +1,8 @@
 # Migrating from GLaDOS v1.4.0 to v2.0.0
 
+Already on v2 and upgrading to 2.5? Skip to
+[Upgrading a v2 install to 2.5](#upgrading-a-v2-install-to-25).
+
 One command does the mechanical work:
 
 ```bash
@@ -432,8 +435,8 @@ actually closed the loop.
 2.5 adds one workflow, `run-pipeline`, which runs the project's own
 workflows (declared under `pipelines:`; see
 [docs/guides/pipelines.md](docs/guides/pipelines.md)). It is enabled by
-default, even with no `pipelines:` declared. Two kinds of manifest need a
-look before you reinstall:
+default, even with no `pipelines:` declared. Some manifests need a look
+before you reinstall:
 
 - **An explicit `disabled-workflows:` list.** Your list replaces the phase
   preset's list, so the sunset preset's new entry for `run-pipeline` does not
@@ -441,16 +444,48 @@ look before you reinstall:
   project that disables `build-feature`, adds `run-pipeline` to its own list
   (with no pipelines declared, run-pipeline falls back to build-feature's
   stages).
-- **`run-epic` disabled and no `branching.default-target`.** run-pipeline
-  reads the epic's integration branch and falls back to
-  `branching.default-target` outside an epic, so install and check now fail
-  with "state key 'epic.integration-branch' is read by [run-pipeline] but no
-  enabled writer covers it". Set `branching.default-target`, or add
-  `run-pipeline` to `disabled-workflows:`.
+- **`run-epic` and `build-feature` both disabled, `run-pipeline` left
+  enabled, and no `branching.default-target`.** A list such as
+  `[build-feature, run-epic]` installed on 2.4. run-pipeline reads the
+  epic's integration branch and falls back to `branching.default-target`
+  outside an epic, so install and check now fail with "state key
+  'epic.integration-branch' is read by [run-pipeline] but no enabled writer
+  covers it". Set `branching.default-target`, or add `run-pipeline` to
+  `disabled-workflows:`.
+- **A `decisions:` value that is not a decision class.** Every value must
+  be one of `agent`, `record`, `escalate` or `forbidden`. 2.4 ignored any
+  other value (`vendor-choice: ask`); 2.5 fails install and check on it,
+  naming the key.
+- **A `- key: value` list item.** It now reads as a mapping, as standard
+  YAML does, where 2.4 read it as the string `'key: value'`. Lists of
+  workflow or module names (`disabled-workflows:`, `default-modules:`,
+  `workflows:`) reject a mapping with an error naming the key; anywhere
+  else the value just changes shape. Quote the item (`- "key: value"`) if
+  you meant the string.
 
-`python .glados/glados.py validate --target .` (or the same command from a
-GLaDOS checkout, for a plugin-only repo) reports the second one without
-installing anything. The first is silent: check your list by hand.
+One change prints a warning and fails nothing: a top-level key GLaDOS does
+not read (usually a typo, such as `sinsk:`) is named at install, check and
+validate, and listed by doctor.
+
+Check the manifest with the 2.5 toolchain before you reinstall. The
+vendored `.glados/glados.py` is still the 2.4 one until you do, and it has
+no `validate`, so run it from your new GLaDOS checkout:
+
+```bash
+python /path/to/GLaDOS/bin/glados.py validate --target /path/to/your/project
+```
+
+It reports every failure above without installing anything. After the 2.5
+install, `python .glados/glados.py validate --target .` works too. The
+explicit-list case is silent: check your list by hand.
+
+Until you reinstall, a 2.5 `check` or `doctor` reports the 2.4 install as
+stale: 2.5 fingerprints only the structural keys of `glados.yaml`, so the
+hash the 2.4 install recorded no longer matches. Both say the install was
+built by 2.4.0 and needs a reinstall. Plugin-only repos that copied
+`hooks/claude-stop-hook.py` (see
+[docs/getting-started/claude-plugin.md](docs/getting-started/claude-plugin.md))
+copy it again: the 2.5 hook also checks the runs nested inside a run.
 
 2.5 also adds `canon:`, the reference works a team follows (see
 [docs/guides/canon.md](docs/guides/canon.md)). It is optional and changes

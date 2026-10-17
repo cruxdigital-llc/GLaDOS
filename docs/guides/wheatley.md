@@ -43,8 +43,10 @@ Three of the four inputs are alive and well in v2:
   maintains it. The *unclaimed / backlog* column works.
 - **The claims file — when `glados.yaml` sets `sda: true`.** SDA conformance
   is a first-class manifest key in v2: install scaffolds `claims.md`, and the
-  compiled preamble/epilogue of every workflow record a claim before mutating
-  and clear it at run end. The *who's working on what* overlay works, and
+  compiled preamble and epilogue record one claim and one work-unit row per
+  unit of work, made by its outermost run (a run nested inside it adds
+  neither), claiming before the first mutation and clearing the claim when
+  the unit ends. The *who's working on what* overlay works, and
   stays current by construction rather than by convention. (Mind the path
   wrinkle above.)
 
@@ -63,7 +65,7 @@ still required:
   ledger entries, and its `--clean` flag deletes the tree. Wheatley reads
   `specs/`, so its *in-flight* columns (Planning through Verifying) are empty
   on a v2 repo. Closing this needs Wheatley-side work (reading
-  `.glados/runs/`) planned alongside the GLaDOS v2.1 coordination release —
+  `.glados/runs/`) planned alongside a later GLaDOS coordination release —
   not shipped in either project.
 - **`claims.md` exists only when `sda: true`.** The key is explicit-only and
   defaults to false; without it, v2's concurrency answer is the invisible
@@ -75,10 +77,10 @@ file doesn't exist just renders empty.
 
 ## Direction, not shipped
 
-The intended reconciliation pairs Wheatley's v2 support with the GLaDOS
-**v2.1 coordination release**:
+The intended reconciliation pairs Wheatley's v2 support with a later GLaDOS
+**coordination release**:
 
-- v2.1 introduces the **lease module** (lockfile backend): a lease is a
+- That release introduces the **lease module** (lockfile backend): a lease is a
   committed file saying *who* holds *what scope*, with an intent and a TTL.
   When `sda: true`, the lockfile backend will write `claims.md`-compatible
   entries — the claims file becomes a view over enforced leases instead of a
@@ -89,7 +91,7 @@ The intended reconciliation pairs Wheatley's v2 support with the GLaDOS
   directory contents.
 
 Treat this as direction: none of it is shipped in Wheatley or in GLaDOS
-v2.0.0 today. What ships today is the claims overlay via `sda: true` — see
+today. What ships today is the claims overlay via `sda: true` — see
 [sda.md](sda.md).
 
 ### Project workflows on the board
@@ -108,7 +110,7 @@ read `.glados/runs/`, which is direction, not shipped.
 | | |
 |---|---|
 | **Works today** | Backlog column from `product-knowledge/ROADMAP.md` (maintained by the `intent` workflow); active tasks from `product-knowledge/PROJECT_STATUS.md`; claims overlay on repos with `sda: true` (kernel-maintained `claims.md` — keep it under `product-knowledge/` for Wheatley) |
-| **Coming in v2.1–v2.2** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading `.glados/runs/` as in-flight state — stated direction, not shipped in either project |
+| **Coming later** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading `.glados/runs/` as in-flight state — stated direction, not shipped in either project |
 | **Your responsibility** | Run Wheatley (Docker) and mount/point it at the repo; set `sda: true` if you want the claims overlay; keep `claims.md` where Wheatley looks; don't expect in-flight columns on a v2 repo yet |
 
 See also: [sda.md](sda.md) for the `sda:` key and the artifacts Wheatley

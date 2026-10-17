@@ -114,7 +114,7 @@ for Google Antigravity — Google's agentic IDE, CLI `agy`, antigravity.google
 | | |
 |---|---|
 | **Works today** | `platform: github` or `gitlab` + issue-kind sinks satisfied by the agent's own Linear MCP tooling, directed by your agent instructions file; Linear URLs recorded in the run ledger |
-| **Coming in v2.1–v2.2** | Nothing Linear-specific is planned; v2.1's issue-claim lease backend (humans assigning tickets act as leases) targets the git host's tracker, not Linear |
+| **Coming later** | Nothing Linear-specific is planned; the planned issue-claim lease backend (humans assigning tickets act as leases) targets the git host's tracker, not Linear |
 | **Your responsibility** | Connect and authenticate the Linear MCP for the agent; write the tracker instructions in `CLAUDE.md`; spot-check that filed outcomes actually appear in Linear — no GLaDOS check will catch a silent Linear failure |
 
 See also: [github.md](github.md) / [gitlab.md](gitlab.md) for the git-host

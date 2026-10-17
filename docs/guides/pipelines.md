@@ -190,7 +190,8 @@ payloads and errors.
 artifact, and delivers outcomes that were waiting for an MR.
 **self-review** is build-feature's self-review step: the agent critiques its
 own diff and posts a verdict. Once the last step is done, the run hands the
-MR to review-mr.
+MR to review-mr, together with the blocking findings of any step after
+`open-mr`.
 
 ## How steps connect
 
@@ -209,9 +210,10 @@ from an earlier step.
   producers are optional** is an error: the run could reach it with nothing
   to work on. The same goes for a gate that always runs and can audit only
   optional steps.
-- **Opening the MR is a step too.** A pipeline without `open-mr` ends with
-  its artifacts in the run record, which suits a spike, an RFC or a design
-  pass.
+- **Opening the MR is a step too.** A pipeline without `open-mr`, or whose
+  optional `open-mr` was skipped, ends with its artifacts in the run record,
+  which suits a spike, an RFC or a design pass. When it worked on a branch
+  of its own, it pushes that branch, record included, for a person.
 - **Verification before an MR is your call.** build-feature keeps its
   verified-before-MR gate. A pipeline that opens an MR with no verification
   step before it gets a warning from `validate`, and the MR description says
@@ -246,7 +248,8 @@ audit itself is done.
 - `in-context`: the persona pass. The running agent reads the artifact
   through the seated review personas (the plan's roster, or without a plan
   the default panel, plus any the step body names), folds fixes in, and notes
-  declined objections with a reason.
+  declined objections with a reason. For a gate with no persona seated, the
+  agent does the audit itself against the step body, and says so.
 - `fresh-agent`: a new agent with no memory of writing the artifact reviews
   it from a self-contained brief, under the same isolation rules as the
   verify-feature evaluator. It runs no tests and edits nothing, and each
@@ -265,22 +268,28 @@ persona pass. `implement-feature`, `verify-feature`, `open-mr` and
   outcome.
 - `human`: the run commits its record, its artifacts and any uncommitted
   code on its branch, and pushes the branch. It then asks in the session when
-  a person started it; a "no" is a blocking finding, so the artifact is
-  revised and the question asked again. Unattended (in run-epic, or
-  headless), it **parks**: the branch and the SDA claim are kept, outcomes
-  waiting for an MR stay waiting, and one escalation is filed with the
-  artifact paths and the approval needed. A later run on the same work
-  resumes once a maintainer, or a CODEOWNER of `glados.yaml` or
+  a person started it, with the step marked `parked` until they answer, so
+  a session that ends first leaves work a later run can resume; a "no" is a
+  blocking finding, so the artifact is revised and the question asked
+  again. Unattended (in run-epic, or headless), it **parks**: the branch and
+  the SDA claim are kept, outcomes waiting for an MR stay waiting, and one
+  escalation is filed naming the branch, the run record, the artifact paths
+  and the approval needed. A later run on the same work checks out that
+  branch and resumes once a maintainer, or a CODEOWNER of `glados.yaml` or
   `product-knowledge/steps/`, approves on that escalation. It takes the
   parked run's pipeline and step table, quotes the approval into its record,
-  and escalates if `glados.yaml` or a step body changed while the work was
-  parked.
+  and escalates if `glados.yaml` or a step body on the target branch changed
+  while the work was parked. With no approval yet, it says so and ends, and
+  the work stays parked.
 
 Gates and reviews before the MR publish no verdict, because no MR exists yet.
 Their results go into the step table, the run's `progress` outcome and the MR
 description. A step after `open-mr` (self-review, or a gate of your own)
-reviews work already under review: its findings go into a verdict on the MR
-for review-mr and address-review, and start no revise loop.
+reviews work already under review, so its findings start no revise loop.
+Its verdict is posted on the MR when the step ends, and the run hands its
+blocking findings to review-mr as open findings: the panel's first pass
+closes each one or keeps it, and address-review works through any that
+stand.
 
 ## How a pipeline is chosen
 
@@ -328,12 +337,14 @@ when it should stay off ([MIGRATION.md](../../MIGRATION.md#upgrading-a-v2-instal
 has the upgrade notes).
 
 In `run-epic`, each ticket gets a pipeline when the epic is broken down (only
-pipelines that include `open-mr`, since an epic integrates MRs), and the
-ticket table shows it, marking the agent's choices `(agent)`. A person can
+pipelines whose `open-mr` always runs, since an epic integrates MRs), and the
+ticket table shows it, marking the agent's choices `(agent)`. With
+run-pipeline disabled, every ticket gets `build-feature`. A person can
 change a ticket's pipeline, and the run never overwrites that choice. A
 ticket parked at a checkpoint waits, with its dependents; independent tickets
-carry on. Its row reads `awaiting-approval:<step>`, and the epic closes only
-once no row does. When only parked tickets are left, the run-epic run ends
+carry on. Its row reads `awaiting-approval:<step>` with the parked branch and
+record noted, it resumes on that branch, and the epic closes only once no
+row is parked. When only parked tickets are left, the run-epic run ends
 with a `progress` outcome listing what each one waits for, and the next
 run-epic run picks them up. With no `pipelines:` declared, run-epic behaves
 as before.

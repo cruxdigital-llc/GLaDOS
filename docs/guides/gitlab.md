@@ -135,7 +135,7 @@ reports whether a CODEOWNERS file exists and covers `glados.yaml`
 | | |
 |---|---|
 | **Works today** | `platform: gitlab`; all five sink kinds via `glab`; the vendored CI include (report-only by default); `doctor` wiring and CODEOWNERS reports |
-| **Coming in v2.1–v2.2** | Lease files for multi-agent coordination (v2.1); `verify-ledger` comparing emitted events against manifest claims (v2.1); attention-tier reporting (v2.2) |
+| **Coming later** | Lease files for multi-agent coordination; `verify-ledger` comparing emitted events against manifest claims; attention-tier reporting (direction, not shipped) |
 | **Your responsibility** | Install and authenticate `glab` for the agent (token reachable from its shell); add the CI `include:` to `.gitlab-ci.yml`; add the CODEOWNERS line and approval rules |
 
 See also: [github.md](github.md) for the GitHub equivalent,

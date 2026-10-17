@@ -490,9 +490,44 @@ class TestManifestHash(unittest.TestCase):
         self.assertIn("manifest hash: current", out)
         self.assertNotIn("nothing is stale", out)
         self.assertIn("installed file(s) drift", out)
+        self.assertIn("this install was built by GLaDOS "
+                      f"{glados.VERSION} and this is GLaDOS 99.0.0",
+                      " ".join(out.split()))
         rc, out = run("check")
         self.assertEqual(rc, 1, out)
         self.assertIn("drift in installed file", out)
+
+    def test_an_install_from_another_version_is_named_as_such(self):
+        """2.5 changed what the manifest hash covers, so a 2.5 check of an
+        untouched 2.4 install mismatches. Blaming "a structural key changed"
+        sent people hunting for an edit nobody made: the install was built
+        by another version, and check and doctor say so."""
+        t = self._installed()
+        vendored = t / ".glados" / "glados.py"
+        old = f'VERSION = "{glados.VERSION}"'
+        text = read(vendored)
+        self.assertIn(old, text)
+        vendored.write_text(text.replace(old, 'VERSION = "2.4.0"', 1),
+                            encoding="utf-8", newline="\n")
+        write(t / ".glados" / "manifest-hash", "0" * 64 + "\n")
+        report = t / ".glados" / "assembly-report.md"
+        write(report, read(report) + "\nrendered by an older GLaDOS\n")
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        flat = " ".join(out.split())
+        self.assertIn(f"stale compile: this install was built by GLaDOS 2.4.0 "
+                      f"and this is GLaDOS {glados.VERSION} — re-run install "
+                      f"with {glados.VERSION} to upgrade it", flat)
+        self.assertNotIn("a structural glados.yaml key", flat)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        flat = " ".join(out.split())
+        self.assertIn("manifest hash: STALE — this install was built by "
+                      "GLaDOS 2.4.0", flat)
+        self.assertIn("assembly report: this install was built by GLaDOS "
+                      "2.4.0", flat)
+        self.assertNotIn("a structural key changed", flat)
+        self.assertNotIn("including a structural one", flat)
 
     def test_check_still_requires_the_assembly_report(self):
         t = self._installed()
@@ -1960,6 +1995,37 @@ class TestKernelRunRules(unittest.TestCase):
         return self.flat(read(
             self.direct / "product-knowledge" / "glados" / f"{name}.md"))
 
+    def test_aistudio_contract_matches_the_paste_kit(self):
+        """The bundle's runtime contract said glados.yaml's values were
+        inlined at compile time, while the paste kit's README says the live
+        keys are not baked in and must be pasted. Both now say paste it,
+        with the preset table the defaults come from."""
+        t = make_target(read(EXAMPLE))
+        rc, out = install("aistudio", t)
+        self.assertEqual(rc, 0, out)
+        kit = t / "glados" / "adapters" / "aistudio"
+        bundle = self.flat(read(kit / "bundles" / "review-mr.aistudio.md"))
+        self.assertNotIn("inlined at compile time", bundle)
+        self.assertIn("You cannot read `glados.yaml` here. Only its "
+                      "optimize-for sentence was compiled in", bundle)
+        self.assertIn("ask for it rather than guess", bundle)
+        self.assertIn("`.glados/presets.yaml`: ask for that file too", bundle)
+        readme = self.flat(read(kit / "README.md"))
+        self.assertIn("together with `.glados/presets.yaml`", readme)
+        self.assertIn("the current `glados.yaml` and `.glados/presets.yaml`",
+                      readme)
+
+    def test_review_mr_takes_over_findings_posted_after_the_mr(self):
+        """A pipeline step after open-mr posts its verdict and hands its
+        blocking findings to review-mr; cycle 1 carries them, and one still
+        open reaches address-review like a synthesis finding."""
+        text = self._core("review-mr")
+        self.assertIn("**Findings handed over with the MR.**", text)
+        self.assertIn("cycle 1 carries them in the brief, each named and open "
+                      "until this pass refutes or closes it", text)
+        self.assertIn("joins the consolidated list in step 7 at its severity, "
+                      "as a synthesis finding does", text)
+
     def test_every_core_pushes_and_pops_the_marker_stack(self):
         for core in self._cores():
             with self.subTest(core=core.stem):
@@ -2019,9 +2085,10 @@ class TestKernelRunRules(unittest.TestCase):
         self.assertIn('"no MR for this work; mr-comment delivery not applicable"',
                       text)
         # a parked unit of work has not ended: its items wait for the resume
-        self.assertIn("A run that parks its unit of work (step 3) has not "
-                      "ended it: its items stay pending for the run that "
-                      "resumes the work and opens the MR", text)
+        self.assertIn("A run that ends with its unit still waiting on an "
+                      "approval (step 3) has not ended it: its items stay "
+                      "pending for the run that resumes the work and opens "
+                      "the MR", text)
         # the existing guarantees survive
         self.assertIn("a verdict that never reached the MR leaves the change "
                       "looking unreviewed", text)
@@ -2368,6 +2435,32 @@ class TestPipelines(unittest.TestCase):
             "    stage: speccing\n" + self.pipeline(["g"])),
             "steps.g.audits: a gate must name the steps it may audit")
 
+    def test_prose_keys_of_the_wrong_type_are_named(self):
+        """`when: true` or `description: 5` was reported as missing
+        ("required"), which sent the user looking for a key they wrote."""
+        pc = self.check(
+            "steps:\n  s:\n    description: [a, b]\n    kind: produce\n"
+            "    stage: planning\n"
+            "pipelines:\n  a:\n    description: 5\n    when: true\n"
+            "    sequence: [s]\n    step-options:\n      s:\n"
+            "        modifier: optional\n        when: false\n")
+        self.assertError(
+            pc,
+            "steps.s.description: must be one line of prose — got [a, b], "
+            "which YAML reads as a list; quote it if you meant text",
+            "pipelines.a.description: must be one line of prose — got 5",
+            "pipelines.a.when: must be one line of prose — got true, which "
+            "YAML reads as a number or a boolean",
+            "pipelines.a.step-options.s.when: must be one line of prose — got "
+            "false")
+        joined = "\n".join(pc.errors)
+        self.assertNotIn("description: required", joined)
+        self.assertNotIn("when: required", joined)
+        # absent is still "required"
+        self.assertError(self.check(
+            "pipelines:\n  a:\n    sequence: [plan-feature]\n"),
+            "pipelines.a.description: required", "pipelines.a.when: required")
+
     def test_v5_closed_keys_and_values(self):
         cases = [
             ("steps:\n  s:\n    description: d\n    kidn: produce\n"
@@ -2614,6 +2707,23 @@ class TestPipelines(unittest.TestCase):
         self.assertIn("run-pipeline is disabled", out)
         report = read(t / ".glados" / "assembly-report.md")
         self.assertIn("**run-pipeline is disabled**", report)
+        # sunset disabled it, not a disabled-workflows: line the manifest
+        # does not have: shim, warning and report name the preset
+        flat = " ".join(shim.split())
+        self.assertIn("is disabled by the sunset phase preset (glados.yaml "
+                      "sets no `disabled-workflows:`", flat)
+        self.assertNotIn("in this project's glados.yaml", flat)
+        self.assertIn("disabled by the sunset phase preset", " ".join(out.split()))
+        self.assertIn("disabled** by the sunset phase preset", report)
+        # an explicit list is named as such
+        t2 = self.project(self.STEPS + self.PIPELINES
+                          + "disabled-workflows: [run-pipeline]\n")
+        rc, out = install("claude", t2)
+        self.assertEqual(rc, 0, out)
+        shim = " ".join(read(t2 / ".claude" / "commands" / "glados" /
+                             "backend-feature.md").split())
+        self.assertIn("is disabled in this project's glados.yaml "
+                      "(`disabled-workflows:`)", shim)
 
     def test_hash_moves_on_names_and_descriptions_only(self):
         raw = glados.parse_yaml(self.MINIMAL.format(phase="evolving")
@@ -2694,6 +2804,10 @@ class TestPipelines(unittest.TestCase):
                     self.assertIn(invoke, text)
                 if mode == "pi":
                     self.assertEqual(text.count("${ARGUMENTS"), 1)
+                    self.assertIn(
+                        "ignore its closing `## Invocation arguments` "
+                        "section, which is an unexpanded placeholder when "
+                        "the file is read", " ".join(text.split()))
                 self.assertTrue((t / shim.replace("backend-feature",
                                                   "refactor")).is_file())
                 rc, out = run_cli("check", "--target", t, "--source", REPO)
@@ -2768,6 +2882,23 @@ class TestPipelines(unittest.TestCase):
             [sys.executable, str(t / ".glados" / "glados.py"), "validate",
              "--target", str(t)], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_vendored_toolchain_ignores_a_project_src_kernel(self):
+        """A project with its own src/kernel/ (an OS kernel's sources) made
+        the vendored .glados/glados.py resolve the project root as the
+        GLaDOS source, so validate failed, and run-pipeline runs validate
+        before its first step."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "src" / "kernel" / "sched.c", "int main(void) { return 0; }\n")
+        for cmd in ("validate", "check"):
+            with self.subTest(cmd=cmd):
+                proc = subprocess.run(
+                    [sys.executable, str(t / ".glados" / "glados.py"), cmd,
+                     "--target", str(t)], capture_output=True, text=True)
+                out = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, out)
+                self.assertNotIn("missing kernel source", out)
 
     # -- report, scaffold, doctor, guard ---------------------------------------
 
@@ -2899,9 +3030,49 @@ class TestPipelines(unittest.TestCase):
             "Known gap: build-feature can still be run directly",
         ):
             self.assertIn(rule, text)
-        self.assertIn("A run that parks its unit of work to wait for an "
-                      "approval", text, "the epilogue owns the parked rule")
+        self.assertIn("A run that ends with its unit of work still waiting "
+                      "on an approval has not finished it: run-pipeline "
+                      "parking at a `human` checkpoint or resuming a park "
+                      "that has no approval yet, and run-epic stopping with "
+                      "only parked tickets left", text,
+                      "the epilogue owns the parked rule")
         self.assertEqual(text.count("## Verdicts and finding severities"), 1)
+        for rule in (
+            # rule 1 is a person's choice only: run-epic hands over its row
+            "| 1 | A person invoked this run, and the first word of their "
+            "arguments names a pipeline",
+            # a park is resumed from its own branch, pinned against the target
+            "fetch that branch and check it out first, whatever branch this "
+            "run started on",
+            "check the approval as **Resume** in step 4 sets out before "
+            "step 2",
+            "emit one `escalation` naming the branch, this run's record, the "
+            "artifact paths and the approval needed",
+            "`git rev-parse <target>:<path>` after a fetch",
+            "With no approval yet, say so in the record and end the run "
+            "there, running no step and copying no step table",
+            # an in-session wait is resumable too
+            "If a person invoked the run, mark the row `parked` in that "
+            "commit",
+            # post-MR findings: posted at once, then handed to review-mr
+            "delivered to its bound sinks when the step ends, not at the end "
+            "of the run",
+            "handing it the blocking findings of every verdict a step after "
+            "open-mr posted, each named, as findings still open",
+            # the hand-off keys on an MR having been opened, not on the
+            # sequence listing open-mr (an optional open-mr can be skipped)
+            "When this run, or the parked run it resumed, opened an MR",
+            "When no MR was opened, the artifacts in the record are the "
+            "deliverable",
+            "Push it again once the epilogue has committed the record",
+            # a gate with no persona seated is still audited
+            "With no persona seated, this agent does the audit itself "
+            "against the body",
+        ):
+            self.assertIn(rule, text)
+        # one hand-off rule, stated once (step 5), not in each fragment
+        self.assertNotIn("### Hand off", text)
+        self.assertNotIn("for review-mr and address-review to settle", text)
 
     def test_run_epic_assigns_pipelines(self):
         t = make_target(read(EXAMPLE))
@@ -2909,11 +3080,26 @@ class TestPipelines(unittest.TestCase):
         text = " ".join(read(t / "product-knowledge" / "glados" /
                              "run-epic.md").split())
         self.assertIn("`id | depends-on | pipeline | holder | status`", text)
-        self.assertIn("run the run-pipeline workflow with the ticket's "
-                      "pipeline; a `build-feature` row runs the build-feature "
-                      "workflow instead", text)
-        self.assertIn("only a pipeline whose sequence contains `open-mr` "
-                      "qualifies", text)
+        self.assertIn("run the run-pipeline workflow for the ticket, handing "
+                      "it the ticket's row (its pipeline included) as caller "
+                      "context, never the pipeline name as an argument; a "
+                      "`build-feature` row runs the build-feature workflow "
+                      "instead", text)
+        self.assertIn("only a pipeline whose sequence contains `open-mr`, "
+                      "and not as `optional`, qualifies", text)
+        # a disabled run-pipeline (preset or explicit) means build-feature
+        self.assertIn("(only when `glados.yaml` declares `pipelines:` and "
+                      "run-pipeline is enabled)", text)
+        self.assertIn("With run-pipeline in the effective `disabled-workflows` "
+                      "(the phase preset's list included), every ticket gets "
+                      "`build-feature`", text)
+        # a parked ticket resumes on its own branch, and the run that
+        # stops on parked tickets keeps the epic's claim
+        self.assertIn("a parked ticket resumes on the branch its row notes",
+                      text)
+        self.assertIn("note the parked branch and record the park's "
+                      "escalation names", text)
+        self.assertIn("it keeps its claim and appends no work-unit row", text)
         self.assertIn("is never overwritten", text)
         self.assertIn("`awaiting-approval:<step>`", text)
         self.assertIn("no row may still be `awaiting-approval`", text)

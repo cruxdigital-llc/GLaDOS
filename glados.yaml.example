@@ -107,8 +107,9 @@ workflows:
 
 # Structurally remove workflows (lane 1 — recompile to apply). Layered like
 # the other keys (baseline < phase < explicit): the sunset preset sets
-# [build-feature]; an explicit list here replaces the preset list wholesale,
-# so [] re-enables everything a preset disabled. Disabled cores are not
+# [build-feature, run-pipeline]; an explicit list here replaces the preset
+# list wholesale, so [] re-enables everything a preset disabled (a sunset
+# project that keeps an explicit list names both). Disabled cores are not
 # installed; their alias shims say so instead of vanishing.
 disabled-workflows: []
 
@@ -195,8 +196,8 @@ params:
 # docs/guides/sda.md.
 sda: false
 
-# Concurrency (v2.1 — the lease module; v2.0.0 ships only the base-SHA yield
-# rule, which is always on and not configurable).
+# Concurrency (later — the lease module, not shipped; today only the base-SHA
+# yield rule applies, which is always on and not configurable).
 # concurrency:
 #   backend: lockfile              # lockfile | issue-claim | none
 
