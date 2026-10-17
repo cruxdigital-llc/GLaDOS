@@ -41,12 +41,12 @@ consistency checks, and prints an assembly report (also written to
 your-project/
 ├── glados.yaml                      # your config (you created this)
 ├── product-knowledge/
-│   ├── glados/                      # 25 compiled workflow files (.md):
-│   │   ├── build-feature.md         #   15 workflows + 10 shims that redirect
-│   │   ├── fix-bug.md               #   retired v1 names to the current file
-│   │   └── ...
+│   ├── glados/                      # 26 compiled workflow files (.md):
+│   │   ├── build-feature.md         #   16 workflows + 10 shims that redirect
+│   │   ├── fix-bug.md               #   retired v1 names to the current file,
+│   │   └── ...                      #   plus a pointer per declared pipeline
 │   ├── PROJECT_STATUS.md            # project-owned knowledge skeleton
-│   └── observations/ personas/ philosophies/ standards/
+│   └── observations/ personas/ philosophies/ standards/ steps/
 └── .glados/                         # committed support folder: vendored
     ├── glados.py                    #   installer/checker, workflow sources,
     ├── src/  ci/  hooks/  personas/ #   CI templates, guard scripts, personas

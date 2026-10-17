@@ -768,12 +768,13 @@ class TestDisabledWorkflows(unittest.TestCase):
         t = make_target(self.MINIMAL.format(phase="sunset"))
         rc, out = install("direct", t)
         self.assertEqual(rc, 0, out)
-        self.assertFalse(
-            (t / "product-knowledge" / "glados" / "build-feature.md").exists(),
-            "sunset must not install build-feature")
+        for core in ("build-feature", "run-pipeline"):
+            self.assertFalse(
+                (t / "product-knowledge" / "glados" / f"{core}.md").exists(),
+                f"sunset must not install {core}")
         report = read(t / ".glados" / "assembly-report.md")
-        self.assertIn("| disabled-workflows | [build-feature] | (phase:sunset) |",
-                      report, report)
+        self.assertIn("| disabled-workflows | [build-feature, run-pipeline] | "
+                      "(phase:sunset) |", report, report)
 
     def test_explicit_empty_list_overrides_preset(self):
         t = make_target(self.MINIMAL.format(phase="sunset")
@@ -2012,10 +2013,15 @@ class TestKernelRunRules(unittest.TestCase):
         self.assertIn("**No MR yet is not a failed delivery.**", text)
         self.assertIn("record it in the run record under `## Pending MR "
                       "delivery`. This does not escalate.", text)
-        self.assertIn("posts every pending MR item from its own record and "
-                      "from the records of the runs nested inside it", text)
+        self.assertIn("posts every pending MR item from its own record, from "
+                      "the records of the runs nested inside it, and from a "
+                      "parked run it resumed", text)
         self.assertIn('"no MR for this work; mr-comment delivery not applicable"',
                       text)
+        # a parked unit of work has not ended: its items wait for the resume
+        self.assertIn("A run that parks its unit of work (step 3) has not "
+                      "ended it: its items stay pending for the run that "
+                      "resumes the work and opens the MR", text)
         # the existing guarantees survive
         self.assertIn("a verdict that never reached the MR leaves the change "
                       "looking unreviewed", text)
@@ -2103,6 +2109,830 @@ class TestKernelRunRules(unittest.TestCase):
         self.assertIn("`product-knowledge/personas/`, then the library personas "
                       "in `.glados/personas/`", text)
         self.assertIn("critique the change from that persona's mandate", text)
+
+
+class TestPipelines(unittest.TestCase):
+    """Project workflows (Part P): `steps:` + `pipelines:` in glados.yaml,
+    run by the run-pipeline core. The rule set (V1-V10, W1-W2) is asserted
+    in-process through check_pipelines; install, check, validate, doctor and
+    the per-pipeline shims through the real CLI."""
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: {phase}\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    STEPS = (
+        "steps:\n"
+        "  architecture-review:\n"
+        "    description: Audit structure against our layering rules\n"
+        "    kind: gate\n"
+        "    stage: speccing\n"
+        "    audits: [shape, target-structure, spec-feature]\n"
+        "  target-structure:\n"
+        "    description: Describe the structure the refactor ends in\n"
+        "    kind: produce\n"
+        "    produces: spec\n"
+        "    stage: speccing\n")
+
+    PIPELINES = (
+        "pipelines:\n"
+        "  backend-feature:\n"
+        "    description: A change to an endpoint or a schema\n"
+        "    when: The change adds or alters an endpoint or a schema.\n"
+        "    sequence:\n"
+        "      - plan-feature\n"
+        "      - shape\n"
+        "      - architecture-review\n"
+        "      - spec-feature\n"
+        "      - implement-feature\n"
+        "      - verify-feature\n"
+        "      - open-mr\n"
+        "      - self-review\n"
+        "    step-options:\n"
+        "      architecture-review:\n"
+        "        review: fresh-agent\n"
+        "  refactor:\n"
+        "    description: Behavior-preserving restructuring\n"
+        "    when: The goal is structural and no behavior may change.\n"
+        "    sequence: [target-structure, architecture-review, "
+        "implement-feature, verify-feature, open-mr]\n")
+
+    BUILD_FEATURE_SHA = ("9785018be6559a32f6880ded7252240c6c7a177f0fa7b052"
+                         "b7bc82bf053afcc9")
+    FIX_BUG_SHA = ("669ebcf2caa27b0a2b99198f741ed9e2d9dd7722a13424b90f787ef"
+                   "7996bc953")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = glados.Source(REPO)
+
+    # -- helpers -------------------------------------------------------------
+
+    def check(self, extra, phase="evolving", target=None):
+        """check_pipelines over MINIMAL + ``extra``, in-process."""
+        text = self.MINIMAL.format(phase=phase) + extra
+        raw = glados.parse_yaml(text, "glados.yaml")
+        r = glados.resolve_manifest(raw, self.source.presets, "glados.yaml")
+        enabled = [c for c in glados.CORES
+                   if c not in set(r.values.get("disabled-workflows") or [])]
+        return glados.check_pipelines(self.source, r, enabled, target)
+
+    def assertError(self, pc, *needles):
+        joined = "\n".join(pc.errors)
+        for needle in needles:
+            self.assertIn(needle, joined, f"missing {needle!r} in:\n{joined}")
+
+    def pipeline(self, sequence, options="", name="p"):
+        return (f"pipelines:\n  {name}:\n    description: d\n    when: w\n"
+                f"    sequence: [{', '.join(sequence)}]\n" + options)
+
+    def project(self, extra=None, phase="evolving", bodies=None):
+        """A target with MINIMAL + steps + pipelines and a body per step."""
+        extra = self.STEPS + self.PIPELINES if extra is None else extra
+        t = make_target(self.MINIMAL.format(phase=phase) + extra)
+        for sid in (["architecture-review", "target-structure"]
+                    if bodies is None else bodies):
+            write(t / "product-knowledge" / "steps" / f"{sid}.md",
+                  f"## What to check\n- {sid}\n")
+        return t
+
+    # -- the declarations that ship ------------------------------------------
+
+    def test_valid_declarations_pass_and_rows_get_defaults(self):
+        pc = self.check(self.STEPS + self.PIPELINES)
+        self.assertEqual(pc.errors, [])
+        self.assertEqual(pc.warnings, [])
+        rows = {r["id"]: r for r in pc.pipelines["backend-feature"]["rows"]}
+        self.assertEqual(rows["shape"]["review"], "in-context")
+        self.assertEqual(rows["plan-feature"]["review"], "none")
+        self.assertEqual(rows["architecture-review"]["review"], "fresh-agent")
+        self.assertEqual(rows["architecture-review"]["modifier"], "required")
+        self.assertEqual(rows["architecture-review"]["checkpoint"], "none")
+        # V4: a gate audits the LATEST earlier step its audits: names
+        self.assertEqual(rows["architecture-review"]["audits"], "shape")
+        refactor = {r["id"]: r for r in pc.pipelines["refactor"]["rows"]}
+        self.assertEqual(refactor["architecture-review"]["audits"],
+                         "target-structure")
+        # a produces: spec step satisfies implement-feature (no V3 error)
+        self.assertEqual(refactor["target-structure"]["produces"], "spec")
+
+    def test_example_blocks_validate(self):
+        """The commented steps:/pipelines: blocks in glados.yaml.example,
+        uncommented, are a valid declaration (and stay commented: presets
+        cannot set what the example does not declare live)."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# steps:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        self.assertIn("pipelines:", block)
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertNotIn("pipelines", raw)
+        self.assertNotIn("steps", raw)
+        self.assertIn("# pipeline-discretion:", read(EXAMPLE))
+        pc = self.check("\n".join(block) + "\n")
+        self.assertEqual(pc.errors, [])
+        t = self.project("\n".join(block) + "\n",
+                         bodies=["architecture-review"])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados validate: OK", out)
+
+    def test_guide_examples_validate(self):
+        """The four example pipelines in docs/guides/pipelines.md are valid
+        as written, and every YAML block in the guide parses."""
+        guide = read(REPO / "docs" / "guides" / "pipelines.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreater(len(blocks), 2)
+        for block in blocks:
+            glados.parse_yaml(block, "pipelines.md")
+        # the first two snippets, copied together, are a first valid try
+        self.assertIn("steps:", blocks[0])
+        self.assertIn("pipelines:", blocks[1])
+        first = blocks[0] + blocks[1]
+        ids = list(glados.parse_yaml(first, "pipelines.md")["steps"])
+        t = self.project(first, bodies=ids)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 pipeline(s), 1 project step(s), 0 warning(s)", out)
+        full = next(b for b in blocks
+                    if "pipelines:" in b and "steps:" in b and "rfc:" in b)
+        ids = list(glados.parse_yaml(full, "pipelines.md")["steps"])
+        t = self.project(full, bodies=ids)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("4 pipeline(s), 6 project step(s), 0 warning(s)", out)
+
+    # -- V1-V10 --------------------------------------------------------------
+
+    def test_v1_names_are_kebab_case_and_unique(self):
+        self.assertError(self.check(
+            "steps:\n  Bad_Id:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"), "'Bad_Id' is not kebab-case")
+        cases = [("review-mr", "is a GLaDOS workflow"),
+                 ("mission", "is a v1 alias"),
+                 ("shape", "is a built-in step"),
+                 ("init", "is the Claude Code plugin's init skill"),
+                 ("run-pipeline", "is the workflow that runs pipelines")]
+        for name, why in cases:
+            with self.subTest(name=name):
+                pc = self.check(self.pipeline(["plan-feature"], name=name))
+                self.assertError(pc, f"pipelines.{name}: '{name}' {why}")
+        pc = self.check(
+            "steps:\n  twin:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n" + self.pipeline(["twin"], name="twin"))
+        self.assertError(pc, "share one namespace")
+
+    def test_vocabulary_constants_agree(self):
+        """The built-in contracts use only the closed artifact kinds, and
+        V1 refuses every reserved name with the reason the table gives."""
+        kinds = set(glados.ARTIFACT_KINDS)
+        for sid, b in glados.BUILTIN_STEPS.items():
+            with self.subTest(step=sid):
+                self.assertLessEqual(set(b["needs"]), kinds)
+                if b["produces"] is not None:
+                    self.assertIn(b["produces"], kinds)
+        self.assertLessEqual(set(glados.STEP_PRODUCES), kinds)
+        for name, why in glados.RESERVED_STEP_NAMES.items():
+            with self.subTest(name=name):
+                pc = self.check(self.pipeline(["plan-feature"], name=name))
+                self.assertError(pc, f"pipelines.{name}: '{name}' is {why}")
+
+    def test_v1_collision_fails_the_install(self):
+        t = make_target(read(EXAMPLE) + "\n" + self.pipeline(
+            ["plan-feature"], name="fix-bug"))
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("pipelines.fix-bug: 'fix-bug' is a GLaDOS workflow", out)
+        self.assertNotIn("Traceback", out)
+        self.assertFalse((t / ".claude").exists(), "nothing may be emitted")
+
+    def test_v2_sequences(self):
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence: []\n"), "pipelines.p.sequence: required and not empty")
+        self.assertError(self.check(self.pipeline(["plan-feture"])),
+                         "'plan-feture' is neither a built-in step")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "plan-feature"])), "'plan-feature' appears twice")
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence: plan-feature\n"),
+            "pipelines.p.sequence: must be a list of step ids")
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence:\n      - plan-feature: x\n"),
+            "item 1 is a mapping ('plan-feature: x')")
+        # a typo'd id does not cascade into "nothing produces a spec"
+        pc = self.check(self.pipeline(["spec-featur", "implement-feature"]))
+        self.assertNotIn("needs a spec", "\n".join(pc.errors))
+
+    def test_v3_needs_come_from_an_earlier_step(self):
+        self.assertError(self.check(self.pipeline(
+            ["implement-feature", "open-mr"])),
+            "'implement-feature' needs a spec, but no step before it in the "
+            "sequence produces one")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "self-review"])), "'self-review' needs an MR")
+        optional_spec = ("    step-options:\n      spec-feature:\n"
+                         "        modifier: optional\n        when: w\n")
+        seq = ["plan-feature", "spec-feature", "implement-feature"]
+        self.assertError(self.check(self.pipeline(seq, optional_spec)),
+                         "'implement-feature' needs a spec, but its only "
+                         "earlier producer 'spec-feature' is optional")
+        # an advisory step always runs, so the same holds for it
+        advisory = optional_spec + ("      implement-feature:\n"
+                                    "        modifier: advisory\n")
+        self.assertError(self.check(self.pipeline(seq, advisory)),
+                         "its only earlier producer 'spec-feature' is optional")
+        # an optional consumer of an optional producer is fine
+        both = optional_spec + ("      implement-feature:\n"
+                                "        modifier: optional\n        when: w\n")
+        self.assertEqual(self.check(self.pipeline(seq, both)).errors, [])
+
+    def test_v4_a_gate_audits_an_earlier_step(self):
+        pc = self.check(self.STEPS + self.pipeline(
+            ["architecture-review", "plan-feature", "shape"]))
+        self.assertError(pc, "gate 'architecture-review' audits [shape, "
+                             "target-structure, spec-feature], but none of "
+                             "them runs before it")
+        opt = ("    step-options:\n      shape:\n        modifier: optional\n"
+               "        when: w\n")
+        pc = self.check(self.STEPS + self.pipeline(
+            ["plan-feature", "shape", "architecture-review"], opt))
+        self.assertError(pc, "can audit only optional steps before it")
+        self.assertError(self.check(
+            "steps:\n  g:\n    description: d\n    kind: gate\n"
+            "    stage: speccing\n" + self.pipeline(["g"])),
+            "steps.g.audits: a gate must name the steps it may audit")
+
+    def test_v5_closed_keys_and_values(self):
+        cases = [
+            ("steps:\n  s:\n    description: d\n    kidn: produce\n"
+             "    stage: planning\n", ["steps.s.kidn: unknown key",
+                                      "steps.s.kind: required"]),
+            ("steps:\n  s:\n    kind: produce\n    stage: later\n",
+             ["steps.s.description: required", "'later' is not a stage"]),
+            ("steps:\n  s:\n    description: d\n    kind: gate\n"
+             "    stage: speccing\n    audits: [shape]\n    produces: spec\n",
+             ["only a produce step declares what it produces"]),
+            ("steps:\n  s:\n    description: d\n    kind: produce\n"
+             "    stage: speccing\n    audits: [shape]\n",
+             ["only a gate audits"]),
+            ("steps:\n  s:\n    description: d\n    kind: produce\n"
+             "    stage: speccing\n    produces: mr\n",
+             ["'mr' is not an artifact a step can declare"]),
+            (self.pipeline(["plan-feature"]).replace("    when: w\n",
+                                                     "    whne: w\n"),
+             ["pipelines.p.whne: unknown key", "pipelines.p.when: required"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifer: optional\n"),
+             ["step-options.plan-feature.modifer: unknown key"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      shape:\n        review: none\n"),
+             ["'shape' is not in this pipeline's sequence"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        when: w\n"),
+             ["only an optional step takes when:"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifier: optional\n"),
+             ["modifier: optional needs a when:"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifier: maybe\n"
+                           "        checkpoint: always\n"),
+             ["modifier: 'maybe'", "checkpoint: 'always'"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        review: bogus\n"),
+             ["step-options.plan-feature.review: 'bogus' — one of none | "
+              "in-context | fresh-agent"]),
+        ]
+        for extra, needles in cases:
+            with self.subTest(needles=needles[0]):
+                self.assertError(self.check(extra), *needles)
+
+    def test_v6_review_only_where_the_step_takes_it(self):
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "spec-feature", "implement-feature"],
+            "    step-options:\n      implement-feature:\n"
+            "        review: none\n")),
+            "implement-feature takes no review: setting")
+        mr = ["plan-feature", "spec-feature", "implement-feature", "open-mr",
+              "self-review"]
+        for sid in ("open-mr", "self-review"):
+            with self.subTest(step=sid):
+                self.assertError(self.check(self.pipeline(
+                    mr, f"    step-options:\n      {sid}:\n"
+                        f"        review: in-context\n")),
+                    f"{sid} takes no review: setting")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "spec-feature"],
+            "    step-options:\n      spec-feature:\n"
+            "        review: in-context\n")),
+            "spec-feature takes only none | fresh-agent")
+        self.assertEqual(self.check(self.pipeline(
+            ["plan-feature", "spec-feature"],
+            "    step-options:\n      spec-feature:\n"
+            "        review: fresh-agent\n      plan-feature:\n"
+            "        review: in-context\n")).errors, [])
+
+    def test_v7_step_bodies_exist_without_frontmatter(self):
+        t = tmpdir("glados-steps-")
+        extra = self.STEPS + self.PIPELINES
+        # no target: no body check
+        self.assertEqual(self.check(extra).errors, [])
+        self.assertError(self.check(extra, target=t),
+                         "steps.architecture-review: no body at "
+                         "product-knowledge/steps/architecture-review.md")
+        write(t / "product-knowledge" / "steps" / "architecture-review.md",
+              "---\nkind: gate\n---\n\n## What to check\n")
+        write(t / "product-knowledge" / "steps" / "target-structure.md",
+              "## What to produce\n")
+        pc = self.check(extra, target=t)
+        self.assertError(pc, "architecture-review.md starts with YAML "
+                             "frontmatter")
+        self.assertNotIn("target-structure", "\n".join(pc.errors))
+        # a case mismatch fails on every platform, not only on Linux CI
+        c = tmpdir("glados-steps-case-")
+        write(c / "product-knowledge" / "steps" / "Architecture-Review.md",
+              "## What to check\n")
+        write(c / "product-knowledge" / "steps" / "target-structure.md",
+              "## What to produce\n")
+        self.assertError(self.check(extra, target=c),
+                         "steps.architecture-review: the body is "
+                         "product-knowledge/steps/Architecture-Review.md, but "
+                         "the step needs product-knowledge/steps/"
+                         "architecture-review.md")
+        # install checks bodies too (with the target), and names the file
+        p = self.project(bodies=["target-structure"])
+        rc, out = install("direct", p)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no body at product-knowledge/steps/"
+                      "architecture-review.md", out)
+
+    def test_v8_nested_workflows_must_be_enabled(self):
+        pc = self.check("disabled-workflows: [spec-feature]\n"
+                        + self.pipeline(["plan-feature", "spec-feature"]))
+        self.assertError(pc, "'spec-feature' is a workflow disabled-workflows "
+                             "turns off")
+        pc = self.check(self.pipeline(["plan-feature"]), phase="sunset")
+        self.assertEqual(pc.errors, [])
+        self.assertTrue(any("run-pipeline is disabled" in w
+                            for w in pc.warnings), pc.warnings)
+
+    def test_v9_pipeline_discretion_is_a_decision_class(self):
+        source = self.source
+        self.assertEqual(
+            source.presets["baseline"]["decisions"]["pipeline-discretion"],
+            "record")
+        self.assertEqual(
+            source.presets["baseline"]["params"]["pipeline"]["max-cycles"], 3)
+        for phase, want in (("nascent", "agent"), ("evolving", "agent"),
+                            ("production", "record"), ("sunset", "record")):
+            self.assertEqual(
+                source.presets[phase]["decisions"]["pipeline-discretion"],
+                want, phase)
+        t = make_target(self.MINIMAL.format(phase="production")
+                        + "decisions:\n  pipeline-discretion: sometimes\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("decisions.pipeline-discretion: 'sometimes' is not a "
+                      "decision class", out)
+        # laxer than the phase needs a confession, like any decision
+        t = make_target(self.MINIMAL.format(phase="production")
+                        + "decisions:\n  pipeline-discretion: agent\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("relaxation-acknowledged", out)
+
+    def test_v10_description_fits_250_characters(self):
+        long = "x" * 251
+        pc = self.check(self.pipeline(["plan-feature"]).replace(
+            "description: d", f"description: {long}"))
+        self.assertError(pc, "251 characters — keep it to 250 or fewer")
+        ok = self.check(self.pipeline(["plan-feature"]).replace(
+            "description: d", "description: " + "x" * 250))
+        self.assertEqual(ok.errors, [])
+
+    def test_warnings_w1_w2(self):
+        pc = self.check(
+            "steps:\n  spare:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"
+            + self.pipeline(["plan-feature", "spec-feature",
+                             "implement-feature", "open-mr"], name="quick"))
+        self.assertEqual(pc.errors, [])
+        self.assertIn("pipelines.quick: opens an MR with no verification "
+                      "step; the MR description will say so", pc.warnings)
+        self.assertIn("steps.spare: declared but no pipeline uses it — add "
+                      "it to a sequence or remove it", pc.warnings)
+        # validate prints them and still passes; install prints them too
+        t = self.project(
+            "steps:\n  spare:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"
+            + self.pipeline(["plan-feature", "spec-feature",
+                             "implement-feature", "open-mr"], name="quick"),
+            bodies=[])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: pipelines.quick: opens an MR", out)
+        self.assertIn("2 warning(s)", out)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: steps.spare: declared", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("- pipelines.quick: opens an MR with no verification "
+                      "step", report)
+
+    def test_warnings_survive_a_failed_install(self):
+        # an unused step is often the other half of a misspelt sequence id
+        extra = ("steps:\n  arch-review:\n    description: d\n"
+                 "    kind: produce\n    stage: planning\n"
+                 + self.pipeline(["arch-reveiw"]))
+        rc, out = install("direct", self.project(extra, bodies=[]))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'arch-reveiw' is neither a built-in step", out)
+        self.assertIn("glados: warning: steps.arch-review: declared but no "
+                      "pipeline uses it", out)
+
+    def test_malformed_blocks_never_crash(self):
+        bad = [
+            "pipelines:\n  - backend-feature\n",
+            "steps: scalar\n",
+            "steps:\n  s: scalar\n",
+            self.pipeline(["plan-feature"], "    step-options:\n"
+                          "      - plan-feature\n"),
+            self.pipeline(["plan-feature"], "    step-options:\n"
+                          "      plan-feature: scalar\n"),
+            "pipelines:\n  p:\n    description: [a, b]\n    when: 3\n"
+            "    sequence: [1, 2]\n",
+        ]
+        for extra in bad:
+            with self.subTest(extra=extra[:40]):
+                pc = self.check(extra)
+                self.assertTrue(pc.errors, extra)
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + bad[0])
+        rc, out = run_cli("check", "--target", t, "--source", REPO,
+                          "--report-only")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("pipelines: must be a mapping", out)
+        self.assertNotIn("Traceback", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    # -- presets, phases, hash ------------------------------------------------
+
+    def test_preset_setting_pipelines_rejected(self):
+        for key in ("pipelines", "steps"):
+            with self.subTest(key=key):
+                src = make_doctored_source()
+                presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+                text = read(presets).replace(
+                    "nascent:\n", f"nascent:\n  {key}:\n    x:\n"
+                                  f"      description: d\n", 1)
+                presets.write_text(text, encoding="utf-8", newline="\n")
+                rc, out = install("direct", make_target(), source=src)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(f"preset 'nascent' sets '{key}'", out)
+                self.assertIn("the team's own declaration, not a phase "
+                              "default", out)
+                self.assertNotIn("Traceback", out)
+
+    def test_sunset_disables_run_pipeline(self):
+        t = self.project(phase="sunset")
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        owned = t / ".claude" / "commands" / "glados"
+        self.assertFalse((owned / "run-pipeline.md").exists())
+        shim = read(owned / "backend-feature.md")
+        self.assertIn("run-pipeline, the workflow that runs it, is disabled",
+                      shim)
+        self.assertNotIn("read and follow", shim)
+        self.assertIn("run-pipeline is disabled", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("**run-pipeline is disabled**", report)
+
+    def test_hash_moves_on_names_and_descriptions_only(self):
+        raw = glados.parse_yaml(self.MINIMAL.format(phase="evolving")
+                                + self.STEPS + self.PIPELINES, "glados.yaml")
+        base = glados.structural_hash(raw)
+        self.assertEqual(
+            glados.structural_projection(raw)["pipelines"],
+            {"backend-feature": "A change to an endpoint or a schema",
+             "refactor": "Behavior-preserving restructuring"})
+
+        def edited(fn):
+            copy = json.loads(json.dumps(raw))
+            fn(copy)
+            return glados.structural_hash(copy)
+
+        self.assertEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"]["sequence"].pop()))
+        self.assertEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"].update(when="other")))
+        self.assertEqual(base, edited(lambda m: m.pop("steps")))
+        self.assertNotEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"].update(description="new")))
+        self.assertNotEqual(base, edited(
+            lambda m: m["pipelines"].update(extra={"description": "d"})))
+        # the same through check: a sequence edit keeps it passing, a
+        # description edit makes the compile stale
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        gy = t / "glados.yaml"
+        write(gy, read(gy).replace("      - self-review\n", ""))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        write(gy, read(gy).replace("Behavior-preserving restructuring",
+                                   "Restructuring that keeps behavior"))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("stale compile", out)
+
+    # -- shims -----------------------------------------------------------------
+
+    def test_shims_per_script_mode_and_cleanup(self):
+        modes = {
+            "claude": (".claude/commands/glados/backend-feature.md",
+                       ".claude/commands/glados/run-pipeline.md",
+                       "/glados:run-pipeline backend-feature <brief>"),
+            "direct": ("product-knowledge/glados/backend-feature.md",
+                       "product-knowledge/glados/run-pipeline.md", None),
+            "gemini": (".gemini/commands/glados/backend-feature.toml",
+                       ".gemini/commands/glados/run-pipeline.toml",
+                       "/glados:run-pipeline backend-feature <brief>"),
+            "antigravity": (".agents/workflows/glados-backend-feature.md",
+                            ".agents/workflows/glados-run-pipeline.md",
+                            "/glados-run-pipeline backend-feature <brief>"),
+            "pi": (".pi/prompts/glados-backend-feature.md",
+                   ".pi/prompts/glados-run-pipeline.md",
+                   "/glados-run-pipeline backend-feature <brief>"),
+        }
+        for mode, (shim, runner, invoke) in modes.items():
+            with self.subTest(mode=mode):
+                t = self.project()
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                self.assertTrue((t / runner).is_file(), runner)
+                text = read(t / shim)
+                if mode == "gemini":
+                    data = tomllib.loads(text)
+                    self.assertEqual(data["description"],
+                                     "A change to an endpoint or a schema")
+                    text = data["prompt"]
+                elif mode != "direct":
+                    fm, _ = glados.split_frontmatter(text, shim)
+                    self.assertEqual(fm["description"],
+                                     "A change to an endpoint or a schema")
+                self.assertIn(f"read and follow `{runner}`", text)
+                self.assertIn("with `backend-feature` as the first word of "
+                              "its arguments", text)
+                if invoke:
+                    self.assertIn(invoke, text)
+                if mode == "pi":
+                    self.assertEqual(text.count("${ARGUMENTS"), 1)
+                self.assertTrue((t / shim.replace("backend-feature",
+                                                  "refactor")).is_file())
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, out)
+                # removing a pipeline removes its shim at the next install
+                gy = t / "glados.yaml"
+                text = read(gy)
+                write(gy, text[:text.index("  refactor:\n")])
+                self.assertEqual(install(mode, t)[0], 0)
+                self.assertFalse((t / shim.replace("backend-feature",
+                                                   "refactor")).exists(),
+                                 f"{mode}: removed pipeline's shim lingers")
+                self.assertTrue((t / shim).is_file())
+
+    def test_no_shims_in_plugin_or_aistudio(self):
+        t = self.project()
+        rc, out = install("aistudio", t)
+        self.assertEqual(rc, 0, out)
+        names = [p.name for p in all_files(t / "glados")]
+        self.assertFalse(any("backend-feature" in n for n in names), names)
+        p = make_plugin_target()
+        write(p / "glados.yaml.example",
+              read(EXAMPLE) + "\n" + self.STEPS + self.PIPELINES)
+        rc, out = install("claude-plugin", p)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse((p / "skills" / "backend-feature").exists())
+        self.assertFalse(
+            (p / "compiled" / "claude-plugin" / "backend-feature.md").exists())
+        self.assertTrue(
+            (p / "compiled" / "claude-plugin" / "run-pipeline.md").is_file())
+
+    # -- validate --------------------------------------------------------------
+
+    def test_validate_lists_errors_and_writes_nothing(self):
+        t = self.project(self.pipeline(["implement-feature"], name="Bad")
+                         + "steps:\n  s:\n    kind: nope\n", bodies=[])
+        before = {f.relative_to(t).as_posix() for f in all_files(t)}
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("glados validate: FAIL", out)
+        self.assertIn("  - pipelines.Bad: 'Bad' is not kebab-case", out)
+        self.assertIn("  - steps.s.kind: 'nope' is not a step kind", out)
+        self.assertNotIn("Traceback", out)
+        after = {f.relative_to(t).as_posix() for f in all_files(t)}
+        self.assertEqual(before, after, "validate must write nothing")
+        # no manifest at all: a clean failure, not a traceback
+        rc, out = run_cli("validate", "--target", tmpdir(), "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no manifest", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_validate_runs_from_a_plugin_layout_with_no_install(self):
+        """A plugin-only repo has no .glados/: validate runs from the
+        plugin's own bin/glados.py, which finds src/ beside bin/."""
+        plugin = tmpdir("glados-plugin-root-")
+        shutil.copytree(REPO / "bin", plugin / "bin",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(REPO / "src", plugin / "src")
+        shutil.copyfile(EXAMPLE, plugin / "glados.yaml.example")
+        t = self.project()
+        self.assertFalse((t / ".glados").exists())
+        proc = subprocess.run(
+            [sys.executable, str(plugin / "bin" / "glados.py"), "validate",
+             "--target", str(t)], capture_output=True, text=True)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("2 pipeline(s), 2 project step(s)", out)
+        self.assertFalse((t / ".glados").exists(), "validate wrote files")
+        # and a vendored .glados/glados.py validates without --source
+        self.assertEqual(install("direct", t)[0], 0)
+        proc = subprocess.run(
+            [sys.executable, str(t / ".glados" / "glados.py"), "validate",
+             "--target", str(t)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    # -- report, scaffold, doctor, guard ---------------------------------------
+
+    def test_assembly_report_lists_pipelines(self):
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("## Pipelines", report)
+        self.assertIn("### `backend-feature`", report)
+        self.assertIn("| 3 | architecture-review | project gate | required | "
+                      "fresh-agent | none | `shape` |", report)
+        self.assertIn("| 2 | shape | library step | required | in-context | "
+                      "none |  |", report)
+        self.assertIn("### Project steps", report)
+        self.assertIn("| target-structure | produce | speccing | spec |  | "
+                      "`product-knowledge/steps/target-structure.md` |", report)
+        self.assertIn("| params.pipeline.max-cycles | 3 | (baseline) |", report)
+        # no declarations, no section
+        t2 = make_target()
+        self.assertEqual(install("direct", t2)[0], 0)
+        self.assertNotIn("## Pipelines",
+                         read(t2 / ".glados" / "assembly-report.md"))
+
+    def test_scaffold_and_doctor_cover_the_steps_dir(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertTrue(
+            (t / "product-knowledge" / "steps" / ".gitkeep").exists())
+        write(t / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("product-knowledge/steps/", out,
+                         "no steps in use: nothing to report")
+        p = self.project()
+        # no CODEOWNERS at all: the none-found line names the steps dir too
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("CODEOWNERS: none found — consider one covering "
+                      "glados.yaml and product-knowledge/steps/", out)
+        write(p / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("has no pattern found covering product-knowledge/steps/",
+                      out)
+        write(p / "CODEOWNERS",
+              "/glados.yaml @maintainers\n/product-knowledge/ @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("covers product-knowledge/steps/", out)
+        # patterns that name the directory's files, or float to any depth
+        cover = glados._codeowners_cover
+        gdir = "product-knowledge/steps/"
+        for pattern in ("/product-knowledge/steps/*.md", "**/steps/",
+                        "steps/", "product-knowledge/**"):
+            with self.subTest(pattern=pattern):
+                self.assertTrue(cover(f"{pattern} @a\n", gdir))
+        for pattern in ("*", "/steps/", "docs/steps/", "/glados.yaml",
+                        "/product-knowledge/stepsx/"):
+            with self.subTest(pattern=pattern):
+                self.assertFalse(cover(f"{pattern} @a\n", gdir))
+
+    def test_plugin_guard_names_pipelines_and_the_toolchain(self):
+        flat = " ".join(glados.PLUGIN_BOOTSTRAP_GUARD.split())
+        self.assertIn("any project workflows and steps (`pipelines:`, "
+                      "`steps:`) govern this run", flat)
+        self.assertIn("when `.glados/glados.py` is missing, the toolchain is "
+                      "`bin/glados.py` there", flat)
+        self.assertTrue((REPO / "bin" / "glados.py").is_file())
+
+    # -- compiled text ---------------------------------------------------------
+
+    def test_run_pipeline_compiled_rules(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        for rule in (
+            # selection
+            "Record `pipeline: <name> (selected by: <rule>)`",
+            "never a silent fallback",
+            "A defect report goes to fix-bug",
+            # validate first, from the GLaDOS that compiled this document
+            "Run `glados.py validate --target .` from the GLaDOS that "
+            "compiled this document",
+            "never improvise around it",
+            # the step table, written before anything runs
+            "`# | step | kind | modifier | review | checkpoint | status | "
+            "artifact | result | note`",
+            "Before any step runs, write the step table into the run record",
+            "no markdown checkboxes",
+            # pinned inputs
+            "`git hash-object`", "gating inputs changed mid-run",
+            # modifiers and the bound
+            "| `required` | always |", "| `optional` | when the agent judges",
+            "| `advisory` | always |", "`waived` by a named person",
+            "`params.pipeline.max-cycles`",
+            # checkpoint: commit (code included) and push before waiting,
+            # park when unattended, and the park keeps MR items pending
+            "`human`: commit the run record and step artifacts first, with "
+            "any working diff a step left uncommitted, on the run's branch, "
+            "and push the branch",
+            "A refusal, with the person's reasons, is a blocking finding",
+            "mark the row `parked`",
+            "the parked-run rule in step 3 of *Before ending this run*",
+            "its pending MR items stay pending",
+            # resume: the parked pipeline, its table, and its pins
+            "(selected by: resume)",
+            "compares its fresh pins with the parked run's",
+            # a code-changing pipeline is on its branch before its first step
+            "When the caller already put this run on a working branch "
+            "(run-epic does), stay on it",
+            # a modifier never softens a stop
+            "It never softens a stop",
+            # no verdict before an MR exists; after it, findings go to one
+            "Gates and reviews that run before open-mr publish no `verdict` "
+            "outcome",
+            "its blocking findings start no revise loop",
+            "This holds on every way the run ends",
+            # the no-Python checklist names the closed key sets
+            "a step takes only `description`, `kind` and `stage` (all "
+            "required)",
+            # the library steps
+            "Never write stub files to the branch",
+            "No verification step ran in this pipeline.",
+            "as *No MR yet is not a failed delivery* (step 5 of *Before "
+            "ending this run*) sets out",
+            "## Persona pass", "## Fresh-agent design review",
+            "Known gap: build-feature can still be run directly",
+        ):
+            self.assertIn(rule, text)
+        self.assertIn("A run that parks its unit of work to wait for an "
+                      "approval", text, "the epilogue owns the parked rule")
+        self.assertEqual(text.count("## Verdicts and finding severities"), 1)
+
+    def test_run_epic_assigns_pipelines(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-epic.md").split())
+        self.assertIn("`id | depends-on | pipeline | holder | status`", text)
+        self.assertIn("run the run-pipeline workflow with the ticket's "
+                      "pipeline; a `build-feature` row runs the build-feature "
+                      "workflow instead", text)
+        self.assertIn("only a pipeline whose sequence contains `open-mr` "
+                      "qualifies", text)
+        self.assertIn("is never overwritten", text)
+        self.assertIn("`awaiting-approval:<step>`", text)
+        self.assertIn("no row may still be `awaiting-approval`", text)
+        # agent choices are marked, so a re-check may switch only those
+        self.assertIn("Write a pipeline you chose as `<name> (agent)`", text)
+        # only parked tickets left: end the run, never loop
+        self.assertIn("end this run with a `progress` outcome listing each "
+                      "parked row and the approval it waits for", text)
+        self.assertIn("Never loop over the queue again within one run", text)
+
+    def test_build_feature_and_fix_bug_sources_unchanged(self):
+        """Maintainer decision: customization adds pipelines and steps; the
+        two fixed workflows stay byte-for-byte as they were (LF-normalized
+        sha256 of their source on main before this release)."""
+        import hashlib
+        for name, want in (("build-feature", self.BUILD_FEATURE_SHA),
+                           ("fix-bug", self.FIX_BUG_SHA)):
+            data = (REPO / "src" / "workflows" / f"{name}.md").read_bytes()
+            got = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+            self.assertEqual(got, want, f"src/workflows/{name}.md changed")
 
 
 class TestReleaseHygiene(unittest.TestCase):

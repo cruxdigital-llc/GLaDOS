@@ -37,9 +37,10 @@ consistency checks, and prints an assembly report (also written to
 your-project/
 ├── glados.yaml                      # your config (you created this)
 ├── .agents/
-│   ├── workflows/                   # 25 flat workflow files, name-prefixed:
-│   │   ├── glados-build-feature.md  #   15 workflows + 10 shims redirecting
-│   │   ├── glados-fix-bug.md        #   retired v1 names
+│   ├── workflows/                   # 26 flat workflow files, name-prefixed:
+│   │   ├── glados-build-feature.md  #   16 workflows + 10 shims redirecting
+│   │   ├── glados-fix-bug.md        #   retired v1 names (+ one per declared
+│   │   │                            #   pipeline)
 │   │   └── ...
 │   └── hooks.json                   # run-record guard wiring (written only
 │                                    #   if the file didn't already exist)
@@ -50,7 +51,7 @@ your-project/
 │   └── glados.yaml.example  presets.yaml   # vendored template + phase presets
 └── product-knowledge/               # project-owned knowledge skeleton
     ├── PROJECT_STATUS.md
-    └── observations/ personas/ philosophies/ standards/
+    └── observations/ personas/ philosophies/ standards/ steps/
 ```
 
 Commit all of it. Antigravity maps each file under `.agents/workflows/` to a

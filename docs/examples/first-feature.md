@@ -53,12 +53,12 @@ from a real install (trimmed):
 
 ```
 glados: installed mode 'claude' into /home/you/work/tickets-api
-glados: 15 cores, manifest 2e384303ff9e…
+glados: 16 cores, manifest d23f47f077c4…
 
 # GLaDOS assembly report
 
 - phase: `evolving`
-- enabled cores: 15 / 15
+- enabled cores: 16 / 16
 
 | Key | Value | Provenance |
 |-----|-------|------------|
@@ -68,11 +68,15 @@ glados: 15 cores, manifest 2e384303ff9e…
 | channels.verdict | [mr-comment] | (explicit) |
 | params.review-panel.max-cycles | 5 | (explicit) |
 ...
-## RELAXED(phase) markers: 0
+## RELAXED(phase) markers: 1
+
+Values the phase preset relaxes below the strict baseline:
+
+- RELAXED(phase) `pipeline-discretion` = `agent`
 ```
 
-("Cores" is the compiler's word for the workflow source files — 15 cores
-compile into 15 commands; [concepts.md](../concepts.md) has the full
+("Cores" is the compiler's word for the workflow source files — 16 cores
+compile into 16 commands; [concepts.md](../concepts.md) has the full
 vocabulary.) Read the report — it shows what the configuration traded away
 *before* the first run, not after the first incident. Commit everything it
 generated.

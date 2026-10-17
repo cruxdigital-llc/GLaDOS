@@ -56,6 +56,10 @@ team states policy. Its load-bearing keys:
   build-feature, works under the outer run's claim and row; a ticket's build
   inside run-epic counts as a unit of work of its own. No phase preset may
   set it — see [guides/sda.md](guides/sda.md).
+- **`pipelines:` and `steps:`** — explicit-only, optional: the project's
+  own workflows, ordered lists of GLaDOS's steps and steps the project
+  writes, run by the `run-pipeline` workflow. See
+  [guides/pipelines.md](guides/pipelines.md).
 
 Workflow text never states any of these; it reads the keys at run time. Two
 workflows therefore cannot contradict each other about who merges — the
@@ -102,7 +106,7 @@ hooks — wiring recipes in [hooks/README.md](../hooks/README.md).
 ## Cores, modules, and vocabulary
 
 A **workflow core** is the short instruction file for one workflow's
-distinctive work — there are 15, e.g. `review-mr`, `fix-bug` (catalog:
+distinctive work — there are 16, e.g. `review-mr`, `fix-bug` (catalog:
 [workflows.md](workflows.md)). A **module** is an optional add-on the
 manifest switches on per workflow — there are three: `mr-review-panel`,
 `evaluator-spawn`, `standards-gate` ([modules.md](modules.md)). **Vocabulary**
@@ -131,11 +135,26 @@ changes instantly?
   standards documents. Drop a file in the right directory, name it in the
   manifest, and the next run picks it up.
 
+**Project workflows are lane 2 by design, a deliberate exception.** The v2
+rule is that anything an agent must not skip is compiled. A project's own
+workflows (`pipelines:` and `steps:` in the manifest, with step bodies in
+`product-knowledge/steps/`) are read live by the `run-pipeline` core
+instead, because the Claude Code plugin is compiled once from GLaDOS's own
+template and could never compile them. What keeps a skipped step visible is
+compiled into `run-pipeline`: the step table written before any step runs,
+the pinned hashes of `glados.yaml` and the step bodies, the bounded revise
+loops, and the step table in the MR. The compiler checks both blocks at
+install, at `check`, and in `glados.py validate`. Only each pipeline's name
+and description are structural, because they name a shortcut command. See
+[guides/pipelines.md](guides/pipelines.md).
+
 Only the structural keys feed the manifest hash stamped into compiled output:
 `phase`, `optimize-for`, `default-modules`, `workflows`, `disabled-workflows`,
-and `sda`. `glados.py check` reports a stale compile when one of them
-changed after the last install, i.e. when a recompile is due; a lane-2 edit
-never makes the compile stale, and comments or reformatting change nothing.
+`sda`, and the names and descriptions of `pipelines:`. `glados.py check`
+reports a stale compile when one of them changed after the last install,
+i.e. when a recompile is due; a lane-2 edit (a pipeline's sequence or step
+options included) never makes the compile stale, and comments or
+reformatting change nothing.
 `check` still type-checks every value, lane 2 included, so a lane-2 edit
 fails it only when the new value is itself invalid: an undeclared sink, a
 relaxation nobody confessed, a misspelt decision class. `python

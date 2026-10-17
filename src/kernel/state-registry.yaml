@@ -110,7 +110,7 @@ keys:
     home: "repo:claims.md"
     doc: >
       The SDA claims file at the repo root (grammar: SDA standard v1.0,
-      Claims; mapping: docs/standards/sda-profile-glados-v2.md). Written by
+      Claims; mapping: docs/standards/sda-profile-glados-v2.1.md). Written by
       the compiled preamble's claim step and cleared by the compiled epilogue
       when `sda: true` (by the outermost run only: nested runs work under
       the enclosing run's claim; a ticket's build inside run-epic is a unit
@@ -162,6 +162,24 @@ keys:
     doc: >
       Default review-panel roster when run.active-personas is absent. Maps to
       the manifest key params.review-panel.personas in glados.yaml.
+  manifest.pipelines:
+    home: manifest
+    writer: human
+    doc: >
+      The project's own workflows (glados.yaml `pipelines:`): per pipeline a
+      description, a `when:` selection hint, the step sequence and per-step
+      options. Read live by run-pipeline, which validates them before its
+      first step. Only the names and descriptions shape compiled output (one
+      shortcut command per pipeline in script installs), so only they are
+      in the manifest hash. Explicit-only: no phase preset may set it.
+  manifest.steps:
+    home: manifest
+    writer: human
+    doc: >
+      The project's own pipeline steps (glados.yaml `steps:`): description,
+      kind (produce | gate | change), stage, and what each produces or
+      audits. Each step's body lives at product-knowledge/steps/<id>.md with
+      no frontmatter. Read live by run-pipeline. Explicit-only.
 
 # Outcome types (emitted through channels; a type emitted by an enabled core
 # with zero sinks bound in manifest.channels is an install error):

@@ -65,4 +65,4 @@ Antigravity installs both.
   day to day.
 - [MIGRATION.md](../../MIGRATION.md) — coming from GLaDOS v1: the guided
   `migrate` command and the steps around it.
-- [docs/workflows.md](../workflows.md) — what each of the 15 workflows does.
+- [docs/workflows.md](../workflows.md) — what each of the 16 workflows does.

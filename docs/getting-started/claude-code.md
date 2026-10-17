@@ -38,10 +38,10 @@ it once; it is also written to `.glados/assembly-report.md`.
 ```
 your-project/
 ├── glados.yaml                      # your config (you created this)
-├── .claude/commands/glados/         # 25 slash commands (.md files):
-│   ├── build-feature.md             #   15 workflows + 10 shims that redirect
-│   ├── fix-bug.md                   #   retired v1 names to their new names
-│   ├── review-mr.md
+├── .claude/commands/glados/         # 26 slash commands (.md files):
+│   ├── build-feature.md             #   16 workflows + 10 shims that redirect
+│   ├── fix-bug.md                   #   retired v1 names to their new names,
+│   ├── review-mr.md                 #   plus one per pipeline you declare
 │   └── ...
 ├── .glados/                         # committed support folder
 │   ├── glados.py                    # vendored installer/checker (for CI + verify)
@@ -54,7 +54,7 @@ your-project/
 │   └── glados.yaml.example, presets.yaml  # vendored template + phase presets
 └── product-knowledge/               # project-owned knowledge skeleton
     ├── PROJECT_STATUS.md
-    └── observations/ personas/ philosophies/ standards/
+    └── observations/ personas/ philosophies/ standards/ steps/
 ```
 
 Commit all of it.

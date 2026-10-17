@@ -4,12 +4,15 @@
 # sinks, branching) are read LIVE at run time: editing them changes agent
 # behavior on the next run, with no reinstall, and never makes the compile
 # stale (`glados.py check` still type-checks their values, so an undeclared
-# sink or an unconfessed relaxation fails it). Structural keys (phase,
-# optimize-for, default-modules, workflows, disabled-workflows, sda) take
-# effect at `glados.py install`, which stamps a hash of those keys alone into
-# the compiled output; `glados.py check` and `glados.py doctor` flag a stale
-# compile when one of them changed. Keys this file omits take their defaults
-# from the preset table (.glados/presets.yaml after install).
+# sink or an unconfessed relaxation fails it). Project workflows (pipelines,
+# steps) are live too, except each pipeline's name and description, which
+# name a shortcut command. Structural keys (phase, optimize-for,
+# default-modules, workflows, disabled-workflows, sda, and those pipeline
+# names and descriptions) take effect at `glados.py install`, which stamps a
+# hash of them alone into the compiled output; `glados.py check` and
+# `glados.py doctor` flag a stale compile when one of them changed. Keys this
+# file omits take their defaults from the preset table (.glados/presets.yaml
+# after install).
 
 glados: 2
 
@@ -77,6 +80,7 @@ decisions:
   new-dependency: agent
   delete-code: agent
   destructive-data-op: escalate
+  # pipeline-discretion: record  # picking a pipeline, skipping an optional step
 
 # Confess any explicit key set laxer than the declared phase's preset. Here
 # `delete-code: agent` is laxer than evolving's `record`, so it is named below;
@@ -116,6 +120,46 @@ params:
     max-cycles: 5
   evaluator:
     max-cycles: 3
+  # pipeline:
+  #   max-cycles: 3                # revise cycles per pipeline step
+
+# Project workflows (lane 2, explicit-only: no phase preset sets them). A
+# pipeline is an ordered list of steps, GLaDOS's built-in ones (plan-feature,
+# shape, spec-feature, implement-feature, verify-feature, open-mr,
+# self-review) and the project's own: each declared under steps: with its
+# body at product-knowledge/steps/<id>.md (no frontmatter). Order is checked
+# only through inputs: a step's needs must come from an earlier step. Run
+# one with `/glados:run-pipeline <name> <brief>`; script installs also get
+# a shortcut per pipeline (`/glados:<name>`, or `/glados-<name>` in
+# Antigravity and pi). Sequences and step options are read live; renaming a
+# pipeline or changing its description needs a re-install. Check both blocks
+# with `python .glados/glados.py validate --target .`. See
+# docs/guides/pipelines.md. Example (uncomment to use):
+# steps:
+#   architecture-review:
+#     description: Audit structure against our layering and dependency rules
+#     kind: gate                   # produce | gate | change
+#     stage: speccing              # planning | speccing | implementing | verifying
+#     audits: [shape, spec-feature]
+# pipelines:
+#   backend-feature:
+#     description: A change to an endpoint, schema, migration or background job
+#     when: >-
+#       The change adds or alters an endpoint, a schema, a migration or a
+#       background job.
+#     sequence:
+#       - plan-feature
+#       - shape
+#       - architecture-review
+#       - spec-feature
+#       - implement-feature
+#       - verify-feature
+#       - open-mr
+#       - self-review
+#     step-options:
+#       architecture-review:
+#         review: fresh-agent      # none | in-context | fresh-agent
+#         checkpoint: none         # none | record | human
 
 # SDA (Structured Development Artifacts) conformance — EXPLICIT-ONLY, and a
 # team declaration: phase presets may never set it. When true, install

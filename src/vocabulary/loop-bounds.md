@@ -8,6 +8,7 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | review-mr ⇄ address-review cycles per MR | `params.review-panel.max-cycles` |
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
+| revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
 
 Rules:
 

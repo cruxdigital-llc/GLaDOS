@@ -15,6 +15,8 @@ is the assembler + type-checker + per-runtime emitter that does the inlining.
 Subcommands (see ``--help``):
     install         compile the sources against a manifest and emit one adapter
     check           CI mode: recompute the compile and diff it against install
+    validate        type-check a project's glados.yaml (pipelines included)
+                    in memory; writes nothing, needs no install
     doctor          staleness + wiring report (never fails)
     migrate         guided v1 -> v2 migration: detect, generate, convert, clean
     verify-ledger   scan git history for silent-loss candidates (report-only)
@@ -26,7 +28,7 @@ Sections, in order:
     3.  SOURCE MODEL      — read cores/modules/kernel/registry/presets/aliases
     4.  MANIFEST          — load + phase-preset merge with provenance
     5.  COMPILE           — assemble one compiled core from the sources
-    6.  TYPE CHECKS       — the eight fatal install-time checks
+    6.  TYPE CHECKS       — the fatal install-time checks, pipelines included
     7.  ASSEMBLY REPORT
     8.  ADAPTERS          — six emitters over the SAME compiled artifacts
     9.  VENDOR + SCAFFOLD
@@ -52,9 +54,11 @@ from pathlib import Path
 
 VERSION = "2.4.0"
 
-# The fifteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
+# The sixteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
-# integration and must be ignored.
+# integration and must be ignored. run-pipeline sits beside build-feature: it
+# runs the project's own workflows (glados.yaml `pipelines:`) the way
+# build-feature runs its fixed four stages.
 CORES = [
     "intent",
     "adopt-codebase",
@@ -63,6 +67,7 @@ CORES = [
     "implement-feature",
     "verify-feature",
     "build-feature",
+    "run-pipeline",
     "review-mr",
     "address-review",
     "run-epic",
@@ -119,8 +124,9 @@ LEDGER_OK_TYPES = {"progress", "decision", "observation"}
 MERGE_AUTHORITY_ORDER = ["human", "agent-integration-only", "agent"]
 DECISION_ORDER = ["forbidden", "escalate", "record", "agent"]
 
-# The manifest keys whose values shape COMPILED output — the lane-1 keys. Only
-# these feed the manifest hash stamped into every compiled header and into
+# The manifest keys whose values shape COMPILED output — the lane-1 keys.
+# These, plus each pipeline's name and description (structural_projection),
+# feed the manifest hash stamped into every compiled header and into
 # .glados/manifest-hash, so only an edit to one of them makes `check` report a
 # stale compile. Everything else in glados.yaml (channels, sinks, params,
 # decisions, branching, merge-authority, platform, ...) is lane 2: compiled
@@ -151,6 +157,112 @@ KNOWN_MANIFEST_KEYS = [
     "default-modules", "workflows", "disabled-workflows", "params", "sda",
     "concurrency", "lifecycle", "pipelines", "steps", "canon",
 ]
+
+# Manifest keys that are a team declaration and never a phase default. A
+# preset naming one is rejected by _check_phase_invariants even when the key
+# is live in glados.yaml.example (which is what the anti-inflation cap alone
+# would admit). `sda:` says how the repo coordinates; `pipelines:`/`steps:`
+# are the team's own process, and a preset that injected a step would add
+# work nobody on the team declared.
+EXPLICIT_ONLY_KEYS = {
+    "sda": ("SDA conformance is a team declaration, not a phase default; "
+            "remove it from the preset and set 'sda: true' explicitly in "
+            "glados.yaml"),
+    "pipelines": ("project workflows are the team's own declaration, not a "
+                  "phase default; remove it from the preset and declare "
+                  "them in glados.yaml"),
+    "steps": ("project steps are the team's own declaration, not a phase "
+              "default; remove it from the preset and declare them in "
+              "glados.yaml"),
+}
+
+# ---- project workflows: `pipelines:` and `steps:` ----------------------------
+#
+# A pipeline is an ordered list of steps: the built-in ones below and the
+# project's own (`steps:`, bodies in product-knowledge/steps/<id>.md). No step
+# is mandatory and none has a fixed position; order is validated only through
+# artifacts. Each step NEEDS some kinds and PRODUCES at most one, and every
+# need must come from an earlier step in the same sequence. The kinds are a
+# closed set, so a new one is a compiler change, never a manifest one.
+ARTIFACT_KINDS = ["plan", "shape", "spec", "change", "verification", "mr"]
+
+# The built-in steps a sequence may name, with the contract run-pipeline's
+# compiled step 2 table states (keep the two in step):
+#   runs     "core" = a nested workflow run; "library" = a fragment run inside
+#            run-pipeline itself (vocabulary/shape.md, open-mr.md, ...)
+#   needs    artifact kinds an earlier step must produce. The brief is always
+#            there, so plan-feature ("a brief") and shape ("a brief or a
+#            plan") need nothing a sequence has to supply.
+#   produces the artifact kind, or None (self-review's verdict lands on the MR)
+#   stage    the SDA phase a row reports (sda-profile-glados-v2.1.md)
+#   review   the `review:` values a step-options entry may set; empty = the
+#            key is not allowed. spec-feature already runs an in-context
+#            persona pass, so only `none` or `fresh-agent` add anything; the
+#            stages that act on code or the MR have review loops of their own.
+#   default-review  what applies when step-options says nothing
+_ANY_REVIEW = ("none", "in-context", "fresh-agent")
+BUILTIN_STEPS = {
+    "plan-feature": {"runs": "core", "needs": (), "produces": "plan",
+                     "stage": "planning", "review": _ANY_REVIEW,
+                     "default-review": "none"},
+    "shape": {"runs": "library", "needs": (), "produces": "shape",
+              "stage": "speccing", "review": _ANY_REVIEW,
+              "default-review": "in-context"},
+    "spec-feature": {"runs": "core", "needs": ("plan",), "produces": "spec",
+                     "stage": "speccing", "review": ("none", "fresh-agent"),
+                     "default-review": "none"},
+    "implement-feature": {"runs": "core", "needs": ("spec",),
+                          "produces": "change", "stage": "implementing",
+                          "review": (), "default-review": "none"},
+    "verify-feature": {"runs": "core", "needs": ("spec", "change"),
+                       "produces": "verification", "stage": "verifying",
+                       "review": (), "default-review": "none"},
+    "open-mr": {"runs": "library", "needs": ("change",), "produces": "mr",
+                "stage": "verifying", "review": (), "default-review": "none"},
+    "self-review": {"runs": "library", "needs": ("mr",), "produces": None,
+                    "stage": "verifying", "review": (),
+                    "default-review": "none"},
+}
+
+# Closed key and value sets. Unknown keys are fatal here (unlike unknown
+# top-level manifest keys, which only warn): these declarations drive gating,
+# so a misspelt `modifer: optional` must never leave a step silently required
+# or a gate silently ungated.
+STEP_KEYS = ["description", "kind", "stage", "produces", "audits"]
+STEP_KINDS = ["produce", "gate", "change"]
+STEP_STAGES = ["planning", "speccing", "implementing", "verifying"]
+# What a `produce` step may declare: every kind but `change` (a `change`
+# step produces it) and `mr` (only open-mr opens one).
+STEP_PRODUCES = [k for k in ARTIFACT_KINDS if k not in ("change", "mr")]
+PIPELINE_KEYS = ["description", "when", "sequence", "step-options"]
+STEP_OPTION_KEYS = ["modifier", "when", "review", "checkpoint"]
+STEP_MODIFIERS = ["required", "optional", "advisory"]
+STEP_REVIEWS = list(_ANY_REVIEW)
+STEP_CHECKPOINTS = ["none", "record", "human"]
+
+# Names a step id or pipeline name may never take, beyond CORES, the aliases
+# and the built-in steps, each with the reason V1's error gives: the runner
+# itself (named apart from the other cores, since a pipeline named after it
+# reads as the runner) and the plugin's hand-written init skill. A
+# pipeline's name becomes a command in script installs, so a collision would
+# shadow a real workflow.
+RESERVED_STEP_NAMES = {
+    "run-pipeline": "the workflow that runs pipelines",
+    "init": "the Claude Code plugin's init skill",
+}
+
+# Antigravity truncates workflow descriptions at 250 characters, and a
+# pipeline's description becomes its shortcut command's description.
+PIPELINE_DESCRIPTION_MAX = 250
+
+KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+# Where a project step's body lives, relative to the target repo.
+STEPS_DIR = "product-knowledge/steps"
+
+# Directories whose files gate agent runs, so CODEOWNERS should cover them as
+# it covers glados.yaml: doctor reports each one a project uses.
+GATING_DIRS = [STEPS_DIR + "/"]
 
 # AI Studio is a planning/review/spec surface: only advisory-safe cores get a
 # paste bundle. fix-bug ships as its plan half, "fix-bug-advisory".
@@ -187,34 +299,40 @@ PLUGIN_STUB_MARKER = "${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/"
 # govern at run time.
 #
 # A plugin-only repo also has no `.glados/` tree — nothing vendored it — so
-# the second paragraph maps the two vendored files compiled text points at
-# (the preset table that supplies defaults for keys the manifest omits, and
-# the library personas) onto the plugin's own copies. It names exactly those
-# two: a blanket "anything missing under .glados/" would also cover the run
-# records and `.glados/runs/` markers, which are missing by design on a first
-# run and must be created in the project, never read from the plugin. The
-# plugin root is located relative to this file, never through
-# ${CLAUDE_PLUGIN_ROOT}: that variable is expanded in SKILL.md stubs, not in
-# the compiled file the agent reads.
+# the second paragraph maps the three vendored files compiled text points at
+# (the preset table that supplies defaults for keys the manifest omits, the
+# library personas, and the toolchain run-pipeline validates with) onto the
+# plugin's own copies. It names exactly those three: a blanket "anything
+# missing under .glados/" would also cover the run records and `.glados/runs/`
+# markers, which are missing by design on a first run and must be created in
+# the project, never read from the plugin. The plugin root is located
+# relative to this file, never through ${CLAUDE_PLUGIN_ROOT}: that variable
+# is expanded in SKILL.md stubs, not in the compiled file the agent reads.
+#
+# The plugin compiles from the example, whose `pipelines:`/`steps:` blocks
+# are commented out, so it cannot compile a project's pipelines; the guard
+# names them among the keys the project's own manifest supplies at run time.
 PLUGIN_BOOTSTRAP_GUARD = (
     "<!-- claude-plugin bootstrap guard — this artifact was compiled from\n"
     "     glados.yaml.example, not from the repo it runs in. -->\n"
     "**Bootstrap guard.** This workflow was compiled from `glados.yaml.example`,\n"
     "not this repo's manifest. Before step 1: if this repo has a `glados.yaml`,\n"
-    "read it now — its `phase:`, decision rights, channels, merge authority, and\n"
-    "params govern this run wherever they differ from the text below. If it has\n"
+    "read it now — its `phase:`, decision rights, channels, merge authority,\n"
+    "params, and any project workflows and steps (`pipelines:`, `steps:`)\n"
+    "govern this run wherever they differ from the text below. If it has\n"
     "no `glados.yaml`, copy `glados.yaml.example` to `glados.yaml` (or run\n"
     "`/glados:init`) and set `phase:` before doing consequential work — do not\n"
     "guess a phase.\n\n"
-    "**Plugin paths.** This repo may have no `.glados/` directory. Two\n"
+    "**Plugin paths.** This repo may have no `.glados/` directory. Three\n"
     "read-only files then come from the plugin's own copy at the plugin root\n"
     "(two levels above this file, the directory that holds\n"
     "`compiled/claude-plugin/`): when `.glados/presets.yaml` is missing, the\n"
-    "preset table is `src/kernel/presets/phases.yaml` there, and when\n"
+    "preset table is `src/kernel/presets/phases.yaml` there; when\n"
     "`.glados/personas/` is missing, the library personas are `src/personas/`\n"
-    "there. Project personas in `product-knowledge/personas/` still win a\n"
-    "name collision. Run records and the `.glados/runs/` markers always live\n"
-    "in this repo: create them here, never in the plugin.\n\n"
+    "there; and when `.glados/glados.py` is missing, the toolchain is\n"
+    "`bin/glados.py` there. Project personas in `product-knowledge/personas/`\n"
+    "still win a name collision. Run records and the `.glados/runs/` markers\n"
+    "always live in this repo: create them here, never in the plugin.\n\n"
 )
 
 # SDA (Structured Development Artifacts) — the version header stamped on
@@ -277,8 +395,8 @@ PHASE_TRANSITION_CHECKLISTS = {
         "a human triages)",
     ],
     "sunset": [
-        "build-feature is disabled by the sunset preset — confirm no epic "
-        "still depends on it",
+        "build-feature and run-pipeline are disabled by the sunset preset — "
+        "confirm no epic still depends on them",
         "every removal lands with a `decision` outcome visible on its "
         "MR/issue",
     ],
@@ -287,6 +405,17 @@ PHASE_TRANSITION_CHECKLISTS = {
 
 class Fatal(Exception):
     """A fatal, user-facing error. Message must name the file/key AND the fix."""
+
+
+class CheckFailed(Fatal):
+    """The install-time type checks failed. ``errors`` keeps each finding on
+    its own so `validate` can list them; the message is the one install and
+    check have always printed."""
+
+    def __init__(self, errors: list[str]):
+        self.errors = list(errors)
+        super().__init__("install checks failed:\n  - "
+                         + "\n  - ".join(self.errors))
 
 
 # =============================================================================
@@ -926,8 +1055,14 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
     # branching: presets never set it (it is not in the anti-inflation
     # allowlist), and its bodies are freeform config the agent interprets at
     # run time — the compiler only checks structure and referential integrity.
+    #
+    # `pipelines:` and `steps:` are the same kind of key: the team's own
+    # declarations (EXPLICIT_ONLY_KEYS), read live by run-pipeline. The
+    # compiler checks them (check_pipelines) and emits one shortcut command
+    # per pipeline, but compiles none of their contents into a core.
     for key in ("platform", "phase", "branching", "workflows", "sinks",
-                "visibility-acknowledged", "relaxation-acknowledged"):
+                "visibility-acknowledged", "relaxation-acknowledged",
+                "pipelines", "steps"):
         if key in raw:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
@@ -982,9 +1117,27 @@ def structural_projection(raw: dict) -> dict:
     moving the hash (check reported drift, doctor said "current").
 
     Derived projections of lane-2 blocks join here when they shape emitted
-    files (e.g. the names and descriptions of project pipelines, which name
-    the shims) — add them under their own key, never the whole block."""
-    return {key: raw[key] for key in STRUCTURAL_KEYS if key in raw}
+    files — under their own key, never the whole block. Today that is
+    `pipelines:`: each pipeline's name and description shape the shortcut
+    command script installs emit for it, so they are hashed, while its
+    `when:`, `sequence:` and `step-options:` (and every `steps:` entry) stay
+    live: run-pipeline reads them at run time, and editing them never makes
+    the compile stale. Same present-keys rule: an absent block adds nothing.
+    """
+    proj = {key: raw[key] for key in STRUCTURAL_KEYS if key in raw}
+    if "pipelines" in raw:
+        proj["pipelines"] = _pipeline_name_projection(raw["pipelines"])
+    return proj
+
+
+def _pipeline_name_projection(pipelines):
+    """``{name: description}`` of a `pipelines:` block — exactly what the
+    per-pipeline shims are built from. A malformed block (the type checks
+    report it) still projects to something hashable instead of raising."""
+    if not isinstance(pipelines, dict):
+        return None
+    return {name: (cfg.get("description") if isinstance(cfg, dict) else None)
+            for name, cfg in pipelines.items()}
 
 
 def structural_hash(raw: dict) -> str:
@@ -1113,7 +1266,7 @@ def compile_all(source: Source, r: Resolved, manifest_hash: str) -> Compilation:
 
 
 # =============================================================================
-# 6. TYPE CHECKS — the eight fatal install-time checks
+# 6. TYPE CHECKS — the fatal install-time checks
 # =============================================================================
 
 
@@ -1149,8 +1302,13 @@ def _sink_is_team_visible(name: str, r: Resolved) -> bool:
     return cfg.get("team-visible") is True
 
 
-def run_type_checks(source: Source, comp: Compilation) -> list[str]:
-    """Return a list of fatal error strings (empty == passes)."""
+def run_type_checks(source: Source, comp: Compilation,
+                    target: Path | None = None) -> list[str]:
+    """Return a list of fatal error strings (empty == passes).
+
+    ``target`` is the repo being installed into, when there is one: the few
+    checks that read project files (a project step's body) run only then.
+    Non-fatal findings are appended to ``comp.warnings``."""
     r = comp.resolved
     errors: list[str] = []
     enabled = set(comp.enabled)
@@ -1336,14 +1494,14 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
                           f"forbidden (value from {prov})")
 
     # ---- (7) alias-map integrity -------------------------------------------
-    for alias, target in source.aliases.items():
+    for alias, aliased in source.aliases.items():
         if alias in CORES:
             errors.append(f"aliases.yaml: alias '{alias}' shadows the real core "
                           f"of the same name — its shim would overwrite the "
                           f"compiled core; remove the alias (aliases exist only "
                           f"for dead v1 names)")
-        if target not in CORES:
-            errors.append(f"aliases.yaml: alias '{alias}' -> '{target}' is not a "
+        if aliased not in CORES:
+            errors.append(f"aliases.yaml: alias '{alias}' -> '{aliased}' is not a "
                           f"real core — fix the target or add the core")
 
     # ---- (8) dotted params literals resolve ---------------------------------
@@ -1359,6 +1517,17 @@ def run_type_checks(source: Source, comp: Compilation) -> list[str]:
                               f"resolved manifest has no value for it — set it "
                               f"under params: in glados.yaml or a phase-preset "
                               f"baseline")
+
+    # ---- (9) project workflows: pipelines + steps ----------------------------
+    # Lane 2 by design (run-pipeline reads them live), but they decide which
+    # steps gate a change, so they are checked wherever the compiler runs:
+    # install, check, and `validate` (which run-pipeline itself calls before
+    # its first step). The warnings never fail anything.
+    pc = check_pipelines(source, r, comp.enabled, target)
+    errors.extend(pc.errors)
+    for w in pc.warnings:
+        if w not in comp.warnings:
+            comp.warnings.append(w)
 
     return errors
 
@@ -1376,13 +1545,11 @@ def _check_phase_invariants(source: Source, r: Resolved) -> list[str]:
         if not isinstance(preset, dict):
             continue
         for key in preset.keys():
-            if key == "sda":
-                # sda is in the manifest schema but is EXPLICIT-ONLY:
-                # conformance is a team declaration, not a phase default.
-                errors.append(f"phases.yaml: preset '{pname}' sets 'sda' — "
-                              f"SDA conformance is a team declaration, not a "
-                              f"phase default; remove it from the preset and "
-                              f"set 'sda: true' explicitly in glados.yaml")
+            if key in EXPLICIT_ONLY_KEYS:
+                # In the manifest schema but EXPLICIT-ONLY: a team
+                # declaration, never a phase default.
+                errors.append(f"phases.yaml: preset '{pname}' sets '{key}' — "
+                              f"{EXPLICIT_ONLY_KEYS[key]}")
             elif key not in allowed:
                 errors.append(f"phases.yaml: preset '{pname}' sets '{key}', which "
                               f"is not a glados.yaml schema key — presets may only "
@@ -1411,6 +1578,469 @@ def _check_phase_invariants(source: Source, r: Resolved) -> list[str]:
                           f"in the manifest to confess it")
 
     return errors
+
+
+# ---- (9) project workflows: `pipelines:` + `steps:` --------------------------
+#
+# One rule set, run wherever the compiler sees a manifest: install and check
+# (with the target, so step bodies are checked too), `glados.py validate`,
+# and, summarized as a checklist, run-pipeline's own step 2 for runs with no
+# Python. Errors (V1-V10 in the design notes):
+#   V1  ids are kebab-case and collide with nothing (a workflow, an alias, a
+#       built-in step, run-pipeline, init, or each other)
+#   V2  a sequence is a non-empty list of known ids with no repeats
+#   V3  every need of a step is produced by an earlier step; a step that
+#       always runs (required or advisory) needs a producer that always runs
+#   V4  a gate audits at least one step that runs before it (the latest one)
+#   V5  closed key and value sets; step-options only for steps in the
+#       sequence; `when:` only with (and required by) `modifier: optional`
+#   V6  `review:` only where the step takes it (BUILTIN_STEPS)
+#   V7  a used project step has a body file with no frontmatter (target only)
+#   V8  nested workflows a sequence uses are enabled
+#   V9  decisions.pipeline-discretion is a decision class (check 6b)
+#   V10 a pipeline description fits in 250 characters
+# Warnings: an MR opened with no verification before it (W1), a declared
+# step no pipeline uses (W2), and pipelines declared while run-pipeline is
+# disabled (V8's advisory half).
+
+
+def _kind_phrase(kind: str) -> str:
+    """'a spec', 'an MR' — artifact kinds as a sentence names them."""
+    return "an MR" if kind == "mr" else f"a {kind}"
+
+
+def _name_list_problem(value, what: str = "step id"):
+    """Why ``value`` is not a list of names, or None. The collecting twin of
+    _require_name_list: the pipeline checks report every problem at once
+    rather than stopping at the first."""
+    if not isinstance(value, list):
+        return (f"must be a list of {what}s — got {_fmt(value)}; write "
+                f"'[a, b]' or one '- {what}' per line")
+    for idx, item in enumerate(value, 1):
+        if isinstance(item, dict):
+            shown = ", ".join(
+                f"{k}: {'' if v is None else _fmt(v)}".rstrip()
+                for k, v in item.items())
+            return (f"item {idx} is a mapping ('{shown}') — write one {what} "
+                    f"per '- ' line; '- name: value' is a mapping in YAML")
+        if not isinstance(item, str):
+            return f"item {idx} ({_fmt(item)}) is not a {what}"
+    return None
+
+
+def _option(opts: dict, key: str, values, default):
+    """A step option's value when it is valid, else the default (an
+    invalid one is already an error; the row still renders)."""
+    return opts.get(key) if opts.get(key) in values else default
+
+
+class PipelineCheck:
+    """What check_pipelines found: fatal errors, warnings, and each
+    pipeline's resolved rows (defaults applied), which the assembly report
+    renders."""
+
+    def __init__(self):
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self.steps: dict = {}        # step id -> normalized declaration
+        self.pipelines: dict = {}    # name -> {"description", "when", "rows"}
+
+
+def _step_producers(kind: str, steps: dict) -> list[str]:
+    """Every built-in or declared step that produces ``kind``."""
+    names = [s for s, b in BUILTIN_STEPS.items() if b["produces"] == kind]
+    for sid, d in steps.items():
+        if d.get("kind") == "change" and kind == "change":
+            names.append(sid)
+        elif d.get("kind") == "produce" and d.get("produces") == kind:
+            names.append(sid)
+    return names
+
+
+def check_pipelines(source: Source, r: Resolved, enabled: list[str],
+                    target: Path | None = None) -> PipelineCheck:
+    """Check the manifest's `steps:` and `pipelines:` blocks (P3).
+
+    Never raises on a malformed block: every shape problem becomes an error
+    string naming the key and the fix, so `check --report-only` and doctor
+    keep their never-crash contracts. ``target`` enables V7, the one rule
+    that reads project files."""
+    pc = PipelineCheck()
+    raw_steps = r.values.get("steps")
+    raw_pipes = r.values.get("pipelines")
+    if raw_steps is None and raw_pipes is None:
+        return pc
+    if raw_steps is not None and not isinstance(raw_steps, dict):
+        pc.errors.append(f"steps: must be a mapping of step id -> "
+                         f"declaration (description, kind, stage, ...) — "
+                         f"got {_fmt(raw_steps)}")
+        raw_steps = None
+    if raw_pipes is not None and not isinstance(raw_pipes, dict):
+        pc.errors.append(f"pipelines: must be a mapping of pipeline name -> "
+                         f"declaration (description, when, sequence, ...) — "
+                         f"got {_fmt(raw_pipes)}")
+        raw_pipes = None
+    raw_steps = raw_steps or {}
+    raw_pipes = raw_pipes or {}
+    err = pc.errors.append
+
+    # V1: one namespace. A pipeline name becomes a command beside the cores
+    # and alias shims in every script install, and a step id names a file a
+    # sequence runs, so neither may shadow anything GLaDOS ships.
+    taken: dict[str, str] = {}
+    for name in CORES:
+        taken[name] = "a GLaDOS workflow"
+    for name in source.aliases:
+        taken[name] = "a v1 alias (src/kernel/aliases.yaml)"
+    for name in BUILTIN_STEPS:
+        taken[name] = "a built-in step"
+    taken.update(RESERVED_STEP_NAMES)
+    builtin_list = ", ".join(BUILTIN_STEPS)
+
+    def check_name(where: str, name) -> bool:
+        if not isinstance(name, str) or not KEBAB_RE.match(name):
+            err(f"{where}: '{name}' is not kebab-case — use lowercase "
+                f"letters, digits and single hyphens (e.g. backend-feature)")
+            return False
+        if name in taken:
+            err(f"{where}: '{name}' is {taken[name]} — pick another name; "
+                f"step ids and pipeline names may not reuse a workflow, an "
+                f"alias, a built-in step, run-pipeline or init")
+            return False
+        return True
+
+    # ---- steps ---------------------------------------------------------------
+    for sid, decl in raw_steps.items():
+        where = f"steps.{sid}"
+        valid_name = check_name(where, sid)
+        if sid in raw_pipes:
+            err(f"{where}: a pipeline has the same name — step ids and "
+                f"pipeline names share one namespace; rename one of them")
+        norm = {"kind": None, "stage": None, "produces": None, "audits": [],
+                "description": None, "valid-name": valid_name}
+        pc.steps[sid] = norm
+        if not isinstance(decl, dict):
+            err(f"{where}: must be a mapping with description, kind and "
+                f"stage — got {_fmt(decl)}")
+            continue
+        for key in decl:
+            if key not in STEP_KEYS:
+                err(f"{where}.{key}: unknown key — a step takes "
+                    f"{', '.join(STEP_KEYS)} (these drive gating, so a typo "
+                    f"is an error, not a warning)")
+        desc = decl.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            err(f"{where}.description: required — one line saying what the "
+                f"step does")
+        else:
+            norm["description"] = desc
+        kind = decl.get("kind")
+        if kind not in STEP_KINDS:
+            err(f"{where}.kind: "
+                + ("required" if kind is None else f"'{_fmt(kind)}' is not a step kind")
+                + f" — one of {' | '.join(STEP_KINDS)}")
+            kind = None
+        norm["kind"] = kind
+        stage = decl.get("stage")
+        if stage not in STEP_STAGES:
+            err(f"{where}.stage: "
+                + ("required" if stage is None else f"'{_fmt(stage)}' is not a stage")
+                + f" — one of {' | '.join(STEP_STAGES)} (where the step sits "
+                  f"for SDA and boards)")
+        else:
+            norm["stage"] = stage
+        if "produces" in decl and kind is not None:
+            produces = decl.get("produces")
+            if kind != "produce":
+                err(f"{where}.produces: only a produce step declares what it "
+                    f"produces — a change step always produces a change and a "
+                    f"gate produces nothing; remove the key")
+            elif produces not in STEP_PRODUCES:
+                err(f"{where}.produces: '{_fmt(produces)}' is not an artifact "
+                    f"a step can declare — one of {' | '.join(STEP_PRODUCES)}")
+            else:
+                norm["produces"] = produces
+        audits = decl.get("audits")
+        if kind == "gate":
+            if audits is None or audits == []:
+                err(f"{where}.audits: a gate must name the steps it may audit "
+                    f"(built-in or declared step ids), e.g. [shape, "
+                    f"spec-feature]")
+            else:
+                problem = _name_list_problem(audits)
+                if problem:
+                    err(f"{where}.audits: {problem}")
+                else:
+                    for a in audits:
+                        if a == sid:
+                            err(f"{where}.audits: a gate cannot audit itself")
+                        elif a not in BUILTIN_STEPS and a not in raw_steps:
+                            err(f"{where}.audits: '{a}' is neither a built-in "
+                                f"step ({builtin_list}) nor declared under "
+                                f"steps: — fix the typo or declare it")
+                        else:
+                            norm["audits"].append(a)
+        elif "audits" in decl and kind is not None:
+            err(f"{where}.audits: only a gate audits — remove the key, or "
+                f"make the step kind: gate")
+
+    # ---- pipelines -----------------------------------------------------------
+    used: set[str] = set()
+    for name, cfg in raw_pipes.items():
+        where = f"pipelines.{name}"
+        check_name(where, name)
+        if not isinstance(cfg, dict):
+            err(f"{where}: must be a mapping with description, when and "
+                f"sequence — got {_fmt(cfg)}")
+            continue
+        for key in cfg:
+            if key not in PIPELINE_KEYS:
+                err(f"{where}.{key}: unknown key — a pipeline takes "
+                    f"{', '.join(PIPELINE_KEYS)}")
+        desc = cfg.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            err(f"{where}.description: required — one line; it becomes the "
+                f"pipeline's shortcut command description")
+            desc = None
+        elif len(_one_line(desc)) > PIPELINE_DESCRIPTION_MAX:
+            err(f"{where}.description: {len(_one_line(desc))} characters — "
+                f"keep it to {PIPELINE_DESCRIPTION_MAX} or fewer (it becomes "
+                f"the shortcut command's description, and Antigravity "
+                f"truncates longer ones)")
+        when = cfg.get("when")
+        if not isinstance(when, str) or not when.strip():
+            err(f"{where}.when: required — the prose run-pipeline matches a "
+                f"brief against when nobody names a pipeline")
+            when = None
+
+        # V2: the sequence itself.
+        seq = cfg.get("sequence")
+        sound = True
+        if seq is None or seq == []:
+            err(f"{where}.sequence: required and not empty — the step ids to "
+                f"run, in order")
+            seq, sound = [], False
+        else:
+            problem = _name_list_problem(seq)
+            if problem:
+                err(f"{where}.sequence: {problem}")
+                seq, sound = [], False
+        in_seq: set[str] = set()
+        clean: list[str] = []
+        for sid in seq:
+            if sid in in_seq:
+                err(f"{where}.sequence: '{sid}' appears twice — a step runs "
+                    f"once per pipeline; a second pass over an artifact is a "
+                    f"revise cycle, which the step's modifier already bounds")
+                sound = False
+                continue
+            in_seq.add(sid)
+            if sid not in BUILTIN_STEPS and sid not in raw_steps:
+                err(f"{where}.sequence: '{sid}' is neither a built-in step "
+                    f"({builtin_list}) nor declared under steps: — fix the "
+                    f"typo or declare it")
+                sound = False
+                continue
+            # V8: a nested workflow the sequence runs must be installed.
+            if sid in CORES and sid not in enabled:
+                err(f"{where}.sequence: '{sid}' is a workflow "
+                    f"disabled-workflows turns off — re-enable it or remove "
+                    f"it from the sequence")
+            clean.append(sid)
+            used.add(sid)
+
+        # V5 + V6: per-step options.
+        opts = cfg.get("step-options")
+        if opts is not None and not isinstance(opts, dict):
+            err(f"{where}.step-options: must be a mapping of step id -> "
+                f"options (modifier, when, review, checkpoint) — got "
+                f"{_fmt(opts)}")
+            opts = None
+        opts = opts or {}
+        for sid, o in opts.items():
+            ow = f"{where}.step-options.{sid}"
+            if sid not in in_seq:
+                err(f"{ow}: '{sid}' is not in this pipeline's sequence — "
+                    f"options apply only to steps the sequence runs")
+                continue
+            if o is None:
+                continue
+            if not isinstance(o, dict):
+                err(f"{ow}: must be a mapping (modifier, when, review, "
+                    f"checkpoint) — got {_fmt(o)}")
+                continue
+            for key in o:
+                if key not in STEP_OPTION_KEYS:
+                    err(f"{ow}.{key}: unknown key — step options are "
+                        f"{', '.join(STEP_OPTION_KEYS)}")
+            modifier = o.get("modifier", "required")
+            if modifier not in STEP_MODIFIERS:
+                err(f"{ow}.modifier: '{_fmt(modifier)}' — one of "
+                    f"{' | '.join(STEP_MODIFIERS)}")
+            for key, allowed_values in (("review", STEP_REVIEWS),
+                                        ("checkpoint", STEP_CHECKPOINTS)):
+                if key in o and o[key] not in allowed_values:
+                    err(f"{ow}.{key}: '{_fmt(o[key])}' — one of "
+                        f"{' | '.join(allowed_values)}")
+            if "when" in o:
+                if modifier != "optional":
+                    err(f"{ow}.when: only an optional step takes when: (the "
+                        f"agent evaluates it to decide whether the step "
+                        f"runs) — set modifier: optional or remove when:")
+                elif not isinstance(o["when"], str) or not o["when"].strip():
+                    err(f"{ow}.when: must be prose saying when the step "
+                        f"applies")
+            elif modifier == "optional":
+                err(f"{ow}: modifier: optional needs a when: saying when the "
+                    f"step applies — the agent evaluates it, and records that "
+                    f"evaluation when it skips the step")
+            if "review" in o and o["review"] in STEP_REVIEWS:
+                allowed = (BUILTIN_STEPS[sid]["review"] if sid in BUILTIN_STEPS
+                           else _ANY_REVIEW)
+                if not allowed:
+                    err(f"{ow}.review: {sid} takes no review: setting — it "
+                        f"acts on the code or the MR, which have review loops "
+                        f"of their own")
+                elif o["review"] not in allowed:
+                    err(f"{ow}.review: {sid} takes only "
+                        f"{' | '.join(allowed)} — it already runs an "
+                        f"in-context persona pass of its own")
+
+        # Rows, defaults applied (what the step table and report show).
+        rows: list[dict] = []
+        for sid in clean:
+            o = opts.get(sid) if isinstance(opts.get(sid), dict) else {}
+            if sid in BUILTIN_STEPS:
+                b = BUILTIN_STEPS[sid]
+                runs = "nested workflow" if b["runs"] == "core" else "library step"
+                needs, produces = list(b["needs"]), b["produces"]
+                default_review, is_gate, candidates = b["default-review"], False, []
+            else:
+                st = pc.steps.get(sid, {})
+                kind = st.get("kind")
+                runs = f"project {kind}" if kind else "project step"
+                needs = []
+                produces = ("change" if kind == "change" else
+                            st.get("produces") if kind == "produce" else None)
+                default_review = "in-context" if kind == "gate" else "none"
+                is_gate, candidates = kind == "gate", st.get("audits", [])
+            rows.append({
+                "id": sid, "runs": runs, "needs": needs, "produces": produces,
+                "modifier": _option(o, "modifier", STEP_MODIFIERS, "required"),
+                "review": _option(o, "review", STEP_REVIEWS, default_review),
+                "checkpoint": _option(o, "checkpoint", STEP_CHECKPOINTS, "none"),
+                "when": o.get("when"), "gate": is_gate,
+                "candidates": candidates, "audits": None,
+            })
+
+        # V3 + V4 + W1, through artifacts. Skipped when the sequence itself
+        # is broken: a typo'd id would otherwise cascade into "nothing
+        # produces a spec" errors that hide the one real mistake.
+        if sound:
+            producers: dict[str, list[dict]] = {}
+            for i, row in enumerate(rows):
+                always = row["modifier"] != "optional"
+                for kind in row["needs"]:
+                    prods = producers.get(kind, [])
+                    if not prods:
+                        err(f"{where}: '{row['id']}' needs "
+                            f"{_kind_phrase(kind)}, but no step before it in "
+                            f"the sequence produces one — put one of "
+                            f"{', '.join(_step_producers(kind, pc.steps))} "
+                            f"earlier")
+                    elif always and all(p["modifier"] == "optional"
+                                        for p in prods):
+                        names = ", ".join(f"'{p['id']}'" for p in prods)
+                        verb = "is" if len(prods) == 1 else "are"
+                        err(f"{where}: '{row['id']}' needs "
+                            f"{_kind_phrase(kind)}, but its only earlier "
+                            f"producer {names} {verb} optional — the run could "
+                            f"reach it with nothing to work on; make a producer "
+                            f"required or advisory, or make '{row['id']}' "
+                            f"optional too")
+                if row["gate"] and row["candidates"]:
+                    earlier = [rows[j] for j in range(i)
+                               if rows[j]["id"] in row["candidates"]]
+                    if not earlier:
+                        err(f"{where}: gate '{row['id']}' audits "
+                            f"[{', '.join(row['candidates'])}], but none of "
+                            f"them runs before it in this sequence — move the "
+                            f"gate after one of them, or add the step it "
+                            f"should audit to its audits:")
+                    else:
+                        row["audits"] = earlier[-1]["id"]
+                        if always and all(e["modifier"] == "optional"
+                                          for e in earlier):
+                            names = ", ".join(f"'{e['id']}'" for e in earlier)
+                            err(f"{where}: gate '{row['id']}' can audit only "
+                                f"optional steps before it ({names}) — the run "
+                                f"could reach it with nothing to audit; make "
+                                f"one of them required or advisory, or make "
+                                f"the gate optional too")
+                if row["produces"]:
+                    producers.setdefault(row["produces"], []).append(row)
+            ids = [row["id"] for row in rows]
+            if "open-mr" in ids:
+                before = rows[:ids.index("open-mr")]
+                if not any(row["produces"] == "verification" for row in before):
+                    pc.warnings.append(
+                        f"pipelines.{name}: opens an MR with no verification "
+                        f"step; the MR description will say so")
+        pc.pipelines[name] = {"description": desc, "when": when, "rows": rows}
+
+    # W2 + V8's advisory half.
+    for sid in raw_steps:
+        if sid not in used:
+            pc.warnings.append(f"steps.{sid}: declared but no pipeline uses "
+                               f"it — add it to a sequence or remove it")
+    if raw_pipes and "run-pipeline" not in enabled:
+        pc.warnings.append("pipelines: declared, but run-pipeline is disabled "
+                           "(disabled-workflows) — no pipeline can run until "
+                           "it is re-enabled, and each pipeline's shortcut "
+                           "command says so")
+
+    # V7: the body of every project step a pipeline runs. Only kebab-case
+    # ids reach the filesystem, so an id can never point outside the steps
+    # directory. The name is matched against the directory listing, not
+    # through is_file(): on a case-insensitive disk (Windows, macOS) `S.md`
+    # would pass for step `s` here and then be missing on a Linux CI runner.
+    if target is not None:
+        steps_dir = target / STEPS_DIR
+        try:
+            listed = ({p.name for p in steps_dir.iterdir() if p.is_file()}
+                      if steps_dir.is_dir() else set())
+        except OSError:
+            listed = set()
+        for sid in sorted(used):
+            if sid in BUILTIN_STEPS or not pc.steps.get(sid, {}).get("valid-name"):
+                continue
+            rel = f"{STEPS_DIR}/{sid}.md"
+            body = steps_dir / f"{sid}.md"
+            if body.name not in listed:
+                twin = next((n for n in sorted(listed)
+                             if n.lower() == body.name.lower()), None)
+                if twin:
+                    err(f"steps.{sid}: the body is {STEPS_DIR}/{twin}, but "
+                        f"the step needs {rel} — rename the file to match "
+                        f"the id's case (a case-sensitive checkout, such as "
+                        f"Linux CI, will not find it)")
+                    continue
+                err(f"steps.{sid}: no body at {rel} — write what the step "
+                    f"produces or checks there (plain markdown, no "
+                    f"frontmatter); run-pipeline escalates rather than "
+                    f"improvise a missing step")
+                continue
+            try:
+                text = read_text(body)
+            except Fatal as exc:
+                err(f"steps.{sid}: {exc}")
+                continue
+            first = next((l.strip() for l in text.split("\n") if l.strip()), "")
+            if first == "---":
+                err(f"steps.{sid}: {rel} starts with YAML frontmatter — a "
+                    f"step is declared in glados.yaml under steps:, so the "
+                    f"body file holds only the body; remove the --- block")
+    return pc
 
 
 # =============================================================================
@@ -1506,6 +2136,8 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
                    f"fragments[{', '.join(seen) or 'none'}]")
     out.append("")
 
+    out.extend(_pipelines_report(source, comp))
+
     out.append("## Waived / acknowledged confessions")
     out.append("")
     confessions = False
@@ -1531,6 +2163,68 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
                    "standard and profile docs")
         out.append("")
     return "\n".join(out)
+
+
+def _pipelines_report(source: Source, comp: Compilation) -> list[str]:
+    """The `## Pipelines` section: each declared pipeline as the step table
+    run-pipeline will write (defaults applied), which artifact each gate
+    audits, the project steps, and the pipeline warnings. Declarations only:
+    run-pipeline reads the blocks live, so this records what they said at
+    install (the report is presence-checked, never byte-compared). Absent
+    when the manifest declares neither block."""
+    r = comp.resolved
+    if not r.values.get("pipelines") and not r.values.get("steps"):
+        return []
+    pc = check_pipelines(source, r, comp.enabled)
+    out = ["## Pipelines", "",
+           "Project workflows declared under `pipelines:` and run by "
+           "`run-pipeline`, with the project's own steps declared under "
+           "`steps:` (bodies in `product-knowledge/steps/`). run-pipeline "
+           "reads these declarations live at every run; this section records "
+           "what they said at install. Script installs also carry one "
+           "shortcut command per pipeline.", ""]
+    if "run-pipeline" not in comp.enabled:
+        out += ["**run-pipeline is disabled** (`disabled-workflows`): none of "
+                "these pipelines can run until it is re-enabled.", ""]
+    for name, p in pc.pipelines.items():
+        out.append(f"### `{name}`")
+        out.append("")
+        if p["description"]:
+            out.append(_fmt_cell(_one_line(p["description"])))
+            out.append("")
+        if p["when"]:
+            out.append(f"When: {_fmt_cell(_one_line(p['when']))}")
+            out.append("")
+        out.append("| # | Step | Runs as | Modifier | Review | Checkpoint | "
+                   "Audits |")
+        out.append("|---|------|---------|----------|--------|------------|"
+                   "--------|")
+        for i, row in enumerate(p["rows"], 1):
+            audits = f"`{row['audits']}`" if row["audits"] else ""
+            out.append(f"| {i} | {row['id']} | {row['runs']} | "
+                       f"{row['modifier']} | {row['review']} | "
+                       f"{row['checkpoint']} | {audits} |")
+        out.append("")
+    if pc.steps:
+        out.append("### Project steps")
+        out.append("")
+        out.append("| Step | Kind | Stage | Produces | Audits | Body |")
+        out.append("|------|------|-------|----------|--------|------|")
+        for sid, st in pc.steps.items():
+            out.append(f"| {sid} | {st.get('kind') or '?'} | "
+                       f"{st.get('stage') or '?'} | "
+                       f"{st.get('produces') or ''} | "
+                       f"{', '.join(st.get('audits') or [])} | "
+                       f"`{STEPS_DIR}/{sid}.md` |")
+        out.append("")
+    out.append("### Warnings")
+    out.append("")
+    if pc.warnings:
+        out.extend(f"- {_fmt_cell(w)}" for w in pc.warnings)
+    else:
+        out.append("_None._")
+    out.append("")
+    return out
 
 
 def _fmt_cell(s: str) -> str:
@@ -1587,6 +2281,56 @@ def _disabled_alias_body(alias: str, target: str) -> str:
             f"re-enable it or pick a different workflow.\n")
 
 
+# ---- per-pipeline shims ------------------------------------------------------
+#
+# Every declared pipeline gets a shortcut command in the script modes
+# (claude, direct, gemini, antigravity, pi), named after the pipeline and
+# modelled on the alias shims: a pointer that runs run-pipeline with the
+# pipeline named, so `/glados:backend-feature <brief>` is the same run as
+# `/glados:run-pipeline backend-feature <brief>`. Only a pipeline's name and
+# description shape a shim, which is why exactly those two are hashed
+# (structural_projection). The files land in each mode's owned directory, so
+# a removed pipeline's shim is cleaned at the next install. claude-plugin
+# and aistudio emit none: the plugin is compiled once from GLaDOS's own
+# example, and AI Studio cannot run a pipeline.
+
+
+def _pipeline_shims(comp: Compilation) -> list[tuple[str, str]]:
+    """(name, one-line description) for every declared pipeline. Adapters
+    run only after the type checks pass, but this stays defensive anyway."""
+    pipelines = comp.resolved.values.get("pipelines")
+    if not isinstance(pipelines, dict):
+        return []
+    out: list[tuple[str, str]] = []
+    for name, cfg in pipelines.items():
+        desc = cfg.get("description") if isinstance(cfg, dict) else None
+        out.append((name, _one_line(desc) if isinstance(desc, str)
+                    else f"Run the {name} project workflow"))
+    return out
+
+
+def _pipeline_shim_body(comp: Compilation, name: str, runner: str,
+                        invoke: str | None) -> str:
+    """The pointer a pipeline's shortcut command carries. ``runner`` names
+    the installed run-pipeline file; ``invoke`` is the mode's spelling of
+    the run-pipeline command (None where the mode has no invocation
+    syntax)."""
+    if "run-pipeline" not in comp.cores:
+        return (f"`{name}` is a project workflow declared under `pipelines:` "
+                f"in glados.yaml, but run-pipeline, the workflow that runs "
+                f"it, is disabled in this project's glados.yaml "
+                f"(`disabled-workflows:`). Do not reconstruct it from memory "
+                f"— ask a maintainer to re-enable run-pipeline or pick a "
+                f"different workflow.\n")
+    same = f" This is the same run as `{invoke} {name} <brief>`." if invoke else ""
+    given = "this command" if invoke else "this file"
+    return (f"`{name}` is a project workflow declared under `pipelines:` in "
+            f"glados.yaml. Run it with the run-pipeline workflow: read and "
+            f"follow `{runner}`, with `{name}` as the first word of its "
+            f"arguments and the brief you were given with {given} as the "
+            f"rest.{same}\n")
+
+
 # ---- claude -----------------------------------------------------------------
 
 def adapter_claude(source: Source, comp: Compilation) -> dict:
@@ -1598,6 +2342,11 @@ def adapter_claude(source: Source, comp: Compilation) -> dict:
         body = (f"The `{alias}` workflow was renamed. Run `/glados:{target}` "
                 f"instead.\n" if enabled else _disabled_alias_body(alias, target))
         plan[f"{base}/{alias}.md"] = ("text", body)
+    for name, desc in _pipeline_shims(comp):
+        body = _pipeline_shim_body(comp, name, f"{base}/run-pipeline.md",
+                                   "/glados:run-pipeline")
+        plan[f"{base}/{name}.md"] = ("text", f"---\ndescription: "
+                                     f"{_yaml_quote(desc)}\n---\n\n{body}")
     return plan
 
 
@@ -1644,6 +2393,9 @@ def adapter_direct(source: Source, comp: Compilation) -> dict:
                 f"`product-knowledge/glados/{target}.md` instead.\n"
                 if enabled else _disabled_alias_body(alias, target))
         plan[f"product-knowledge/glados/{alias}.md"] = ("text", body)
+    for name, _desc in _pipeline_shims(comp):
+        plan[f"product-knowledge/glados/{name}.md"] = ("text", _pipeline_shim_body(
+            comp, name, "product-knowledge/glados/run-pipeline.md", None))
     return plan
 
 
@@ -1699,6 +2451,14 @@ def adapter_gemini(source: Source, comp: Compilation) -> dict:
         toml = (f"description = {_toml_basic(desc)}\n"
                 f"prompt = {_toml_multiline(body)}\n")
         plan[f"{base}/{alias}.toml"] = ("text", toml)
+    for name, desc in _pipeline_shims(comp):
+        # The runner is the run-pipeline command's TOML, whose prompt is the
+        # compiled workflow.
+        body = _pipeline_shim_body(comp, name, f"{base}/run-pipeline.toml",
+                                   "/glados:run-pipeline")
+        plan[f"{base}/{name}.toml"] = ("text",
+            f"description = {_toml_basic(desc)}\n"
+            f"prompt = {_toml_multiline(body)}\n")
     return plan
 
 
@@ -1727,6 +2487,12 @@ def adapter_antigravity(source: Source, comp: Compilation) -> dict:
             shim = _disabled_alias_body(alias, target)
         body = f"---\ndescription: {desc}\n---\n\n{shim}"
         plan[f"{base}/glados-{alias}.md"] = ("text", body)
+    for name, desc in _pipeline_shims(comp):
+        shim = _pipeline_shim_body(comp, name, f"{base}/glados-run-pipeline.md",
+                                   "/glados-run-pipeline")
+        plan[f"{base}/glados-{name}.md"] = ("text",
+            f"---\ndescription: {_yaml_quote(_agy_description(desc))}\n"
+            f"---\n\n{shim}")
     return plan
 
 
@@ -1769,6 +2535,13 @@ def adapter_pi(source: Source, comp: Compilation) -> dict:
             desc = _yaml_quote(f"(renamed) {alias} is now {target} — disabled here")
             shim = _disabled_alias_body(alias, target)
         plan[rel] = ("text", f"---\ndescription: {desc}\n---\n\n{shim}")
+    for name, desc in _pipeline_shims(comp):
+        # A real prompt template, trailer included: the brief arrives as the
+        # template's arguments.
+        rel = f"{base}/glados-{name}.md"
+        shim = _pipeline_shim_body(comp, name, f"{base}/glados-run-pipeline.md",
+                                   "/glados-run-pipeline")
+        plan[rel] = ("text", _pi_template(_yaml_quote(desc), shim, rel))
     return plan
 
 
@@ -1835,9 +2608,9 @@ code. The api-runner path (paid API key) is the governed alternative.
 
 These bundles are compiled from `glados.yaml`. `MANIFEST.md` records the
 compile hash each bundle was built against; it covers the structural keys only
-(phase, optimize-for, default-modules, workflows, disabled-workflows, sda), so
-re-run `glados.py install --mode aistudio` whenever one of those changes or
-GLaDOS is upgraded. The live keys (channels, decisions, merge-authority,
+(phase, optimize-for, default-modules, workflows, disabled-workflows, sda, and
+the names and descriptions of any pipelines), so re-run `glados.py install
+--mode aistudio` whenever one of those changes or GLaDOS is upgraded. The live keys (channels, decisions, merge-authority,
 params, sinks, branching) are not baked in and do not move the hash: paste the
 current `glados.yaml` with the repo context so the model sees them.
 """
@@ -2125,10 +2898,13 @@ def vendor_plan(source: Source, manifest_hash: str, report: str) -> dict:
 
 
 def scaffold_product_knowledge(target: Path, source: Source) -> list[str]:
-    """Create-only product-knowledge skeleton; NEVER deletes user content."""
+    """Create-only product-knowledge skeleton; NEVER deletes user content.
+    `steps/` holds the bodies of the project's own pipeline steps
+    (glados.yaml `steps:`), one `<step-id>.md` each."""
     created: list[str] = []
     pk = target / "product-knowledge"
-    for sub in ("observations", "standards", "philosophies", "personas"):
+    for sub in ("observations", "standards", "philosophies", "personas",
+                "steps"):
         d = pk / sub
         keep = d / ".gitkeep"
         if not keep.exists():
@@ -2394,8 +3170,11 @@ def _prepare_compilation(source: Source, target: Path, mode: str):
     raw = load_manifest(manifest_path)
     # Computed before anything can fail: when resolution or a type check
     # fails, a misspelt top-level key ('sinsk:') is often the cause, so the
-    # warnings ride on the Fatal (exc.warnings) for install/check to print.
+    # warnings ride on the Fatal (exc.warnings) for install/check to print —
+    # together with any the type checks added (an unused step is often the
+    # other half of a misspelt sequence id).
     warnings = manifest_warnings(raw, manifest_path.name)
+    comp = None
     try:
         resolved = resolve_manifest(raw, source.presets, manifest_path.name)
         if mode == "claude-plugin":
@@ -2415,11 +3194,15 @@ def _prepare_compilation(source: Source, target: Path, mode: str):
         if mode == "claude-plugin":
             for name in list(comp.cores):
                 comp.cores[name] = PLUGIN_BOOTSTRAP_GUARD + comp.cores[name]
-        errors = run_type_checks(source, comp)
+        # The target is the project only in the modes that compile its own
+        # manifest; the plugin compiles the example inside GLaDOS itself, so
+        # there are no project files (step bodies) to check.
+        errors = run_type_checks(source, comp,
+                                 None if mode == "claude-plugin" else target)
         if errors:
-            raise Fatal("install checks failed:\n  - " + "\n  - ".join(errors))
+            raise CheckFailed(errors)
     except Fatal as exc:
-        exc.warnings = warnings
+        exc.warnings = list(comp.warnings) if comp is not None else warnings
         raise
     return comp, manifest_hash
 
@@ -2725,7 +3508,8 @@ def cmd_check(args) -> int:
             current = manifest_hash_of(manifest_path)
             if vendored != current:
                 problems.append(f"stale compile: a structural glados.yaml key "
-                                f"({', '.join(STRUCTURAL_KEYS)}) changed since "
+                                f"({', '.join(STRUCTURAL_KEYS)}, or a "
+                                f"pipelines: name or description) changed since "
                                 f"install — manifest-hash {vendored[:12]}… != "
                                 f"current {current[:12]}…; re-run glados install")
     except Fatal as exc:
@@ -2753,6 +3537,46 @@ def cmd_check(args) -> int:
     if report_only:
         return 0
     return 1 if problems else 0
+
+
+def cmd_validate(args) -> int:
+    """Type-check a project's glados.yaml without installing anything.
+
+    Loads <target>/glados.yaml, resolves it against the source presets,
+    compiles in memory (claude mode: the compile is mode-independent, and it
+    is a mode that sees the project's own files) and runs every type check,
+    the pipeline rules with the step-body checks included. Prints errors and
+    warnings, writes nothing, and exits 1 on any error.
+
+    It needs no install, so a plugin-only repo can run it, from the plugin's
+    own `bin/glados.py` (_resolve_source finds `src/` beside `bin/`) or from
+    a pinned GLaDOS checkout in CI. run-pipeline calls it before its first
+    step, from the GLaDOS that compiled the running workflow."""
+    source = _resolve_source(args)
+    target = Path(args.target).resolve()
+    if not target.is_dir():
+        raise Fatal(f"target directory does not exist: {target}")
+    try:
+        comp, _ = _prepare_compilation(source, target, "claude")
+    except CheckFailed as exc:
+        _print_warnings(getattr(exc, "warnings", []))
+        print(f"glados validate: FAIL — {len(exc.errors)} error(s) in "
+              f"{target / 'glados.yaml'}")
+        for e in exc.errors:
+            print(f"  - {e}")
+        return 1
+    except Fatal as exc:
+        _print_warnings(getattr(exc, "warnings", []))
+        print(f"glados validate: FAIL — {target / 'glados.yaml'}")
+        print(f"  - {exc}")
+        return 1
+    _print_warnings(comp.warnings)
+    pipes = comp.resolved.values.get("pipelines") or {}
+    steps = comp.resolved.values.get("steps") or {}
+    print(f"glados validate: OK — {target / 'glados.yaml'} passes every "
+          f"check ({len(pipes)} pipeline(s), {len(steps)} project step(s), "
+          f"{len(comp.warnings)} warning(s))")
+    return 0
 
 
 def _emit_check(problems: list[str], report_only: bool) -> None:
@@ -2822,18 +3646,32 @@ def cmd_doctor(args) -> int:
         if (target / rel).is_file():
             found = rel
             break
+    # The directories whose files gate runs (a project step's body can
+    # loosen a gate as surely as glados.yaml can), reported once the project
+    # uses them.
+    gating = _gating_dirs_in_use(target, manifest_path)
     if found is None:
-        print("  CODEOWNERS: none found — consider one covering glados.yaml "
-              "(agents propose phase changes; humans approve)")
+        print("  CODEOWNERS: none found — consider one covering glados.yaml"
+              + "".join(f" and {g}" for g in gating)
+              + " (agents propose phase changes; humans approve"
+              + ("; the step files gate pipeline runs" if gating else "")
+              + ")")
     else:
         try:
-            mentions = "glados.yaml" in read_text(target / found)
+            owners = read_text(target / found)
         except Fatal:
-            mentions = False
+            owners = ""
+        mentions = "glados.yaml" in owners
         print(f"  CODEOWNERS: {found} "
               + ("covers glados.yaml" if mentions else
                  "does not mention glados.yaml — consider protecting phase "
                  "changes"))
+        for gdir in gating:
+            print(f"  CODEOWNERS: {found} "
+                  + (f"covers {gdir}" if _codeowners_cover(owners, gdir) else
+                     f"has no pattern found covering {gdir} — its files "
+                     f"gate pipeline runs; consider the same owners as "
+                     f"glados.yaml"))
 
     if manifest_path.exists():
         try:
@@ -2859,6 +3697,62 @@ def cmd_doctor(args) -> int:
 
     print("glados doctor: informational only — never fails")
     return 0
+
+
+def _gating_dirs_in_use(target: Path, manifest_path: Path) -> list[str]:
+    """GATING_DIRS entries this project uses: the manifest declares the
+    matching block, or the directory holds a markdown file. Never raises."""
+    declared: set = set()
+    try:
+        if manifest_path.exists():
+            declared = set(load_manifest(manifest_path))
+    except Fatal:
+        pass
+    used: list[str] = []
+    for gdir in GATING_DIRS:
+        key = gdir.rstrip("/").rsplit("/", 1)[-1]          # steps, canon, ...
+        d = target / gdir
+        if key in declared or (d.is_dir() and any(d.glob("*.md"))):
+            used.append(gdir)
+    return used
+
+
+def _codeowners_cover(owners: str, gdir: str) -> bool:
+    """Does a CODEOWNERS pattern cover ``gdir``: the directory itself, a
+    directory above it, or files under it (`/product-knowledge/steps/*.md`)?
+    Follows the gitignore anchoring rule: a pattern with a slash at the start
+    or in the middle is relative to the repo root, one without (`steps/`) or
+    led by `**/` matches at any depth. The root catch-all `*` does not count,
+    as it does not for the glados.yaml line. A pattern-level reading, not a
+    full gitignore-style matcher: other globs are not expanded."""
+    parts = gdir.strip("/").split("/")
+    full = "/".join(parts)
+    # anchored: the directory and each one above it, from the repo root;
+    # anywhere: every run of path segments, for patterns that float.
+    anchored = {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
+    anywhere = {"/".join(parts[i:j]) for i in range(len(parts))
+                for j in range(i + 1, len(parts) + 1)}
+    tails = {"/".join(parts[i:]) for i in range(len(parts))}
+    for line in owners.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        raw = line.split()[0]
+        floats = raw.startswith("**/")
+        if floats:
+            raw = raw[3:]
+        floats = floats or not (raw.startswith("/")
+                                or "/" in raw.strip("/"))
+        pattern = raw.strip("/")
+        for suffix in ("/**", "/*"):
+            if pattern.endswith(suffix):
+                pattern = pattern[:-len(suffix)]
+        if pattern in ("", "*", "**"):
+            continue
+        names, roots = (anywhere, tails) if floats else (anchored, {full})
+        if pattern in names or any(pattern.startswith(r + "/") for r in roots):
+            return True
+    return False
 
 
 def _assembly_report_doctor_line(source: Source, target: Path,
@@ -3628,6 +4522,15 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--source")
     pc.add_argument("--report-only", action="store_true")
     pc.set_defaults(func=cmd_check)
+
+    pval = sub.add_parser(
+        "validate",
+        help="type-check the target's glados.yaml, pipelines and steps "
+             "included, in memory: writes nothing, needs no install, exits 1 "
+             "on any error")
+    pval.add_argument("--target", default=".")
+    pval.add_argument("--source")
+    pval.set_defaults(func=cmd_validate)
 
     pd = sub.add_parser("doctor", help="staleness + wiring report (never fails)")
     pd.add_argument("--target", required=True)

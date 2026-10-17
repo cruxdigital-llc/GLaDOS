@@ -51,10 +51,11 @@ maintainer command below — consumers never run the compiler:
 ```
 GLaDOS/  (the plugin)
 ├── .claude-plugin/plugin.json       # plugin manifest (name: glados)
-├── skills/<name>/SKILL.md           # 25 entry points: 15 workflows + 10
+├── skills/<name>/SKILL.md           # 26 entry points: 16 workflows + 10
 │                                    #   renamed-v1-name shims (+ init)
-├── compiled/claude-plugin/*.md      # the 15 compiled workflow bodies the
+├── compiled/claude-plugin/*.md      # the 16 compiled workflow bodies the
 │                                    #   skills point at via ${CLAUDE_PLUGIN_ROOT}
+├── bin/glados.py                    # the toolchain (`validate` runs from here)
 └── glados.yaml.example              # template /glados:init copies into repos
 ```
 
@@ -67,8 +68,8 @@ The plugin brings the *workflows*; each consuming repo still owns its state:
   `product-knowledge/`.
 - **`.glados/runs/`** — run records are committed to the repo the run
   happened in, never to the plugin.
-- **`product-knowledge/`** — the project's own standards, personas, and
-  status file.
+- **`product-knowledge/`** — the project's own standards, personas, status
+  file, and the bodies of its own pipeline steps (`product-knowledge/steps/`).
 
 ## First run
 
@@ -85,6 +86,30 @@ then a read-only first workflow:
 ```
 
 Plugin skills use the same `/glados:<name>` syntax as the script install.
+
+## Your own workflows
+
+A project can declare its own workflows under `pipelines:` in its
+`glados.yaml`: ordered lists of GLaDOS's steps and steps the project writes
+(`steps:`, bodies in `product-knowledge/steps/`). The plugin runs them with
+one skill, naming the pipeline first:
+
+```
+/glados:run-pipeline backend-feature Add rate limiting to the export endpoint
+```
+
+The plugin is compiled once, from GLaDOS's own template, so it has no
+per-pipeline shortcut such as `/glados:backend-feature`; script installs do.
+`run-pipeline` reads the declarations live and checks them before its first
+step. To check them yourself, or in CI, run the plugin's own toolchain
+against the repo. It needs no install:
+
+```bash
+python /path/to/GLaDOS/bin/glados.py validate --target .
+```
+
+It exits 1 on any error and writes nothing. See
+[guides/pipelines.md](../guides/pipelines.md).
 
 ## Verify
 

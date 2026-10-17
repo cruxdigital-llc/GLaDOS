@@ -27,8 +27,9 @@ python bin/glados.py install --mode pi --target /path/to/your/project
 your-project/
 ├── glados.yaml
 ├── .pi/prompts/
-│   ├── glados-build-feature.md   # 15 workflows + 10 shims for retired v1 names,
-│   └── …                         #   as pi prompt templates
+│   ├── glados-build-feature.md   # 16 workflows + 10 shims for retired v1 names
+│   └── …                         #   (+ one per declared pipeline), as pi
+│                                 #   prompt templates
 └── .glados/ …                    # same vendored state as every other mode
 ```
 

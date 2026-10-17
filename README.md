@@ -75,11 +75,18 @@ posted as a comment on it, plus a committed record in `.glados/runs/` saying
 what was decided and why. Six months later, `git log` still knows the whole
 story.
 
-`fix-bug` is one of fifteen commands. The everyday ones are `build-feature`
+`fix-bug` is one of sixteen commands. The everyday ones are `build-feature`
 (one feature from plan to a verified merge request in one sitting),
 `review-mr` and `address-review` (the review loop), and `run-epic` (a whole
 ticket queue). The full list, with what each does, is in
 [docs/workflows.md](docs/workflows.md).
+
+Your team's process can differ from build-feature's fixed plan, spec,
+implement, verify order. Declare your own workflows under `pipelines:` in
+`glados.yaml`, mixing GLaDOS's steps with steps you write, and run them with
+`/glados:run-pipeline <name> <brief>`. Every step is tracked in the run
+record whatever the order. See
+[docs/guides/pipelines.md](docs/guides/pipelines.md).
 
 ## Where things land in your repo
 
@@ -100,6 +107,7 @@ your-project/
     ├── standards/               # rules the agent's work is checked against
     ├── philosophies/            # high-level principles
     ├── personas/                # your own reviewer viewpoints (override shipped ones)
+    ├── steps/                   # bodies of your own pipeline steps
     └── observations/            # recurring patterns noticed, awaiting promotion
 ```
 
@@ -162,13 +170,14 @@ In increasing depth:
    walkthrough and your first week.
 2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
    runs.
-3. **[docs/guides/](docs/guides/)** — task-oriented guides, including SDA
+3. **[docs/guides/](docs/guides/)** — task-oriented guides, including your
+   own workflows ([pipelines.md](docs/guides/pipelines.md)), SDA
    conformance (`sda: true` in `glados.yaml` — claims + work-unit log
    maintained by every run) and the Wheatley board; see also
    [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
 4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
    file, and the run records actually work.
-5. **Reference** — [docs/workflows.md](docs/workflows.md) (all fifteen
+5. **Reference** — [docs/workflows.md](docs/workflows.md) (all sixteen
    commands and the v1→v2 name map), [docs/modules.md](docs/modules.md),
    [docs/personas.md](docs/personas.md), [docs/src.md](docs/src.md), and
    [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) (design rationale — the deep

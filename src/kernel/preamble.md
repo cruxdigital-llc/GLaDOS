@@ -18,13 +18,13 @@
    always equals `current`.
    - **Nested run.** This run is nested only when a workflow you are
      running in this session started it as one of its own steps
-     (plan-feature from build-feature's stage table, a ticket's
-     build-feature from run-epic's per-ticket loop) and `current` names that
-     workflow's record. If `stack` does not exist yet, create it holding the
-     parent's filename. Append this run's filename to `stack` and write it
-     into `current`. Note in this record that the run is nested and name the
-     parent record, and list this record's path in the parent's record under
-     `## Nested runs`.
+     (plan-feature from build-feature's stage table, a stage from
+     run-pipeline's step table, a ticket's build from run-epic's per-ticket
+     loop) and `current` names that workflow's record. If `stack` does not
+     exist yet, create it holding the parent's filename. Append this run's
+     filename to `stack` and write it into `current`. Note in this record
+     that the run is nested and name the parent record, and list this
+     record's path in the parent's record under `## Nested runs`.
    - **Fresh run.** Otherwise write this run's filename into `current` and
      write `stack` holding just this filename. Any other `current` or
      `stack` is stale, whatever its record says (a run that crashed, or an

@@ -32,6 +32,7 @@ numbers.
 | `implement-feature` | branch | progress | Write the code and tests that satisfy an approved specification. |
 | `verify-feature` | none | progress, verdict, escalation | Verify the implemented feature with a fresh evaluator that has no implementation context. |
 | `build-feature` | branch | progress, verdict, escalation | Take one feature from selection to a verified, self-reviewed merge request in one sitting. |
+| `run-pipeline` | branch | progress, verdict, escalation, decision | Run one of the project's own workflows (declared under `pipelines:` in `glados.yaml`) step by step, with every step tracked in a step table in the run record. |
 
 ### Review and repair
 
@@ -54,6 +55,18 @@ numbers.
 | `retrospect` | none | progress, observation | Review recent work to harvest observed standards, philosophies, and phase-fitness signals. |
 | `steward` | branch | progress, observation, bug | The standing gardening pass — compact the run ledger, refresh stale docs, promote pending observations, sanity-check the test suite, ship one cleanup MR. |
 | `brunch` | branch | progress, verdict, bug, observation, escalation | The codebase critique roundtable — evidence pre-flight, parallel persona reviewers, a moderator ranking impact×effort, one surgical fix MR. |
+
+## Project workflows
+
+build-feature runs four stages in a fixed order. A project that wants a
+different process declares its own workflows under `pipelines:` in
+`glados.yaml`: ordered lists of GLaDOS's built-in steps (the four stages plus
+`shape`, `open-mr` and `self-review`) and steps the project writes itself
+(`steps:`, with bodies in `product-knowledge/steps/`). `run-pipeline` runs any
+of them: `/glados:run-pipeline <name> <brief>`, and script installs also get
+one shortcut per pipeline (`/glados:<name>`, or `/glados-<name>` in
+Antigravity and pi). build-feature and fix-bug are unchanged. The full guide is
+[guides/pipelines.md](guides/pipelines.md).
 
 ## v1 aliases
 

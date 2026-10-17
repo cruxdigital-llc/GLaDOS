@@ -48,6 +48,10 @@ baseline:
     new-dependency: record
     delete-code: record
     destructive-data-op: forbidden
+    # Picking a project pipeline for a brief, skipping an optional step,
+    # switching pipelines once (run-pipeline). `record` publishes each act
+    # in the run's one pooled `decision` outcome.
+    pipeline-discretion: record
   default-modules: [review-panel, standards-gate]
   params:
     review-panel:
@@ -64,6 +68,11 @@ baseline:
       # Safety bound for re-running the standards gate on a corrected
       # artifact — the compiled `params.standards-gate.max-cycles` reference
       # must resolve in every install.
+      max-cycles: 3
+    pipeline:
+      # Safety bound for revise cycles on one pipeline step (run-pipeline)
+      # before it escalates — the compiled `params.pipeline.max-cycles`
+      # reference must resolve in every install.
       max-cycles: 3
 
 # ---------------------------------------------------------------------------
@@ -88,6 +97,7 @@ nascent:
     new-dependency: agent
     delete-code: agent
     destructive-data-op: record
+    pipeline-discretion: agent
   default-modules: []
   params:
     review-panel:
@@ -111,6 +121,7 @@ evolving:
     new-dependency: agent
     delete-code: record
     destructive-data-op: escalate
+    pipeline-discretion: agent
   default-modules: [standards-gate]
   params:
     review-panel:
@@ -134,6 +145,7 @@ production:
     new-dependency: record
     delete-code: record
     destructive-data-op: forbidden
+    pipeline-discretion: record
   default-modules: [review-panel, standards-gate]
   params:
     review-panel:
@@ -143,10 +155,12 @@ sunset:
   optimize-for: >-
     Optimize for safe decay; preserve every behavior people still depend on
     and make every removal visible before it lands.
-  # Sunset unloads new-feature construction structurally: the workflow is not
-  # installed. An explicit `disabled-workflows:` in glados.yaml replaces this
-  # list wholesale ([] re-enables build-feature, confessed by provenance).
-  disabled-workflows: [build-feature]
+  # Sunset unloads new-feature construction structurally: the workflows are
+  # not installed (build-feature, and run-pipeline, which runs the project's
+  # own feature workflows). An explicit `disabled-workflows:` in glados.yaml
+  # replaces this list wholesale ([] re-enables both, confessed by
+  # provenance).
+  disabled-workflows: [build-feature, run-pipeline]
   channels:
     progress:    [ledger]
     verdict:     [mr-comment]
@@ -161,6 +175,7 @@ sunset:
     new-dependency: forbidden
     delete-code: record
     destructive-data-op: escalate
+    pipeline-discretion: record
   default-modules: [standards-gate]
   params:
     review-panel:

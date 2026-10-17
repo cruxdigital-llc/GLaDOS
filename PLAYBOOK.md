@@ -74,6 +74,8 @@ Every workflow run leaves exactly one committed record in `.glados/runs/` — wh
 
 `build-feature` runs the first five as one sitting; `fix-bug` is the same shape for bugs (report → reproduction → verified root-cause fix MR); `run-epic` drives a multi-ticket epic — or the whole backlog with `--backlog` — to one human-reviewable integration MR.
 
+When the team's process differs from that order (a refactor with no plan, a design that stops before code, an architecture review before the spec), declare it under `pipelines:` in `glados.yaml` and run it with `run-pipeline`. Have the same people own `glados.yaml` and `product-knowledge/steps/` in CODEOWNERS. See [docs/guides/pipelines.md](docs/guides/pipelines.md).
+
 ### Weekly
 | Activity | Workflow | Purpose |
 |---|---|---|

@@ -107,8 +107,9 @@ happened until you apply those blocks yourself** — including committing the
 run record to `.glados/runs/`. Don't read a transcript as work done. Two
 related cautions: bundles are compiled from your `glados.yaml`, so re-run the
 install whenever a structural key changes (`phase`, `optimize-for`,
-`default-modules`, `workflows`, `disabled-workflows`, `sda`; `MANIFEST.md`
-records the fingerprint of those keys only). The live keys (`channels`,
+`default-modules`, `workflows`, `disabled-workflows`, `sda`, and pipeline
+names and descriptions; `MANIFEST.md` records the fingerprint of those keys
+only). The live keys (`channels`,
 `decisions`, `merge-authority`, `params`, `sinks`, `branching`) are not baked
 into the bundle, so paste your current `glados.yaml` with the repo context;
 and pasting proprietary code into free-tier AI Studio may

@@ -362,7 +362,7 @@ the install, read the assembly report, commit:
 ```
 $ python bin/glados.py install --mode claude --target ../acme-api
 glados: installed mode 'claude' into /home/you/acme-api
-glados: 15 cores, manifest 92c59ca6fa61…
+glados: 16 cores, manifest 92c59ca6fa61…
 glados: cleaned 21 stale file(s): .claude/commands/adopt-codebase.md, …
 ```
 
@@ -426,3 +426,28 @@ Old names keep working (shims), old installs keep working (until you
 reinstall), the tool does the file shuffling, and the first `verify-ledger`
 run gives you the baseline dashboard that tells you whether the migration
 actually closed the loop.
+
+## Upgrading a v2 install to 2.5
+
+2.5 adds one workflow, `run-pipeline`, which runs the project's own
+workflows (declared under `pipelines:`; see
+[docs/guides/pipelines.md](docs/guides/pipelines.md)). It is enabled by
+default, even with no `pipelines:` declared. Two kinds of manifest need a
+look before you reinstall:
+
+- **An explicit `disabled-workflows:` list.** Your list replaces the phase
+  preset's list, so the sunset preset's new entry for `run-pipeline` does not
+  reach it, and `run-pipeline` arrives enabled. A sunset project, or any
+  project that disables `build-feature`, adds `run-pipeline` to its own list
+  (with no pipelines declared, run-pipeline falls back to build-feature's
+  stages).
+- **`run-epic` disabled and no `branching.default-target`.** run-pipeline
+  reads the epic's integration branch and falls back to
+  `branching.default-target` outside an epic, so install and check now fail
+  with "state key 'epic.integration-branch' is read by [run-pipeline] but no
+  enabled writer covers it". Set `branching.default-target`, or add
+  `run-pipeline` to `disabled-workflows:`.
+
+`python .glados/glados.py validate --target .` (or the same command from a
+GLaDOS checkout, for a plugin-only repo) reports the second one without
+installing anything. The first is silent: check your list by hand.

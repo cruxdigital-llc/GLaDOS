@@ -92,6 +92,17 @@ Treat this as direction: none of it is shipped in Wheatley or in GLaDOS
 v2.0.0 today. What ships today is the claims overlay via `sda: true` — see
 [sda.md](sda.md).
 
+### Project workflows on the board
+
+A project's own workflows ([pipelines.md](pipelines.md)) add no columns. The
+columns stay the six SDA phases: the
+[v2.1 profile](../standards/sda-profile-glados-v2.1.md) reads a pipeline
+run's phase as the `stage` of the first row in its step table that is not
+done, skipped or waived, until the work-unit row marks it done. A card can also show the pipeline's name, its
+current step, and an awaiting-approval badge while the run is parked at a
+human checkpoint. Like the other in-flight columns, this needs Wheatley to
+read `.glados/runs/`, which is direction, not shipped.
+
 ## Summary
 
 | | |

@@ -36,9 +36,10 @@ consistency checks, and prints an assembly report (also written to
 ```
 your-project/
 ├── glados.yaml                      # your config (you created this)
-├── .gemini/commands/glados/         # 25 TOML custom-command files:
-│   ├── build-feature.toml           #   15 workflows + 10 shims redirecting
-│   ├── fix-bug.toml                 #   retired v1 names. Each file holds a
+├── .gemini/commands/glados/         # 26 TOML custom-command files:
+│   ├── build-feature.toml           #   16 workflows + 10 shims redirecting
+│   ├── fix-bug.toml                 #   retired v1 names (+ one per declared
+│   │                                #   pipeline). Each file holds a
 │   └── ...                          #   description plus the full compiled
 │                                    #   workflow text as its prompt
 ├── .glados/                         # committed support folder: vendored
@@ -48,7 +49,7 @@ your-project/
 │   └── glados.yaml.example  presets.yaml   # vendored template + phase presets
 └── product-knowledge/               # project-owned knowledge skeleton
     ├── PROJECT_STATUS.md
-    └── observations/ personas/ philosophies/ standards/
+    └── observations/ personas/ philosophies/ standards/ steps/
 ```
 
 Commit all of it. Gemini CLI turns each TOML file under

@@ -30,6 +30,10 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
+   A run that parks its unit of work to wait for an approval (run-pipeline
+   at an unattended `human` checkpoint) has not finished it: it keeps its
+   claim and appends no row, and the run that resumes the work does both
+   when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -68,16 +72,19 @@ the record rather than omitting it.
      plan-feature, run-epic's backlog selection), deliver it to its other
      bound sinks and record it in the run record under `## Pending MR
      delivery`. This does not escalate. The run that opens the MR posts
-     every pending MR item from its own record and from the records of the
-     runs nested inside it as soon as the MR is open, before handing the MR
-     to review (build-feature right after it opens the MR in its step 5,
+     every pending MR item from its own record, from the records of the
+     runs nested inside it, and from a parked run it resumed (with the runs
+     nested inside that one) as soon as the MR is open, before handing the
+     MR to review (build-feature right after it opens the MR in its step 5,
      before its self-review; a pipeline's open-mr step), then marks each
      item delivered in the record that holds it. Any item still pending
      when this step runs, with its MR open, is posted now. When the
      outermost run ends and no MR exists for the work an item is about
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
-     escalating, even if nested runs opened MRs for their own work. Once
+     escalating, even if nested runs opened MRs for their own work. A run
+     that parks its unit of work (step 3) has not ended it: its items stay
+     pending for the run that resumes the work and opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These
      record updates (this run's record, and any nested record you marked
      delivered) ride the step 4 commit when made before it; any made in

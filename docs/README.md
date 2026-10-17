@@ -31,6 +31,9 @@ below. If you landed here without any context, the
 - [guides/](guides/) — platform recipes for running GLaDOS on GitHub or
   GitLab: where reviews get posted, how the CI check is enabled, and how
   merge/pull requests flow.
+- [guides/pipelines.md](guides/pipelines.md) — your project's own
+  workflows: declare an ordered list of GLaDOS's steps and your own under
+  `pipelines:`, and run it with `run-pipeline`.
 - [../PLAYBOOK.md](../PLAYBOOK.md) — the team-adoption playbook: rolling
   GLaDOS out across a team, week by week.
 
@@ -57,8 +60,9 @@ after its opening paragraph.
 - [overlays.md](overlays.md) — v1's customization mechanism, now
   retired, and what replaced it in v2.
 - [standards/](standards/) — the SDA (Structured Development Artifacts)
-  Standard v1.0 and the GLaDOS Profiles: v2.0 (how a v2 install conforms —
-  the current mapping, enabled by `sda: true`) and v1.0 (historical).
+  Standard v1.0 and the GLaDOS Profiles: v2.1 (how a v2 install conforms,
+  the current mapping, enabled by `sda: true`), v2.0 (which v2.1 amends) and
+  v1.0 (historical).
 - [V2_STRATEGY.md](V2_STRATEGY.md) — design rationale for v2: the audit
   evidence and the nine load-bearing decisions. The deep end.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
