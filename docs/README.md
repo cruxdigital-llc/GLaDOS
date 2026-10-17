@@ -68,6 +68,9 @@ after its opening paragraph.
   v1.0 (historical).
 - [V2_STRATEGY.md](V2_STRATEGY.md) — design rationale for v2: the audit
   evidence and the nine load-bearing decisions. The deep end.
+- [proposals/composable-workflows.md](proposals/composable-workflows.md) —
+  design rationale for 2.5: project workflows, the shape step, and canon,
+  with the decisions taken and what was left for later.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.

@@ -2,11 +2,23 @@
      glados.yaml.example, not from the repo it runs in. -->
 **Bootstrap guard.** This workflow was compiled from `glados.yaml.example`,
 not this repo's manifest. Before step 1: if this repo has a `glados.yaml`,
-read it now — its `phase:`, decision rights, channels, merge authority, and
-params govern this run wherever they differ from the text below. If it has
-no `glados.yaml`, copy `glados.yaml.example` to `glados.yaml` (or run
-`/glados:init`) and set `phase:` before doing consequential work — do not
-guess a phase.
+read it now — its `phase:`, decision rights, channels, merge authority,
+params, any project workflows and steps (`pipelines:`, `steps:`) and
+any canon (`canon:`) govern this run wherever they differ from the text
+below. If it has no `glados.yaml`, copy `glados.yaml.example` to
+`glados.yaml` (or run `/glados:init`) and set `phase:` before doing
+consequential work — do not guess a phase.
+
+**Plugin paths.** This repo may have no `.glados/` directory. Three
+read-only files then come from the plugin's own copy at the plugin root
+(two levels above this file, the directory that holds
+`compiled/claude-plugin/`): when `.glados/presets.yaml` is missing, the
+preset table is `src/kernel/presets/phases.yaml` there; when
+`.glados/personas/` is missing, the library personas are `src/personas/`
+there; and when `.glados/glados.py` is missing, the toolchain is
+`bin/glados.py` there. Project personas in `product-knowledge/personas/`
+still win a name collision. Run records and the `.glados/runs/` markers
+always live in this repo: create them here, never in the plugin.
 
 Optimize for doing no harm; when the consequences of a choice are unclear, stop and ask rather than guess.
 
@@ -14,12 +26,32 @@ Optimize for doing no harm; when the consequences of a choice are unclear, stop 
 
 1. **Create the run record now** at
    `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work.
-   Note the workflow, start time, and goal. Then write the record's filename
-   into `.glados/runs/current` — the in-flight marker the run-record guard
-   hooks key on. The marker is transient run state: it must NOT be committed
-   (the epilogue deletes it). A run that dies early with a record beats one
-   that succeeded invisibly; the epilogue finalizes this file, but it must
-   exist from the first minute.
+   Note the workflow, start time, and goal. Then set the in-flight markers
+   the run-record guard hooks key on. `.glados/runs/current` holds the
+   filename of the innermost run in flight; `.glados/runs/stack` lists every
+   run in flight, one filename per line, outermost first, and its last line
+   always equals `current`.
+   - **Nested run.** This run is nested only when a workflow you are
+     running in this session started it as one of its own steps
+     (plan-feature from build-feature's stage table, a stage from
+     run-pipeline's step table, a ticket's build from run-epic's per-ticket
+     loop) and `current` names that workflow's record. If `stack` does not
+     exist yet, create it holding the parent's filename. Append this run's
+     filename to `stack` and write it into `current`. Note in this record
+     that the run is nested and name the parent record, and list this
+     record's path in the parent's record under `## Nested runs`.
+   - **Fresh run.** Otherwise write this run's filename into `current` and
+     write `stack` holding just this filename. Any other `current` or
+     `stack` is stale, whatever its record says (a run that crashed, or an
+     earlier session that ended mid-run): replace it, and note the stale
+     filename(s) in this record. A run that resumes earlier work (run-epic
+     picking up its ticket table) is fresh too; it builds on the earlier
+     record as step 4 says.
+
+   Both markers are transient run state: never commit them (the epilogue
+   pops them). A run that dies early with a record beats one that succeeded
+   invisibly; the epilogue finalizes this file, but it must exist from the
+   first minute.
 2. **Record `work.base-sha`** — the current base commit — in the record
    before mutating anything (branch, board, or shared files). The end-of-run
    yield check compares against it; without it, an external edit is
@@ -29,12 +61,26 @@ Optimize for doing no harm; when the consequences of a choice are unclear, stop 
    root before the first mutation — workflow, scope, holder, timestamp. An
    existing uncleared claim on the same scope is contention: coordinate with
    its holder — build on their run or wait — do not clobber. The epilogue
-   clears the entry.
+   clears the entry. A nested run (step 1) adds no claim of its own and does
+   not treat the claim of a run enclosing it (any record on `stack`) as
+   contention: it works under that claim, which the outermost run clears.
+   One exception: a ticket's build inside run-epic is a unit of work of its
+   own (its own branch and MR), so it records and clears its own claim as
+   an outermost run would; the epic's claim is still not contention, and
+   runs nested inside that build work under the ticket's claim.
 4. **Read prior run records first**, where this workflow revisits a subject
    (an MR, an epic, a component): scan `.glados/runs/` for records touching
    the same subject before redoing work. If a prior run already reviewed the
    current HEAD, produced the artifact, or holds the claim, build on that
    record instead of repeating the work — and say so in this run's record.
+
+## Reading glados.yaml
+
+When this workflow resolves a key from `glados.yaml` and the manifest does
+not set it, take its default from the preset table, `.glados/presets.yaml`.
+Layer it in this order, later layers winning: the table's `baseline`, then
+the preset named by the manifest's `phase:`, then the keys the manifest sets
+explicitly.
 
 ## Decision rights
 
@@ -53,8 +99,8 @@ the top of this file, and record the consequential ones in the run record.
 
 <!-- GLaDOS v2 compiled artifact — generated by glados.py; edit the source, not this file.
      workflow: run-epic
-     glados-version: 2.4.0
-     manifest-sha256: 7fdf54be3ff61a8004c88c5c894de0c16afface3a42276066e0a9af4cfc2d7d9
+     glados-version: 2.5.0
+     manifest-sha256: d23f47f077c49c8ea87c6c32bd5a5db2ffd9f7575be6895d939ea6e02ba8e73c
      modules-inlined: mr-review-panel, standards-gate
      compile-source: src/workflows/run-epic.md
 -->
@@ -62,11 +108,13 @@ the top of this file, and record the consequential ones in the run record.
 # (GLaDOS) Run Epic
 
 **Goal**: drive a multi-ticket effort unattended: establish the ticket queue,
-run the per-feature loop (build-feature → review-mr ⇄ address-review → merge)
-on each ticket in dependency order, and finish with one consolidated diff for
-a human. This core adds what a single feature lacks — sub-tickets, an
-integration branch, sequential merges, and epic state durable enough that any
-fresh session can pick up mid-epic.
+run the per-feature loop (build → review-mr ⇄ address-review → merge) on each
+ticket in dependency order, and finish with one consolidated diff for a
+human. A ticket is built by build-feature or, when `glados.yaml` declares
+`pipelines:`, by the project workflow assigned to it. This core adds what a
+single feature lacks — sub-tickets, an integration branch, sequential
+merges, and epic state durable enough that any fresh session can pick up
+mid-epic.
 
 ## Process
 
@@ -87,23 +135,43 @@ fresh session can pick up mid-epic.
     status file (`intent.status`), taken top-down. Each item is already a
     ticket — no decomposition, no integration branch; MRs target
     `branching.default-target`.
-- The decomposition (or backlog selection order) is a scoping call: this step
-  produces a `decision` outcome recording the ticket breakdown.
+- **Pipeline per ticket** (only when `glados.yaml` declares `pipelines:`):
+  give each ticket the pipeline that fits it, matching the ticket against
+  each pipeline's `when:`. An epic integrates MRs, so only a pipeline whose
+  sequence contains `open-mr` qualifies; a ticket none fits gets
+  `build-feature`. In `--backlog` mode, assign it as each item is taken.
+  Write a pipeline you chose as `<name> (agent)`. A value without that mark
+  was set by a person (in the ticket table or on the tracker) and is never
+  overwritten.
+- The decomposition (or backlog selection order), with each ticket's
+  pipeline, is a scoping call: this step produces a `decision` outcome
+  recording the ticket breakdown.
 - **Integration branch** (epic mode): resolve `branching.epic-integration`
   from `glados.yaml`, cut it from `branching.default-target`, push it, and
   record it as `epic.integration-branch`. Every child MR targets it, keeping
   the default branch releasable. The commit it is cut from is this run's base
   (`work.base-sha`, recorded at run start).
 - **Write `epic.progress`** to the ledger: the mandate, the ticket table
-  (`id | depends-on | holder | status`), the integration branch, operating
-  rules, and any environment facts a resuming session needs.
+  (`id | depends-on | pipeline | holder | status`; with no `pipelines:`
+  declared, every pipeline cell is `build-feature`), the integration branch,
+  operating rules, and any environment facts a resuming session needs.
 
 ### 2. Per-ticket loop (sequential, dependency order)
 For each ticket, on a working branch off the integration branch (named per
 `branching.feature`):
 
-1. **Build** — run the build-feature workflow; its MR targets the integration
-   branch.
+1. **Build** — run the run-pipeline workflow with the ticket's pipeline; a
+   `build-feature` row runs the build-feature workflow instead. Either way
+   the MR targets the integration branch. When the run switched an
+   `(agent)` pipeline (its record says so), update the row to the new one,
+   still marked `(agent)`. A ticket whose run parks at a checkpoint waits
+   for its approval: mark its row `awaiting-approval:<step>`, hold its
+   dependents, and carry on with tickets that do not depend on it. Once no
+   other ticket can run, check each parked ticket's approval once and
+   resume the approved ones. When every remaining row is parked or waits on
+   a parked row, end this run with a `progress` outcome listing each parked
+   row and the approval it waits for; a later run-epic run resumes them
+   through step 0. Never loop over the queue again within one run.
 2. **Review** — run the review-mr workflow.
 3. **Address** — while the panel's verdict demands changes, run the
    address-review workflow, then re-review. Bounds and stalemate handling:
@@ -117,6 +185,8 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 |------|-------|
 | review-mr ⇄ address-review cycles per MR | `params.review-panel.max-cycles` |
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
+| standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
+| revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
 
 Rules:
 
@@ -141,8 +211,10 @@ Rules:
    not per run. Each landed ticket produces a `progress` outcome.
 
 ### 3. Close the epic
-- Queue exhausted (epic mode): confirm the integration branch contains exactly
-  the epic's tickets; run the full test suite on it.
+- Queue exhausted (epic mode): no row may still be `awaiting-approval`; the
+  epic closes only once every parked ticket has landed or been dropped by a
+  person. Then confirm the integration branch contains exactly the epic's
+  tickets; run the full test suite on it.
 - Open one integration→`branching.default-target` MR via the project platform
   CLI, with an epic-level `## Summary` and `## Test plan`. Resolve
   `merge-authority` for that scope; where the resolved value does not permit
@@ -191,10 +263,10 @@ Defaults, where the project states nothing:
 
 
 ### Exit
-- Stop when the ticket queue is exhausted, or when a blocking call genuinely
-  needs a human — a product decision, an irreversible action, a review
-  stalemate per the bounds above; the latter produces an `escalation` outcome
-  carrying the open question.
+- Stop when the ticket queue is exhausted, when only parked tickets remain
+  (step 2), or when a blocking call genuinely needs a human — a product
+  decision, an irreversible action, a review stalemate per the bounds above;
+  the latter produces an `escalation` outcome carrying the open question.
 
 ## Review panel
 
@@ -364,7 +436,7 @@ line, and no lens blocks on one.
 | **UAT** | Does the change actually do what the spec/ticket promises? Exercise it as a user would; verify each acceptance criterion. |
 | **Adversarial** | Attack the change: edge cases, error paths, race conditions, auth/tenancy holes, injection, data loss. |
 | **Standards** | Audit the change against the project's standards tree, citing the standard. A breach blocks only when it changes behaviour or crosses a boundary the standard draws; otherwise it is one advisory line. |
-| **Philosophy** | Audit the change's behaviour and structure against the project's philosophies — fail-fast, root-cause-not-symptom, and the project's stated values. |
+| **Philosophy** | Audit the change's behaviour and structure against the project's philosophies — fail-fast, root-cause-not-symptom, and the project's stated values — and, when the workflow consults canon, against the canon digests seated on this lens. |
 | **Dead-code** | Hunt leftovers in the code: unused symbols, orphaned files, debug artifacts, commented-out code. |
 
 **Project personas:** resolve `params.review-panel.personas` from `glados.yaml`;
@@ -431,7 +503,8 @@ Your job is to find real problems, not to confirm success.
    the fix costs where that is not obviously small, and say you have not
    looked rather than implying it is cheap.
 7. Classify each finding and choose your verdict using ONLY the severity
-   scale, verdict words, and composition rules in the brief.
+   scale, verdict words, and composition rules in the brief, and for a
+   canon principle the canon rules it carries.
 8. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
@@ -440,6 +513,8 @@ Your job is to find real problems, not to confirm success.
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.
+   When the brief lists canon digests, add `canon-conflicts`: each canon
+   conflict, by canon id and what overrides it (an empty list when none).
 ```
 
 The `root-cause` line is a hypothesis from one lens, not a verdict. It binds
@@ -656,10 +731,11 @@ against it. A standard the artifact adheres to produces no finding. A breached
 standard produces exactly one finding, classified on the single severity scale
 above by the standard's declared severity:
 
-| Standard severity | Finding    |
-|-------------------|------------|
-| `must`            | `blocking` |
-| `should` / `may`  | `advisory` |
+| Standard severity  | Finding    |
+|--------------------|------------|
+| `must`             | `blocking` |
+| `should` / `may`   | `advisory` |
+| canon, not adopted | `advisory` |
 
 A standard's `must`/`should`/`may` is authoring metadata about the standard;
 findings themselves take only the two tiers — no third tier exists at the
@@ -676,6 +752,15 @@ gate.
 - **Only `advisory` findings**: proceed. State each advisory finding's
   disposition as the severity scale requires — fixed, or declined with a
   one-line reason.
+
+Each re-run of the gate on a corrected artifact is one gate cycle. Count
+the cycles in the run record. At `params.standards-gate.max-cycles`, do not
+re-run again: stop, emit an `escalation` carrying the open blocking findings
+and the cycle history, and end the run. A run enclosing this one (preamble
+step 1) stops too, rather than advancing on an artifact the gate did not
+pass. Gate cycles are bounded as *Loop bounds* sets out:
+
+*(See **Loop bounds**, earlier in this document.)*
 
 ### Report
 
@@ -706,10 +791,21 @@ the record rather than omitting it.
 2. **Yield check**: compare the recorded `work.base-sha` against the current
    base. If an external edit moved it, emit `yielded (external_edit)` in the
    record, then rebase or release — never force-push over someone else's work.
-3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: append this
-   run's work-unit row to `product-knowledge/SPEC_LOG.md` — date, workflow,
-   scope, outcome, links — and clear this run's entry in `claims.md`, so
-   both ride the record commit below.
+3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: a run that is
+   not nested (preamble step 1) appends the single work-unit row for the
+   whole unit of work to `product-knowledge/SPEC_LOG.md` — date, workflow,
+   scope, outcome, links — and clears its entry in `claims.md`, so both ride
+   the record commit below. A nested run does neither: it holds no claim of
+   its own, and a work-unit row marks its subject done, so a nested plan's
+   row would mark the whole feature done early. Its record path is already
+   listed in the parent's record, and the outermost run's row covers it.
+   The exception is the one the preamble names: a ticket's build inside
+   run-epic is a unit of work of its own, so it appends the ticket's row
+   and clears the ticket's claim; the runs nested inside it do neither.
+   A run that parks its unit of work to wait for an approval (run-pipeline
+   at an unattended `human` checkpoint) has not finished it: it keeps its
+   claim and appends no row, and the run that resumes the work does both
+   when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
    under review — review-mr, address-review — commit their record to the
@@ -742,6 +838,30 @@ the record rather than omitting it.
      Delivery to a different sink does not cover the one that failed: a
      verdict that never reached the MR leaves the change looking unreviewed,
      however many other sinks got a copy. Never silently drop an outcome.
+   - **No MR yet is not a failed delivery.** When an outcome is bound to
+     `mr-comment` and no MR exists yet for the work it is about (a verdict
+     from verify-feature inside build-feature, a `decision` from a nested
+     plan-feature, run-epic's backlog selection), deliver it to its other
+     bound sinks and record it in the run record under `## Pending MR
+     delivery`. This does not escalate. The run that opens the MR posts
+     every pending MR item from its own record, from the records of the
+     runs nested inside it, and from a parked run it resumed (with the runs
+     nested inside that one) as soon as the MR is open, before handing the
+     MR to review (build-feature right after it opens the MR in its step 5,
+     before its self-review; a pipeline's open-mr step), then marks each
+     item delivered in the record that holds it. Any item still pending
+     when this step runs, with its MR open, is posted now. When the
+     outermost run ends and no MR exists for the work an item is about
+     (run-epic's backlog selection, a standalone plan), mark that item "no
+     MR for this work; mr-comment delivery not applicable" instead of
+     escalating, even if nested runs opened MRs for their own work. A run
+     that parks its unit of work (step 3) has not ended it: its items stay
+     pending for the run that resumes the work and opens the MR. Once
+     the MR exists, a post that fails is a failed delivery as above. These
+     record updates (this run's record, and any nested record you marked
+     delivered) ride the step 4 commit when made before it; any made in
+     this step go in one more `chore(glados): record <workflow> run` commit
+     before step 6.
    - Reaching only the ledger is not itself a failure. `progress`, `decision`,
      and `observation` may be bound ledger-only by design, as may any outcome
      type in a project whose manifest confesses `visibility-acknowledged:
@@ -756,6 +876,9 @@ the record rather than omitting it.
      exactly the reason that produced it, and the run manufactures noise at
      the moment the team can least act on it.
 6. **Release** anything held: leases (when enabled) and other in-flight
-   markers — and delete `.glados/runs/current` unconditionally (the preamble
-   always sets it; a leftover marker makes the run-record guard hooks block
-   the next session).
+   markers. Then pop this run off the marker stack: remove this run's line
+   from `.glados/runs/stack`; if lines remain, write the last remaining line
+   into `.glados/runs/current` (the enclosing run is in flight again);
+   otherwise delete both `current` and `stack`. With no `stack` file, delete
+   `current`. Never leave a marker naming this finished run: a leftover
+   marker makes the run-record guard hooks block the next session.
