@@ -34,6 +34,9 @@ below. If you landed here without any context, the
 - [guides/pipelines.md](guides/pipelines.md) — your project's own
   workflows: declare an ordered list of GLaDOS's steps and your own under
   `pipelines:`, and run it with `run-pipeline`.
+- [guides/canon.md](guides/canon.md) — the reference works your team
+  follows: declare them under `canon:`, write a digest of each, and have
+  planning, speccing, verification and review cite their principles.
 - [../PLAYBOOK.md](../PLAYBOOK.md) — the team-adoption playbook: rolling
   GLaDOS out across a team, week by week.
 

@@ -2,9 +2,9 @@
 name: run-pipeline
 kind: core
 description: Run one of the project's own workflows, declared under pipelines in glados.yaml, step by step with every step tracked in the run record
-reads: [intent.status, manifest.branching, manifest.merge-authority, manifest.platform, manifest.pipelines, manifest.steps, manifest.decisions, run.active-personas, manifest.panel-personas, epic.integration-branch]
-writes: [work.base-sha]
-emits: [progress, verdict, escalation, decision]
+reads: [intent.status, manifest.branching, manifest.merge-authority, manifest.platform, manifest.pipelines, manifest.steps, manifest.decisions, run.active-personas, manifest.panel-personas, epic.integration-branch, manifest.canon, canon.digests]
+writes: [work.base-sha, observations.pending]
+emits: [progress, verdict, escalation, decision, observation]
 mutates: branch
 requires: [standards-gate]
 ---
@@ -156,6 +156,8 @@ the sequence does not list.
   `gate`: audit the latest artifact from a step its `audits` names, against
   the body, and write findings on the *Verdicts and finding severities*
   scale to `<record>.<id>.md`. A gate passes with no `blocking` finding.
+  While a project step runs, with its review and its gate, the consult point
+  for *Consulting canon* is the step's id.
 - **Modifiers** (`modifier:`, default `required`):
 
 | Modifier | Runs | On a `blocking` finding | Row ends |
@@ -238,12 +240,14 @@ the sequence does not list.
 - Known gap: build-feature can still be run directly, outside any pipeline.
   Its MR carries no step table, which is how the bypass shows.
 
-The shared rules for findings and loops, then the steps and reviews this run
-performs itself:
+The shared rules for findings, loops and canon, then the steps and reviews
+this run performs itself:
 
 <!-- glados:include vocabulary/verdicts.md -->
 
 <!-- glados:include vocabulary/loop-bounds.md -->
+
+<!-- glados:include vocabulary/canon.md -->
 
 <!-- glados:include vocabulary/shape.md -->
 

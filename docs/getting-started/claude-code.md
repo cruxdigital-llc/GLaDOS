@@ -54,7 +54,7 @@ your-project/
 │   └── glados.yaml.example, presets.yaml  # vendored template + phase presets
 └── product-knowledge/               # project-owned knowledge skeleton
     ├── PROJECT_STATUS.md
-    └── observations/ personas/ philosophies/ standards/ steps/
+    └── canon/ observations/ personas/ philosophies/ standards/ steps/
 ```
 
 Commit all of it.

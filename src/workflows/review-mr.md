@@ -2,9 +2,11 @@
 name: review-mr
 kind: core
 description: Run one adversarial multi-persona review pass over an open merge request
-reads: [review.reviewed-head, review.cycle, run.active-personas, manifest.merge-authority, manifest.platform]
+reads: [review.reviewed-head, review.cycle, run.active-personas, manifest.merge-authority, manifest.platform, manifest.canon, canon.digests]
 writes: [review.reviewed-head, review.cycle, review.verdicts]
-emits: [progress, verdict, escalation]
+# Canon conflicts a panelist reports are filed as an `observation` outcome
+# only: this run's record goes to glados/ledger, not the working branch.
+emits: [progress, verdict, escalation, observation]
 mutates: none
 requires: [mr-review-panel]
 ---
@@ -97,6 +99,11 @@ commits to it.
   one way a shorter re-review can cost more than it saves.
 - Make the brief self-contained — each panelist runs with no authoring
   context and must be able to judge from the brief alone.
+- Give each panelist the digest paths of the canon that applies at
+  `review-mr` and is seated on it, and the rules *Consulting canon* gives a
+  fresh agent, copied verbatim: paths, never summaries.
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 5. Run the panel
 - Seat the panel and spawn one fresh agent per panelist, in parallel; the
@@ -123,6 +130,9 @@ commits to it.
   scale calls for, naming where the project tracks that work; the run record
   keeps what was pooled. Advisories that remain and share a cause are
   consolidated by the synthesis in step 7.
+- **File the canon conflicts.** Each `canon-conflicts` entry a panelist
+  returns is an `observation` outcome, as *Consulting canon* sets out. It is
+  never a finding and never changes the tally.
 - The tally is the **last** step permitted to shorten the list, because it is
   the only one that reads every finding at once. Downstream — the synthesis,
   the decision, the render, the publish — a finding may be reworded and

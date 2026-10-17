@@ -14,7 +14,9 @@ the adversarial review loop, which runs later against the diff.
   empty, not skipped.
 - **Press.** Each persona presses the question the plan assigned it, when
   there is a plan, plus its own mandate: what does this artifact get wrong,
-  leave undefined, or make expensive later?
+  leave undefined, or make expensive later? The pass also presses each
+  principle of the canon that applies at this step, from the seat it names,
+  as *Consulting canon* sets out.
 - **Fold.** Fold fixes into the artifact. Note each declined objection in the
   artifact with a one-line reason.
 - **For a gate, the pass is the audit.** The personas check what the gate's

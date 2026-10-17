@@ -2,7 +2,7 @@
 name: review-codebase
 kind: core
 description: Audit an existing codebase read-only and report structure, health, and observed-standards candidates
-reads: [intent.status]
+reads: [intent.status, manifest.canon, canon.digests]
 writes: [observations.pending]
 emits: [progress, observation]
 mutates: none
@@ -35,6 +35,11 @@ observation candidates awaiting promotion.
   (linter/CI config) from merely habitual.
 - **Debt**: collect TODO/FIXME markers, dead code, and duplication significant
   enough to name in the report.
+- **Canon**: set the architecture and conventions beside the canon that
+  applies at `review-codebase`, as *Consulting canon* sets out, and report
+  each departure with its canon id and its consequence.
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 3. Health check
 | Dimension | Evidence to gather |
@@ -64,7 +69,8 @@ presence — a config nobody runs is not health.
 
 ### 6. Report
 - Assemble the findings report: architecture summary, the health table, drift
-  against the declared status, debt worth tracking, and the candidates raised.
+  against the declared status, canon departures, debt worth tracking, and the
+  candidates raised.
 - The report is this run's `progress` outcome. Recommend the natural next
   workflow (plan-feature when the map suggests a direction; retrospect when
   the project's history needs mining first), then stop — the caller decides.

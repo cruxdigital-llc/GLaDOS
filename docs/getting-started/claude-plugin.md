@@ -69,7 +69,8 @@ The plugin brings the *workflows*; each consuming repo still owns its state:
 - **`.glados/runs/`** — run records are committed to the repo the run
   happened in, never to the plugin.
 - **`product-knowledge/`** — the project's own standards, personas, status
-  file, and the bodies of its own pipeline steps (`product-knowledge/steps/`).
+  file, the bodies of its own pipeline steps (`product-knowledge/steps/`),
+  and the digests of its canon (`product-knowledge/canon/`).
 
 ## First run
 

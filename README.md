@@ -88,6 +88,12 @@ implement, verify order. Declare your own workflows under `pipelines:` in
 record whatever the order. See
 [docs/guides/pipelines.md](docs/guides/pipelines.md).
 
+If your team follows reference works (a book on architecture, say), declare
+them under `canon:` and write a short digest of each in your own words.
+Planning, speccing, verification and review then cite their principles by
+id, as advice unless a standard of yours adopts one. See
+[docs/guides/canon.md](docs/guides/canon.md).
+
 ## Where things land in your repo
 
 Everything is installed into your project workspace and committed to git:
@@ -108,6 +114,7 @@ your-project/
     ├── philosophies/            # high-level principles
     ├── personas/                # your own reviewer viewpoints (override shipped ones)
     ├── steps/                   # bodies of your own pipeline steps
+    ├── canon/                   # your digests of the reference works you follow
     └── observations/            # recurring patterns noticed, awaiting promotion
 ```
 
@@ -171,7 +178,8 @@ In increasing depth:
 2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
    runs.
 3. **[docs/guides/](docs/guides/)** — task-oriented guides, including your
-   own workflows ([pipelines.md](docs/guides/pipelines.md)), SDA
+   own workflows ([pipelines.md](docs/guides/pipelines.md)), canon
+   ([canon.md](docs/guides/canon.md)), SDA
    conformance (`sda: true` in `glados.yaml` — claims + work-unit log
    maintained by every run) and the Wheatley board; see also
    [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.

@@ -163,7 +163,9 @@ KNOWN_MANIFEST_KEYS = [
 # is live in glados.yaml.example (which is what the anti-inflation cap alone
 # would admit). `sda:` says how the repo coordinates; `pipelines:`/`steps:`
 # are the team's own process, and a preset that injected a step would add
-# work nobody on the team declared.
+# work nobody on the team declared. `canon:` is the team's choice of which
+# books it answers to; a preset that seated one would put a work in every
+# review that nobody on the team chose or summarized.
 EXPLICIT_ONLY_KEYS = {
     "sda": ("SDA conformance is a team declaration, not a phase default; "
             "remove it from the preset and set 'sda: true' explicitly in "
@@ -173,6 +175,9 @@ EXPLICIT_ONLY_KEYS = {
                   "them in glados.yaml"),
     "steps": ("project steps are the team's own declaration, not a phase "
               "default; remove it from the preset and declare them in "
+              "glados.yaml"),
+    "canon": ("canon is the team's own choice of reference works, not a "
+              "phase default; remove it from the preset and declare it in "
               "glados.yaml"),
 }
 
@@ -260,9 +265,53 @@ KEBAB_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # Where a project step's body lives, relative to the target repo.
 STEPS_DIR = "product-knowledge/steps"
 
-# Directories whose files gate agent runs, so CODEOWNERS should cover them as
-# it covers glados.yaml: doctor reports each one a project uses.
-GATING_DIRS = [STEPS_DIR + "/"]
+# ---- canon: the reference works a project holds as authoritative -----------
+#
+# `canon:` maps a kebab-case name to a citation (`source`), an optional `url`
+# and the repo-relative path of a DIGEST: the team's own summary, one
+# `## <principle-id>` section per principle. Compiled text
+# (vocabulary/canon.md) tells the agent to read the digest at fixed consult
+# points and never to fetch the URL during a run, so the compiler checks the
+# declaration and never reads, copies or hashes a digest. Lane 2, like
+# `pipelines:`: editing the block never makes the compile stale.
+#
+# The consult points: the workflows whose documents carry the fragment, plus
+# the shape step run-pipeline runs. A project step id is a consult point too
+# (check_canon adds the declared ones), because run-pipeline consults canon
+# while a project step runs. implement-feature is deliberately absent: it
+# builds what the spec says, and the spec already names the principles it
+# relies on.
+CANON_CONSULT_POINTS = ["plan-feature", "shape", "spec-feature",
+                        "verify-feature", "review-mr", "review-codebase",
+                        "brunch"]
+# What an entry with no `applies-to` / `seats` gets. review-codebase and
+# brunch are opt-in: an audit or a roundtable judging the whole codebase
+# against every canon entry by default would bury the findings that matter.
+CANON_DEFAULT_APPLIES_TO = ["plan-feature", "shape", "spec-feature",
+                            "verify-feature", "review-mr"]
+CANON_DEFAULT_SEATS = ["philosophy"]
+# Closed, like the pipeline keys: `applies-to` and `seats` route a principle
+# to the reviewers who apply it, so a misspelt `seat:` must never leave an
+# entry silently routed by default.
+CANON_ENTRY_KEYS = ["source", "url", "digest", "applies-to", "seats"]
+# The standing review lenses (vocabulary/panel-roster.md), by the names a
+# `seats:` list uses. The other seats are persona file stems.
+STANDING_LENSES = ["uat", "adversarial", "standards", "philosophy",
+                   "dead-code"]
+CANON_DIR = "product-knowledge/canon"
+PROJECT_PERSONAS_DIR = "product-knowledge/personas"
+# Doctor's digest checks, which the template and the steward pass state too.
+CANON_DIGEST_MAX_WORDS = 1000
+CANON_STALE_DAYS = 180
+
+# Directories whose files gate agent runs or weigh in reviews, so CODEOWNERS
+# should cover them as it covers glados.yaml: doctor reports each one a
+# project uses, with why it matters. A step body can loosen a gate as surely
+# as glados.yaml can; a digest decides what reviews hold a change to.
+GATING_DIRS = {
+    STEPS_DIR + "/": "the step files gate pipeline runs",
+    CANON_DIR + "/": "the canon digests weigh in reviews",
+}
 
 # AI Studio is a planning/review/spec surface: only advisory-safe cores get a
 # paste bundle. fix-bug ships as its plan half, "fix-bug-advisory".
@@ -309,20 +358,21 @@ PLUGIN_STUB_MARKER = "${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/"
 # relative to this file, never through ${CLAUDE_PLUGIN_ROOT}: that variable
 # is expanded in SKILL.md stubs, not in the compiled file the agent reads.
 #
-# The plugin compiles from the example, whose `pipelines:`/`steps:` blocks
-# are commented out, so it cannot compile a project's pipelines; the guard
-# names them among the keys the project's own manifest supplies at run time.
+# The plugin compiles from the example, whose `pipelines:`/`steps:`/`canon:`
+# blocks are commented out, so it cannot compile a project's pipelines or see
+# its canon; the guard names them among the keys the project's own manifest
+# supplies at run time.
 PLUGIN_BOOTSTRAP_GUARD = (
     "<!-- claude-plugin bootstrap guard — this artifact was compiled from\n"
     "     glados.yaml.example, not from the repo it runs in. -->\n"
     "**Bootstrap guard.** This workflow was compiled from `glados.yaml.example`,\n"
     "not this repo's manifest. Before step 1: if this repo has a `glados.yaml`,\n"
     "read it now — its `phase:`, decision rights, channels, merge authority,\n"
-    "params, and any project workflows and steps (`pipelines:`, `steps:`)\n"
-    "govern this run wherever they differ from the text below. If it has\n"
-    "no `glados.yaml`, copy `glados.yaml.example` to `glados.yaml` (or run\n"
-    "`/glados:init`) and set `phase:` before doing consequential work — do not\n"
-    "guess a phase.\n\n"
+    "params, any project workflows and steps (`pipelines:`, `steps:`) and\n"
+    "any canon (`canon:`) govern this run wherever they differ from the text\n"
+    "below. If it has no `glados.yaml`, copy `glados.yaml.example` to\n"
+    "`glados.yaml` (or run `/glados:init`) and set `phase:` before doing\n"
+    "consequential work — do not guess a phase.\n\n"
     "**Plugin paths.** This repo may have no `.glados/` directory. Three\n"
     "read-only files then come from the plugin's own copy at the plugin root\n"
     "(two levels above this file, the directory that holds\n"
@@ -832,6 +882,16 @@ class Source:
         keys = self.registry.get("keys") or {}
         return {k for k, v in keys.items() if isinstance(v, dict) and v.get("home") == "manifest"}
 
+    def human_written_keys(self) -> set[str]:
+        """Keys a person writes: every manifest key, plus a repo key marked
+        `writer: human` (the canon digests). Reading one never needs an
+        enabled workflow to write it: the digest readers do not depend on
+        steward, which also refreshes the digests, being enabled."""
+        keys = self.registry.get("keys") or {}
+        return self.manifest_keys() | {
+            k for k, v in keys.items()
+            if isinstance(v, dict) and v.get("writer") == "human"}
+
 
 def include_fragment(source: Source, rel: str, _stack: tuple, seen: set) -> str:
     if rel in _stack:
@@ -1060,9 +1120,11 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
     # declarations (EXPLICIT_ONLY_KEYS), read live by run-pipeline. The
     # compiler checks them (check_pipelines) and emits one shortcut command
     # per pipeline, but compiles none of their contents into a core.
+    # `canon:` too: read live at the consult points, checked by check_canon,
+    # never compiled (a digest's text never enters an installed file).
     for key in ("platform", "phase", "branching", "workflows", "sinks",
                 "visibility-acknowledged", "relaxation-acknowledged",
-                "pipelines", "steps"):
+                "pipelines", "steps", "canon"):
         if key in raw:
             r.values[key] = raw[key]
             r.provenance[key] = "explicit"
@@ -1123,6 +1185,8 @@ def structural_projection(raw: dict) -> dict:
     `when:`, `sequence:` and `step-options:` (and every `steps:` entry) stay
     live: run-pipeline reads them at run time, and editing them never makes
     the compile stale. Same present-keys rule: an absent block adds nothing.
+    `canon:` shapes no emitted file at all (no shim, no compiled text), so
+    nothing of it is projected.
     """
     proj = {key: raw[key] for key in STRUCTURAL_KEYS if key in raw}
     if "pipelines" in raw:
@@ -1338,7 +1402,8 @@ def run_type_checks(source: Source, comp: Compilation,
                               f"use one of {', '.join(sorted(outcome_types))}")
 
     # ---- (1) readers without writers ---------------------------------------
-    writers: set[str] = set(PREAMBLE_OWNED_WRITES) | source.manifest_keys()
+    writers: set[str] = (set(PREAMBLE_OWNED_WRITES)
+                         | source.human_written_keys())
     for u in all_units:
         writers.update(u["writes"])
     readers: dict[str, list[str]] = {}
@@ -1526,6 +1591,17 @@ def run_type_checks(source: Source, comp: Compilation,
     pc = check_pipelines(source, r, comp.enabled, target)
     errors.extend(pc.errors)
     for w in pc.warnings:
+        if w not in comp.warnings:
+            comp.warnings.append(w)
+
+    # ---- (10) canon ------------------------------------------------------------
+    # Lane 2 as well (read live at each consult point), but `applies-to` and
+    # `seats` route principles to reviewers, so a misspelt consult point or
+    # seat is an error wherever the compiler runs. A digest not written yet
+    # is only a warning: a team may declare an entry before writing it.
+    cc = check_canon(source, r, target)
+    errors.extend(cc.errors)
+    for w in cc.warnings:
         if w not in comp.warnings:
             comp.warnings.append(w)
 
@@ -2043,6 +2119,303 @@ def check_pipelines(source: Source, r: Resolved, enabled: list[str],
     return pc
 
 
+# ---- (10) canon: `canon:` ------------------------------------------------------
+#
+# The declaration is checked; the digests are not read (beyond whether the
+# file exists). Errors:
+#   - the block is a mapping keyed by kebab-case name; a list of `- name:`
+#     items is the commonest wrong shape and is named as such
+#   - an entry is a mapping of CANON_ENTRY_KEYS only, with `source` and
+#     `digest` required
+#   - `digest` is a repo-relative path that stays inside the repo, lexically
+#     and (target known) after symlinks resolve
+#   - `applies-to` names consult points: CANON_CONSULT_POINTS, or a step id
+#     declared under `steps:`
+#   - `seats` names standing lenses or personas: the library's, and (target
+#     known) the project's product-knowledge/personas/*.md. With no target a
+#     name that is neither a lens nor a library persona may be a project
+#     persona, so it is let through rather than guessed at.
+# Warnings (target known): the digest does not exist yet, or exists under a
+# name that differs in case.
+
+
+class CanonCheck:
+    """What check_canon found: fatal errors, warnings, and each entry
+    normalized (defaults applied), which the assembly report renders."""
+
+    def __init__(self):
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        # name -> {"source", "url", "digest", "applies-to", "seats",
+        #          "default-applies-to", "default-seats"}
+        self.entries: dict = {}
+
+
+def canon_digest_problem(digest):
+    """Why ``digest`` is not a safe repo-relative path, or None.
+
+    Lexical, so it holds before anything touches the filesystem: a URL or
+    other URI (`https:`, `file:`), an absolute path (POSIX, a drive letter,
+    a UNC share, a home directory) or a `..` that climbs above the repo root
+    is refused. Agents and doctor read the digest at this path, and a path
+    that leaves the repo would make them read a file no reviewer of the repo
+    can see."""
+    if not isinstance(digest, str) or not digest.strip():
+        return ("required — the digest's path relative to the repo root, "
+                "e.g. product-knowledge/canon/<name>.md")
+    p = digest.strip().replace("\\", "/")
+    # A scheme is two or more characters before the colon, so a drive letter
+    # (`C:`) keeps the absolute-path message below.
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]+:", p):
+        return (f"'{digest}' is a URL — the digest is a file in the repo "
+                f"(conventionally {CANON_DIR}/<name>.md); put the address "
+                f"under url:")
+    if p.startswith("/") or p.startswith("~") or re.match(r"^[A-Za-z]:", p):
+        return (f"'{digest}' is an absolute path — write it relative to the "
+                f"repo root, e.g. product-knowledge/canon/<name>.md")
+    depth = 0
+    for seg in p.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            depth -= 1
+            if depth < 0:
+                return (f"'{digest}' climbs out of the repo — a digest lives "
+                        f"in the repo, where every reviewer reads the same "
+                        f"text (conventionally {CANON_DIR}/<name>.md)")
+        else:
+            depth += 1
+    if depth == 0:
+        return f"'{digest}' names the repo root, not a file"
+    return None
+
+
+def _canon_list(entry: dict, key: str, where: str, what: str, err):
+    """The validated list under ``key``, or None when the key is absent or
+    the value is unusable (the error is already reported)."""
+    if key not in entry:
+        return None
+    value = entry[key]
+    if value is None or value == []:
+        err(f"{where}.{key}: empty — remove the key to take the default, or "
+            f"name at least one {what}")
+        return None
+    problem = _name_list_problem(value, what)
+    if problem:
+        err(f"{where}.{key}: {problem}")
+        return None
+    return list(dict.fromkeys(value))
+
+
+def check_canon(source: Source, r: Resolved,
+                target: Path | None = None) -> CanonCheck:
+    """Check the manifest's `canon:` block (C1). Never raises: every shape
+    problem becomes an error string naming the key and the fix, so `check
+    --report-only` and doctor keep their never-crash contracts. ``target``
+    enables the checks that read project files (project personas, whether
+    each digest exists)."""
+    cc = CanonCheck()
+    block = r.values.get("canon")
+    if block is None:
+        return cc
+    err = cc.errors.append
+    if isinstance(block, list):
+        err("canon: must be a mapping keyed by each work's name, not a list "
+            "— write 'clean-architecture:' with its keys indented under it, "
+            "with no leading '- '")
+        return cc
+    if not isinstance(block, dict):
+        err(f"canon: must be a mapping of name -> entry (source, digest, "
+            f"...) — got {_fmt(block)}")
+        return cc
+
+    steps = r.values.get("steps")
+    step_ids = ([s for s in steps if isinstance(s, str)]
+                if isinstance(steps, dict) else [])
+    pipelines = r.values.get("pipelines")
+    pipeline_names = set(pipelines) if isinstance(pipelines, dict) else set()
+    points = CANON_CONSULT_POINTS + [s for s in step_ids
+                                     if s not in CANON_CONSULT_POINTS]
+    points_text = ", ".join(CANON_CONSULT_POINTS) + (
+        f", or a step declared under steps: ({', '.join(step_ids)})"
+        if step_ids else ", or the id of a step declared under steps:")
+    library = sorted(p.stem for p in (source.src / "personas").glob("*.md"))
+    project = None
+    if target is not None:
+        pdir = target / PROJECT_PERSONAS_DIR
+        try:
+            project = (sorted(p.stem for p in pdir.iterdir()
+                              if p.is_file() and p.suffix == ".md")
+                       if pdir.is_dir() else [])
+        except OSError:
+            project = []
+
+    for name, entry in block.items():
+        where = f"canon.{name}"
+        if not isinstance(name, str) or not KEBAB_RE.match(name):
+            err(f"{where}: '{name}' is not kebab-case — use lowercase "
+                f"letters, digits and single hyphens (it is the first half "
+                f"of every citation, canon:<name>#<principle-id>)")
+        if not isinstance(entry, dict):
+            err(f"{where}: must be a mapping with source and digest — got "
+                f"{_fmt(entry)}")
+            continue
+        for key in entry:
+            if key not in CANON_ENTRY_KEYS:
+                err(f"{where}.{key}: unknown key — a canon entry takes "
+                    f"{', '.join(CANON_ENTRY_KEYS)} (these route principles "
+                    f"to reviewers, so a typo is an error, not a warning)")
+        src = entry.get("source")
+        if not isinstance(src, str) or not src.strip():
+            err(f"{where}.source: required — the citation a person would "
+                f"use to find the work, e.g. \"Robert C. Martin, Clean "
+                f"Architecture (2017)\" (double-quote it: ' #' starts a "
+                f"comment)")
+            src = None
+        url = entry.get("url")
+        if "url" in entry and (not isinstance(url, str) or not url.strip()):
+            err(f"{where}.url: must be the work's web address, or leave the "
+                f"key out — got {_fmt(url)}")
+            url = None
+        digest = entry.get("digest")
+        problem = canon_digest_problem(digest)
+        if problem:
+            err(f"{where}.digest: {problem}")
+            digest = None
+        else:
+            digest = digest.strip().replace("\\", "/")
+
+        applies = _canon_list(entry, "applies-to", where, "consult point", err)
+        for a in applies or []:
+            if a in points:
+                continue
+            if a in pipeline_names:
+                err(f"{where}.applies-to: '{a}' is a pipeline, not a consult "
+                    f"point — name the steps in it where the entry applies "
+                    f"({points_text})")
+            else:
+                err(f"{where}.applies-to: '{a}' is not a consult point — use "
+                    f"{points_text}")
+
+        seats = _canon_list(entry, "seats", where, "seat", err)
+        for s in seats or []:
+            if s in STANDING_LENSES or s in library:
+                continue
+            if project is None:
+                continue                # may be a project persona: unseen
+            if s in project:
+                continue
+            twin = next((p for p in project if p.lower() == s.lower()), None)
+            if twin:
+                err(f"{where}.seats: the persona file is "
+                    f"{PROJECT_PERSONAS_DIR}/{twin}.md, but the seat names "
+                    f"'{s}' — match the file's case (a case-sensitive "
+                    f"checkout, such as Linux CI, will not find it)")
+                continue
+            err(f"{where}.seats: '{s}' is neither a standing lens "
+                f"({', '.join(STANDING_LENSES)}) nor a persona — a library "
+                f"persona ({', '.join(library)}) or a project one at "
+                f"{PROJECT_PERSONAS_DIR}/{s}.md")
+
+        if digest and target is not None:
+            _check_canon_digest_file(cc, where, digest, target)
+
+        cc.entries[name] = {
+            "source": src, "url": url, "digest": digest,
+            "applies-to": applies or list(CANON_DEFAULT_APPLIES_TO),
+            "seats": seats or list(CANON_DEFAULT_SEATS),
+            "default-applies-to": "applies-to" not in entry,
+            "default-seats": "seats" not in entry,
+        }
+    return cc
+
+
+def _canon_digest_resolve_problem(target: Path, digest: str):
+    """(what is wrong, the fix) when the digest path, followed through any
+    symlinks or junctions, leaves the repo or cannot be followed at all;
+    None when it stays inside. Shared by check_canon and doctor, which both
+    promise never to raise."""
+    try:
+        inside = (target / digest).resolve().is_relative_to(target.resolve())
+    except RuntimeError:
+        # Python 3.10 to 3.12 raise RuntimeError on a symlink or junction
+        # loop (3.13 returns the path unresolved; the caller's is-a-file
+        # check catches it there).
+        return ("is a symlink loop", "point it at the digest file")
+    except (OSError, ValueError):
+        inside = False
+    if not inside:
+        return ("resolves outside the repo (through a symlink)",
+                "keep the digest itself in the repo")
+    return None
+
+
+def _check_canon_digest_file(cc: CanonCheck, where: str, digest: str,
+                             target: Path) -> None:
+    """Whether a lexically safe digest path is a readable file in the repo.
+    Missing is a warning (declare first, write next); a path that resolves
+    outside the repo through a symlink, loops, names a directory, or is a
+    link to nothing is an error; a path that matches only by case is a
+    warning."""
+    path = target / digest
+    problem = _canon_digest_resolve_problem(target, digest)
+    if problem:
+        cc.errors.append(f"{where}.digest: {digest} {problem[0]} — "
+                         f"{problem[1]}")
+        return
+    if path.is_dir():
+        cc.errors.append(f"{where}.digest: {digest} is a directory — name the "
+                         f"digest file, e.g. {CANON_DIR}/<name>.md")
+        return
+    # Walk the declared path one part at a time against the real directory
+    # listings, so a part that matches only by case is caught at any depth:
+    # a case-insensitive checkout (Windows, macOS) opens it silently, and a
+    # case-sensitive one (Linux CI) reports the digest missing.
+    parts: list[str] = []
+    for seg in digest.split("/"):       # lexically normal; never climbs out
+        if seg == "..":
+            if parts:
+                parts.pop()
+        elif seg not in ("", "."):
+            parts.append(seg)
+    on_disk, cur, case_only = [], target, False
+    for part in parts:
+        try:
+            listed = ({p.name for p in cur.iterdir()} if cur.is_dir()
+                      else set())
+        except OSError:
+            listed = set()
+        if part in listed:
+            name = part
+        else:
+            name = next((n for n in sorted(listed)
+                         if n.lower() == part.lower()), None)
+            if name is None:
+                on_disk = None
+                break
+            case_only = True
+        on_disk.append(name)
+        cur = cur / name
+    if on_disk is not None and case_only:
+        cc.warnings.append(f"{where}.digest: the path on disk is "
+                           f"{'/'.join(on_disk)}, but the entry names "
+                           f"{digest} — match the case (a case-sensitive "
+                           f"checkout, such as Linux CI, will not find it)")
+        return
+    if on_disk is not None:
+        if not path.is_file():
+            cc.errors.append(f"{where}.digest: {digest} is listed in its "
+                             f"directory but cannot be opened as a file (a "
+                             f"broken symlink, or a symlink loop) — point "
+                             f"it at the digest file")
+        return
+    cc.warnings.append(f"{where}.digest: {digest} does not exist yet — write "
+                       f"it from the CANON.md template "
+                       f"(.glados/src/templates/CANON.md, or "
+                       f"src/templates/CANON.md under the plugin root); "
+                       f"until then every consult point reports it missing")
+
+
 # =============================================================================
 # 7. ASSEMBLY REPORT
 # =============================================================================
@@ -2108,6 +2481,8 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
         out.append(f"| {name} | {vis} | {_fmt(declared_sinks.get(name) or {})} | "
                    f"(explicit) |")
     out.append("")
+
+    out.extend(_canon_report(source, comp))
 
     out.append(f"## RELAXED(phase) markers: {len(r.relaxed_phase)}")
     out.append("")
@@ -2223,6 +2598,38 @@ def _pipelines_report(source: Source, comp: Compilation) -> list[str]:
         out.extend(f"- {_fmt_cell(w)}" for w in pc.warnings)
     else:
         out.append("_None._")
+    out.append("")
+    return out
+
+
+def _canon_report(source: Source, comp: Compilation) -> list[str]:
+    """The `## Canon` section: one row per declared entry (name, source,
+    digest path, applies-to, seats, defaults marked). Declarations only: a
+    digest's content never enters the report, as it never enters compiled
+    text, and the report is presence-checked, so editing the block makes
+    nothing stale. Absent when the manifest declares no canon."""
+    block = comp.resolved.values.get("canon")
+    if not isinstance(block, dict) or not block:
+        return []
+    cc = check_canon(source, comp.resolved)
+    out = ["## Canon", "",
+           "Reference works declared under `canon:`. At each consult point "
+           "its `applies-to` names, an agent reads the entry's digest, never "
+           "its URL, and routes it to the seats named here. This section "
+           "records the declarations at install, never a digest's content.",
+           "",
+           "| Name | Source | Digest | Applies to | Seats |",
+           "|------|--------|--------|------------|-------|"]
+
+    def listed(values, default):
+        return ", ".join(values) + (" (default)" if default else "")
+
+    for name, e in cc.entries.items():
+        digest = f"`{e['digest']}`" if e["digest"] else "?"
+        out.append(f"| {name} | {_fmt_cell(_one_line(e['source'] or '?'))} | "
+                   f"{digest} | "
+                   f"{listed(e['applies-to'], e['default-applies-to'])} | "
+                   f"{listed(e['seats'], e['default-seats'])} |")
     out.append("")
     return out
 
@@ -2611,8 +3018,10 @@ compile hash each bundle was built against; it covers the structural keys only
 (phase, optimize-for, default-modules, workflows, disabled-workflows, sda, and
 the names and descriptions of any pipelines), so re-run `glados.py install
 --mode aistudio` whenever one of those changes or GLaDOS is upgraded. The live keys (channels, decisions, merge-authority,
-params, sinks, branching) are not baked in and do not move the hash: paste the
-current `glados.yaml` with the repo context so the model sees them.
+params, sinks, branching, canon) are not baked in and do not move the hash: paste the
+current `glados.yaml` with the repo context so the model sees them. When it
+declares `canon:`, paste the digest files the workflow consults too: the
+bundles tell the model to read a digest, never to fetch the work itself.
 """
 
 AISTUDIO_RUN_RECORD_SCHEMA = {
@@ -2900,11 +3309,13 @@ def vendor_plan(source: Source, manifest_hash: str, report: str) -> dict:
 def scaffold_product_knowledge(target: Path, source: Source) -> list[str]:
     """Create-only product-knowledge skeleton; NEVER deletes user content.
     `steps/` holds the bodies of the project's own pipeline steps
-    (glados.yaml `steps:`), one `<step-id>.md` each."""
+    (glados.yaml `steps:`), one `<step-id>.md` each; `canon/` holds the
+    digests of the works declared under `canon:` (src/templates/CANON.md is
+    the template, vendored under .glados/src/)."""
     created: list[str] = []
     pk = target / "product-knowledge"
     for sub in ("observations", "standards", "philosophies", "personas",
-                "steps"):
+                "steps", "canon"):
         d = pk / sub
         keep = d / ".gitkeep"
         if not keep.exists():
@@ -3654,7 +4065,7 @@ def cmd_doctor(args) -> int:
         print("  CODEOWNERS: none found — consider one covering glados.yaml"
               + "".join(f" and {g}" for g in gating)
               + " (agents propose phase changes; humans approve"
-              + ("; the step files gate pipeline runs" if gating else "")
+              + "".join(f"; {GATING_DIRS[g]}" for g in gating)
               + ")")
     else:
         try:
@@ -3669,8 +4080,8 @@ def cmd_doctor(args) -> int:
         for gdir in gating:
             print(f"  CODEOWNERS: {found} "
                   + (f"covers {gdir}" if _codeowners_cover(owners, gdir) else
-                     f"has no pattern found covering {gdir} — its files "
-                     f"gate pipeline runs; consider the same owners as "
+                     f"has no pattern found covering {gdir} — "
+                     f"{GATING_DIRS[gdir]}; consider the same owners as "
                      f"glados.yaml"))
 
     if manifest_path.exists():
@@ -3694,6 +4105,8 @@ def cmd_doctor(args) -> int:
                     print(f"  confession restated: {key}: {_fmt(raw[key])}")
             for line in _sda_doctor_lines(target, raw):
                 print(line)
+            for line in _canon_doctor_lines(target, raw):
+                print(line)
 
     print("glados doctor: informational only — never fails")
     return 0
@@ -3701,7 +4114,8 @@ def cmd_doctor(args) -> int:
 
 def _gating_dirs_in_use(target: Path, manifest_path: Path) -> list[str]:
     """GATING_DIRS entries this project uses: the manifest declares the
-    matching block, or the directory holds a markdown file. Never raises."""
+    matching block (`steps:`, `canon:`), or the directory holds a markdown
+    file. Never raises."""
     declared: set = set()
     try:
         if manifest_path.exists():
@@ -3855,6 +4269,101 @@ def _sda_doctor_lines(target: Path, raw: dict) -> list[str]:
                  + (f"{n_std} doc(s) present" if n_std
                     else "missing — re-run install"))
     return lines
+
+
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
+def _canon_doctor_lines(target: Path, raw: dict, today=None) -> list[str]:
+    """Informational canon status: per declared entry, whether its digest
+    exists, its age (`retrieved:` older than CANON_STALE_DAYS), its length
+    (over about CANON_DIGEST_MAX_WORDS words, frontmatter and HTML comments
+    left out, so the template's unfinished guidance comment does not count)
+    and whether it was drafted from recall. The digests are read here, and
+    only here, because doctor reports on the project's files; nothing it
+    reads is printed beyond these facts. Never raises."""
+    try:
+        block = raw.get("canon")
+        if block is None:
+            return ["  canon: none declared"]
+        if not isinstance(block, dict):
+            return ["  canon: INVALID — the block must be a mapping keyed by "
+                    "name (run check for details)"]
+        today = today or datetime.date.today()
+        lines = [f"  canon: {len(block)} "
+                 f"{'entry' if len(block) == 1 else 'entries'} declared — "
+                 f"digests:"]
+        for name, entry in block.items():
+            try:
+                status = _canon_digest_status(target, entry, today)
+            except Exception as exc:  # one bad digest never hides the rest
+                status = (f"could not inspect the digest "
+                          f"({type(exc).__name__}: {exc})")
+            lines.append(f"    - {name}: {status}")
+        return lines
+    except Exception as exc:  # deliberately broad: doctor never fails
+        return [f"  canon: could not inspect the digests "
+                f"({type(exc).__name__}: {exc})"]
+
+
+def _canon_digest_status(target: Path, entry, today) -> str:
+    digest = entry.get("digest") if isinstance(entry, dict) else None
+    if canon_digest_problem(digest):
+        return "no usable digest path (run check for details)"
+    rel = digest.strip().replace("\\", "/")
+    path = target / rel
+    problem = _canon_digest_resolve_problem(target, rel)
+    if problem:
+        return f"{rel} {problem[0]} (run check for details)"
+    if path.is_dir():
+        return f"{rel} is a directory (run check for details)"
+    if not path.is_file():
+        try:
+            listed = path.name in {p.name for p in path.parent.iterdir()}
+        except OSError:
+            listed = False
+        if listed:                      # a broken symlink, or a loop
+            return (f"{rel} cannot be opened as a file (run check for "
+                    f"details)")
+        return (f"{rel} missing — write it from the CANON.md template; every "
+                f"consult point reports it missing until then")
+    try:
+        text = read_text(path)
+    except Fatal as exc:
+        return f"{rel} cannot be read — {str(exc).splitlines()[0]}"
+    try:
+        fm, body = split_frontmatter(text, rel)
+    except Fatal as exc:
+        return f"{rel} has unreadable frontmatter — {str(exc).splitlines()[0]}"
+    fm = fm if isinstance(fm, dict) else {}
+    notes: list[str] = []
+    retrieved = fm.get("retrieved")
+    age = None
+    try:
+        age = (today - datetime.date.fromisoformat(str(retrieved))).days
+    except ValueError:
+        notes.append(f"no `retrieved:` date (YYYY-MM-DD) in its frontmatter"
+                     if retrieved is None else
+                     f"`retrieved: {retrieved}` is not a date (YYYY-MM-DD)")
+    if age is not None and age < 0:
+        notes.append(f"`retrieved: {retrieved}` is in the future — a typo "
+                     f"there hides the digest's age")
+    elif age is not None and age > CANON_STALE_DAYS:
+        notes.append(f"retrieved {retrieved}, {age} days ago (over "
+                     f"{CANON_STALE_DAYS}) — the steward pass re-fetches a "
+                     f"URL source; re-read a book and update the digest")
+    words = len(_HTML_COMMENT_RE.sub(" ", body).split())
+    if words > CANON_DIGEST_MAX_WORDS:
+        notes.append(f"{words} words (keep a digest under about "
+                     f"{CANON_DIGEST_MAX_WORDS:,}: the principles that change "
+                     f"decisions here, not a chapter-by-chapter summary)")
+    if fm.get("drafted-from") == "recall":
+        notes.append("drafted from recall — advisory only until a person "
+                     "checks it against the source and sets "
+                     "`drafted-from: source`")
+    if notes:
+        return f"{rel} — " + "; ".join(notes)
+    return f"{rel} ok (retrieved {retrieved}, {words} words)"
 
 
 def _ci_check_wired(target: Path) -> bool:

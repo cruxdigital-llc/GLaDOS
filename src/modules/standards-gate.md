@@ -52,10 +52,11 @@ against it. A standard the artifact adheres to produces no finding. A breached
 standard produces exactly one finding, classified on the single severity scale
 above by the standard's declared severity:
 
-| Standard severity | Finding    |
-|-------------------|------------|
-| `must`            | `blocking` |
-| `should` / `may`  | `advisory` |
+| Standard severity  | Finding    |
+|--------------------|------------|
+| `must`             | `blocking` |
+| `should` / `may`   | `advisory` |
+| canon, not adopted | `advisory` |
 
 A standard's `must`/`should`/`may` is authoring metadata about the standard;
 findings themselves take only the two tiers — no third tier exists at the

@@ -45,7 +45,7 @@ Two standing ceremonies — scheduled, recurring jobs — keep the project healt
 
 | Ceremony | Typical day | Produces |
 |---|---|---|
-| `steward` | Saturday | The housekeeping pass — condense old run records into a digest, refresh stale docs, promote pending observations, sanity-check the tests. **One cleanup MR.** |
+| `steward` | Saturday | The housekeeping pass — condense old run records into a digest, refresh stale docs and canon digests, promote pending observations, sanity-check the tests. **One cleanup MR.** |
 | `brunch` | Sunday | The codebase critique roundtable — an evidence pre-flight (actually run the thing), parallel persona reviewers, a moderator who ranks findings by impact against effort. **One surgical fix MR.** |
 
 (**Personas** are markdown files that give the reviewing agent a specific reviewer's viewpoint — security engineer, architect, QA, and so on. See [docs/personas.md](docs/personas.md).)
@@ -76,10 +76,12 @@ Every workflow run leaves exactly one committed record in `.glados/runs/` — wh
 
 When the team's process differs from that order (a refactor with no plan, a design that stops before code, an architecture review before the spec), declare it under `pipelines:` in `glados.yaml` and run it with `run-pipeline`. Have the same people own `glados.yaml` and `product-knowledge/steps/` in CODEOWNERS. See [docs/guides/pipelines.md](docs/guides/pipelines.md).
 
+When the team follows reference works (a book on architecture, a domain-modelling text, an internal paper), declare them under `canon:` and write a short digest of each in `product-knowledge/canon/`, in your own words. Planning, speccing, verification and review then cite its principles by id. A departure stays advisory until the team adopts the principle in a `must` standard, so start with the few principles that change real decisions, and adopt the ones the team will hold a merge to. Put `product-knowledge/canon/` under the same CODEOWNERS as `glados.yaml`. See [docs/guides/canon.md](docs/guides/canon.md).
+
 ### Weekly
 | Activity | Workflow | Purpose |
 |---|---|---|
-| Housekeeping | `steward` | Ledger digest, doc refresh, observation promotion — one cleanup MR |
+| Housekeeping | `steward` | Ledger digest, doc refresh, canon digest refresh, observation promotion — one cleanup MR |
 | Critique | `brunch` | Persona roundtable — one surgical fix MR |
 | Retrospect | `retrospect` | Human reflection; writes down observations and flags when your declared phase no longer matches reality |
 

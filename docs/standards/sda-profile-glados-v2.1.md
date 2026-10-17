@@ -153,11 +153,13 @@ no leases.
 
     <repo-root>/
     └── product-knowledge/
-        └── steps/                  # bodies of the project's own pipeline steps
+        ├── steps/                  # bodies of the project's own pipeline steps
+        └── canon/                  # digests of the works declared under canon:
 
-`product-knowledge/steps/` and the `pipelines:` and `steps:` blocks of
-`glados.yaml` are GLaDOS extensions (v2.0 section 10). SDA consumers ignore
-them; the step table in a `run-pipeline` record is what section 4 reads.
+`product-knowledge/steps/`, `product-knowledge/canon/` and the `pipelines:`,
+`steps:` and `canon:` blocks of `glados.yaml` are GLaDOS extensions (v2.0
+section 10). SDA consumers ignore them; the step table in a `run-pipeline`
+record is what section 4 reads.
 
 ## 7. Conformance checklist (amends v2.0 section 11)
 

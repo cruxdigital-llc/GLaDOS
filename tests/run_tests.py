@@ -2832,7 +2832,8 @@ class TestPipelines(unittest.TestCase):
     def test_plugin_guard_names_pipelines_and_the_toolchain(self):
         flat = " ".join(glados.PLUGIN_BOOTSTRAP_GUARD.split())
         self.assertIn("any project workflows and steps (`pipelines:`, "
-                      "`steps:`) govern this run", flat)
+                      "`steps:`) and any canon (`canon:`) govern this run",
+                      flat)
         self.assertIn("when `.glados/glados.py` is missing, the toolchain is "
                       "`bin/glados.py` there", flat)
         self.assertTrue((REPO / "bin" / "glados.py").is_file())
@@ -2933,6 +2934,803 @@ class TestPipelines(unittest.TestCase):
             data = (REPO / "src" / "workflows" / f"{name}.md").read_bytes()
             got = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
             self.assertEqual(got, want, f"src/workflows/{name}.md changed")
+
+
+class TestCanon(unittest.TestCase):
+    """Canon (Part C): `canon:` in glados.yaml, checked by check_canon
+    (in-process) and by install, check, validate and doctor (the real CLI).
+    The consult instruction lives in vocabulary/canon.md, included only by
+    the cores that consult canon; digests are project files the compiler
+    never copies."""
+
+    MINIMAL = TestPipelines.MINIMAL
+
+    CANON = (
+        "canon:\n"
+        "  clean-architecture:\n"
+        "    source: \"Robert C. Martin, Clean Architecture (2017)\"\n"
+        "    url: https://example.com/clean-architecture\n"
+        "    digest: product-knowledge/canon/clean-architecture.md\n"
+        "    applies-to: [plan-feature, spec-feature, review-mr]\n"
+        "    seats: [philosophy, architect]\n"
+        "  domain-driven-design:\n"
+        "    source: \"Eric Evans, Domain-Driven Design (2003)\"\n"
+        "    digest: product-knowledge/canon/domain-driven-design.md\n")
+
+    # A string that exists only inside a digest, so finding it anywhere the
+    # compiler wrote means digest content leaked into an installed file.
+    MARKER = "zebra-digest-marker-7731"
+
+    CONSULT_CORES = ["plan-feature", "spec-feature", "verify-feature",
+                     "review-mr", "review-codebase", "brunch", "run-pipeline"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = glados.Source(REPO)
+
+    # -- helpers -------------------------------------------------------------
+
+    def check(self, extra, target=None, phase="evolving"):
+        """check_canon over MINIMAL + ``extra``, in-process."""
+        raw = glados.parse_yaml(self.MINIMAL.format(phase=phase) + extra,
+                                "glados.yaml")
+        r = glados.resolve_manifest(raw, self.source.presets, "glados.yaml")
+        return glados.check_canon(self.source, r, target)
+
+    def assertError(self, cc, *needles):
+        joined = "\n".join(cc.errors)
+        for needle in needles:
+            self.assertIn(needle, joined, f"missing {needle!r} in:\n{joined}")
+
+    def entry(self, body, name="work"):
+        return (f"canon:\n  {name}:\n    source: \"A Work\"\n"
+                f"    digest: product-knowledge/canon/{name}.md\n" + body)
+
+    def digest(self, name, retrieved=None, drafted="source", words=40):
+        retrieved = retrieved or datetime.date.today().isoformat()
+        body = " ".join(["word"] * words)
+        return (f"---\ncanon: {name}\nversion: \"1\"\n"
+                f"retrieved: {retrieved}\ndrafted-from: {drafted}\n---\n\n"
+                f"# Work\n\n<!-- guidance that doctor does not count -->\n\n"
+                f"## dependency-rule\n\n{self.MARKER} {body}\n\n"
+                f"**Ask:** q?\n\n**Here, specifically:** here.\n")
+
+    def project(self, manifest=None, digests=("clean-architecture",
+                                              "domain-driven-design")):
+        t = make_target(manifest if manifest is not None
+                        else read(EXAMPLE) + "\n" + self.CANON)
+        for name in digests:
+            write(t / "product-knowledge" / "canon" / f"{name}.md",
+                  self.digest(name))
+        return t
+
+    # -- the declaration ---------------------------------------------------------
+
+    def test_valid_block_passes_with_defaults_applied(self):
+        cc = self.check(self.CANON)
+        self.assertEqual(cc.errors, [])
+        ca = cc.entries["clean-architecture"]
+        self.assertEqual(ca["applies-to"],
+                         ["plan-feature", "spec-feature", "review-mr"])
+        self.assertEqual(ca["seats"], ["philosophy", "architect"])
+        self.assertFalse(ca["default-applies-to"])
+        ddd = cc.entries["domain-driven-design"]
+        self.assertEqual(ddd["applies-to"], glados.CANON_DEFAULT_APPLIES_TO)
+        self.assertEqual(ddd["seats"], ["philosophy"])
+        self.assertTrue(ddd["default-seats"])
+        self.assertEqual(glados.CANON_DEFAULT_APPLIES_TO,
+                         ["plan-feature", "shape", "spec-feature",
+                          "verify-feature", "review-mr"])
+        self.assertEqual(glados.CANON_CONSULT_POINTS,
+                         glados.CANON_DEFAULT_APPLIES_TO
+                         + ["review-codebase", "brunch"])
+        # no block, no findings
+        self.assertEqual(self.check("").errors, [])
+        self.assertEqual(self.check("canon:\n").errors, [])
+
+    def test_shape_errors_are_named(self):
+        cases = [
+            (self.entry("    seat: [architect]\n"),
+             "canon.work.seat: unknown key"),
+            ("canon:\n  work:\n    digest: product-knowledge/canon/w.md\n",
+             "canon.work.source: required"),
+            ("canon:\n  work:\n    source: \"W\"\n",
+             "canon.work.digest: required"),
+            ("canon:\n  Clean_Arch:\n    source: \"W\"\n"
+             "    digest: product-knowledge/canon/w.md\n",
+             "'Clean_Arch' is not kebab-case"),
+            ("canon:\n  work: scalar\n",
+             "canon.work: must be a mapping with source and digest"),
+            ("canon: [a, b]\n", "not a list"),
+            ("canon: text\n", "canon: must be a mapping of name -> entry"),
+            (self.entry("    url: [a]\n"), "canon.work.url: must be"),
+        ]
+        for extra, needle in cases:
+            with self.subTest(needle=needle):
+                self.assertError(self.check(extra), needle)
+
+    def test_a_list_shaped_block_is_rejected(self):
+        """`- name: ...` items parse as a list of mappings (F6a), the
+        commonest wrong shape for a block keyed by name."""
+        cc = self.check("canon:\n  - clean-architecture:\n"
+                        "      source: \"W\"\n"
+                        "      digest: product-knowledge/canon/w.md\n")
+        self.assertError(cc, "canon: must be a mapping keyed by each work's "
+                             "name, not a list")
+
+    def test_digest_path_must_stay_in_the_repo(self):
+        for path in ("/etc/passwd", "C:/canon/w.md", "C:\\\\canon\\\\w.md",
+                     "~/canon/w.md", "../outside.md",
+                     "product-knowledge/../../outside.md",
+                     "https://example.com/w.md", "file:///etc/passwd"):
+            with self.subTest(path=path):
+                cc = self.check("canon:\n  work:\n    source: \"W\"\n"
+                                f"    digest: \"{path}\"\n")
+                self.assertTrue(any("canon.work.digest:" in e
+                                    for e in cc.errors), cc.errors)
+        # a URL is named as one, and a drive letter keeps its own message
+        for url in ("https://example.com/w.md", "file:///etc/passwd"):
+            self.assertIn("is a URL", glados.canon_digest_problem(url))
+            self.assertIn("put the address under url:",
+                          glados.canon_digest_problem(url))
+        self.assertIn("is an absolute path",
+                      glados.canon_digest_problem("C:/canon/w.md"))
+        self.assertEqual(glados.canon_digest_problem(
+            "product-knowledge/canon/../canon/w.md"), None)
+        self.assertIn("names the repo root",
+                      glados.canon_digest_problem("product-knowledge/.."))
+        # a directory is an error once the project is known
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        (t / "product-knowledge" / "canon" / "w.md").mkdir(parents=True)
+        cc = self.check(self.entry("").replace("work.md", "w.md"), target=t)
+        self.assertError(cc, "is a directory")
+
+    def dir_link(self, link, to):
+        """A directory symlink, or on Windows without the privilege a
+        junction, which needs none; skips when neither can be made."""
+        try:
+            os.symlink(to, link, target_is_directory=True)
+            return
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt":
+            proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link),
+                                   str(to)], capture_output=True)
+            if proc.returncode == 0:
+                return
+        self.skipTest("this platform makes neither symlinks nor junctions")
+
+    def test_digest_symlink_out_of_the_repo_is_rejected(self):
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        outside = tmpdir()
+        write(outside / "work.md", "secret\n")
+        link = t / "product-knowledge" / "canon" / "work.md"
+        link.parent.mkdir(parents=True)
+        try:
+            os.symlink(outside / "work.md", link)
+        except (OSError, NotImplementedError):
+            # no file symlinks here: link the canon directory itself
+            link.parent.rmdir()
+            self.dir_link(link.parent, outside)
+        self.assertTrue(link.is_file())
+        self.assertError(self.check(self.entry(""), target=t),
+                         "resolves outside the repo")
+        lines = glados._canon_doctor_lines(
+            t, {"canon": {"work": {"digest":
+                                   "product-knowledge/canon/work.md"}}})
+        self.assertIn("resolves outside the repo", lines[1])
+
+    def test_a_digest_symlink_loop_is_reported_never_raised(self):
+        """Python 3.10 to 3.12 raise RuntimeError resolving a loop; check
+        and doctor report it by name and keep going."""
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        canon = t / "product-knowledge" / "canon"
+        canon.mkdir(parents=True)
+        self.dir_link(canon / "loop", canon / "x")
+        self.dir_link(canon / "x", canon / "loop")
+        write(canon / "good.md", self.digest("good"))
+        self.assertEqual(install("direct", t)[0], 0)
+        manifest = ("canon:\n"
+                    "  loop:\n    source: \"L\"\n"
+                    "    digest: product-knowledge/canon/loop\n"
+                    "  good:\n    source: \"G\"\n"
+                    "    digest: product-knowledge/canon/good.md\n")
+        cc = self.check(manifest, target=t)
+        self.assertEqual(len(cc.errors), 1, cc.errors)
+        self.assertTrue(cc.errors[0].startswith(
+            "canon.loop.digest: product-knowledge/canon/loop"), cc.errors)
+        # 3.10-3.12 name the loop; 3.13 resolves no further, and the
+        # is-a-file check names it instead
+        self.assertTrue("symlink loop" in cc.errors[0], cc.errors)
+        lines = glados._canon_doctor_lines(
+            t, glados.parse_yaml(manifest, "glados.yaml"))
+        self.assertEqual(len(lines), 3, lines)
+        self.assertIn("- loop: product-knowledge/canon/loop", lines[1])
+        self.assertIn("(run check for details)", lines[1])
+        self.assertIn("- good: product-knowledge/canon/good.md ok", lines[2])
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + manifest)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("symlink loop", out)
+        self.assertNotIn("Traceback", out)
+        rc, out = run_cli("check", "--target", t, "--source", REPO,
+                          "--report-only")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_a_digest_path_that_matches_only_by_case_is_a_warning(self):
+        """At any depth: a case-insensitive checkout opens it silently, and
+        Linux CI would report it missing."""
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        write(t / "product-knowledge" / "canon" / "w.md", self.digest("w"))
+        for declared in ("product-knowledge/canon/W.md",
+                         "Product-Knowledge/Canon/w.md"):
+            with self.subTest(declared=declared):
+                cc = self.check("canon:\n  w:\n    source: \"W\"\n"
+                                f"    digest: {declared}\n", target=t)
+                self.assertEqual(cc.errors, [])
+                self.assertEqual(cc.warnings, [
+                    f"canon.w.digest: the path on disk is "
+                    f"product-knowledge/canon/w.md, but the entry names "
+                    f"{declared} — match the case (a case-sensitive "
+                    f"checkout, such as Linux CI, will not find it)"])
+        cc = self.check("canon:\n  w:\n    source: \"W\"\n"
+                        "    digest: product-knowledge/canon/w.md\n",
+                        target=t)
+        self.assertEqual((cc.errors, cc.warnings), ([], []))
+
+    def test_applies_to_names_consult_points_or_declared_steps(self):
+        for point in glados.CANON_CONSULT_POINTS:
+            with self.subTest(point=point):
+                self.assertEqual(self.check(self.entry(
+                    f"    applies-to: [{point}]\n")).errors, [])
+        cc = self.check(self.entry("    applies-to: [implement-feature]\n"))
+        self.assertError(cc, "'implement-feature' is not a consult point")
+        self.assertError(self.check(self.entry("    applies-to: []\n")),
+                         "canon.work.applies-to: empty")
+        self.assertError(self.check(self.entry(
+            "    applies-to:\n      - plan-feature: x\n")),
+            "item 1 is a mapping")
+        # a declared project step is a consult point; a pipeline is not
+        steps = TestPipelines.STEPS + TestPipelines.PIPELINES
+        self.assertEqual(self.check(steps + self.entry(
+            "    applies-to: [architecture-review, shape]\n")).errors, [])
+        cc = self.check(steps + self.entry(
+            "    applies-to: [backend-feature]\n"))
+        self.assertError(cc, "'backend-feature' is a pipeline, not a "
+                             "consult point")
+        # with no steps: declared, a step id is just unknown
+        self.assertError(self.check(self.entry(
+            "    applies-to: [architecture-review]\n")),
+            "'architecture-review' is not a consult point")
+
+    def test_seats_name_lenses_or_personas(self):
+        for seat in glados.STANDING_LENSES + ["architect", "data-modeler"]:
+            with self.subTest(seat=seat):
+                self.assertEqual(self.check(self.entry(
+                    f"    seats: [{seat}]\n")).errors, [])
+        self.assertError(self.check(self.entry("    seats: []\n")),
+                         "canon.work.seats: empty")
+        # with no project in view an unknown name may be a project persona
+        self.assertEqual(self.check(self.entry(
+            "    seats: [domain-expert]\n")).errors, [])
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        cc = self.check(self.entry("    seats: [domain-expert]\n"), target=t)
+        self.assertError(cc, "'domain-expert' is neither a standing lens")
+        write(t / "product-knowledge" / "personas" / "domain-expert.md",
+              "---\ntype: review\n---\n# Domain expert\n")
+        cc = self.check(self.entry("    seats: [domain-expert]\n"), target=t)
+        self.assertNotIn("domain-expert", "\n".join(cc.errors))
+        write(t / "product-knowledge" / "personas" / "Ops-Lead.md", "x\n")
+        cc = self.check(self.entry("    seats: [ops-lead]\n"), target=t)
+        self.assertError(cc, "match the file's case")
+
+    def test_a_missing_digest_is_a_warning_not_an_error(self):
+        t = self.project(digests=("clean-architecture",))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: canon.domain-driven-design.digest: "
+                      "product-knowledge/canon/domain-driven-design.md does "
+                      "not exist yet", out)
+        self.assertNotIn("canon.clean-architecture.digest", out)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("does not exist yet", out)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        # in-process: no target, no filesystem check
+        self.assertEqual(self.check(self.CANON).warnings, [])
+
+    def test_install_check_and_validate_reject_a_bad_block(self):
+        bad = self.CANON.replace("seats: [philosophy, architect]",
+                                 "seats: [philosophy, architekt]")
+        t = self.project(read(EXAMPLE) + "\n" + bad)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("canon.clean-architecture.seats: 'architekt' is "
+                      "neither a standing lens", out)
+        self.assertNotIn("Traceback", out)
+        self.assertFalse((t / ".glados").exists(), "nothing may be emitted")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("  - canon.clean-architecture.seats:", out)
+        # check --report-only and doctor never crash on any malformed shape
+        good = self.project()
+        self.assertEqual(install("direct", good)[0], 0)
+        for broken in ("canon: [a]\n", "canon:\n  w: 3\n",
+                       "canon:\n  - w:\n      digest: /x\n"):
+            with self.subTest(broken=broken):
+                write(good / "glados.yaml", read(EXAMPLE) + "\n" + broken)
+                rc, out = run_cli("check", "--target", good, "--source",
+                                  REPO, "--report-only")
+                self.assertEqual(rc, 0, out)
+                self.assertIn("canon", out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("doctor", "--target", good, "--source",
+                                  REPO)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_preset_setting_canon_rejected(self):
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        text = read(presets).replace(
+            "nascent:\n", "nascent:\n  canon:\n    x:\n      source: s\n", 1)
+        presets.write_text(text, encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("preset 'nascent' sets 'canon'", out)
+        self.assertIn("not a phase default", out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("canon", glados.EXPLICIT_ONLY_KEYS)
+        self.assertIn("canon", glados.KNOWN_MANIFEST_KEYS)
+        # the example keeps its block commented, so presets cannot set it
+        self.assertNotIn("canon", glados.load_manifest(EXAMPLE))
+
+    def test_example_block_validates(self):
+        """The commented canon: block in glados.yaml.example, uncommented,
+        is a valid declaration."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# canon:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        text = "\n".join(block) + "\n"
+        self.assertEqual(self.check(text).errors, [])
+        t = self.project(read(EXAMPLE) + "\n" + text,
+                         digests=("clean-architecture",))
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 warning(s)", out)
+
+    def test_guide_examples_parse_and_validate(self):
+        guide = read(REPO / "docs" / "guides" / "canon.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreaterEqual(len(blocks), 2)
+        for block in blocks:
+            glados.parse_yaml(block, "canon.md")
+        self.assertIn("canon:", blocks[0])
+        self.assertEqual(self.check(blocks[0]).errors, [])
+        t = self.project(read(EXAMPLE) + "\n" + blocks[0])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 warning(s)", out)
+
+    def test_registry_and_scaffold(self):
+        keys = self.source.registry["keys"]
+        self.assertEqual(keys["manifest.canon"]["home"], "manifest")
+        self.assertEqual(keys["canon.digests"]["home"],
+                         "repo:product-knowledge/canon/")
+        self.assertEqual(keys["canon.digests"]["writer"], "human")
+        self.assertIn("canon.digests", self.source.human_written_keys())
+        # people write the digests, so disabling steward (the one workflow
+        # that also writes them) never leaves their readers without a
+        # writer (the install still fails, on steward's other keys)
+        t = make_target(read(EXAMPLE).replace(
+            "disabled-workflows: []", "disabled-workflows: [steward]"))
+        rc, out = install("direct", t)
+        self.assertIn("no enabled writer", out)
+        self.assertNotIn("canon.digests", out)
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertTrue(
+            (t / "product-knowledge" / "canon" / ".gitkeep").exists())
+        # the template ships, with the frontmatter doctor and steward read
+        tmpl = read(REPO / "src" / "templates" / "CANON.md")
+        fm, body = glados.split_frontmatter(tmpl, "CANON.md")
+        self.assertEqual(set(fm), {"canon", "version", "retrieved",
+                                   "source-sha256", "drafted-from"})
+        # fails safe: a copy nobody edits never passes for a sourced digest
+        self.assertEqual(fm["drafted-from"], "recall")
+        self.assertIn("response body, byte for byte as", body)
+        self.assertIn("## <principle-id>", body)
+        self.assertIn("**Ask:**", body)
+        self.assertIn("**Here, specifically:**", body)
+        self.assertIn("Quote at most one sentence", body)
+        self.assertTrue(
+            (t / ".glados" / "src" / "templates" / "CANON.md").is_file())
+
+    # -- lane 2: never compiled, never hashed ------------------------------------
+
+    def test_canon_stays_out_of_the_hash_and_check_stays_current(self):
+        base = glados.parse_yaml(read(EXAMPLE), "glados.yaml")
+        with_canon = glados.parse_yaml(read(EXAMPLE) + "\n" + self.CANON,
+                                       "glados.yaml")
+        self.assertNotIn("canon", glados.structural_projection(with_canon))
+        self.assertEqual(glados.structural_hash(base),
+                         glados.structural_hash(with_canon))
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        gy = t / "glados.yaml"
+        for edit in (
+            lambda s: s.replace("applies-to: [plan-feature, spec-feature, "
+                                "review-mr]", "applies-to: [brunch]"),
+            lambda s: s + ("  refactoring:\n    source: \"Martin Fowler, "
+                           "Refactoring\"\n    digest: "
+                           "product-knowledge/canon/refactoring.md\n"),
+            lambda s: s[:s.index("\ncanon:\n") + 1],
+        ):
+            write(gy, edit(read(gy)))
+            rc, out = run_cli("check", "--target", t, "--source", REPO)
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("stale", out)
+        # a digest edit changes nothing the compiler wrote, either
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + self.CANON)
+        write(t / "product-knowledge" / "canon" / "clean-architecture.md",
+              self.digest("clean-architecture", words=900))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+
+    def test_no_canon_content_in_compiled_output(self):
+        """Neither a digest's text nor the block's own values are compiled:
+        the cores carry only how to consult canon. The report lists the
+        declarations and never a digest's content."""
+        for mode in ("direct", "claude", "pi"):
+            with self.subTest(mode=mode):
+                t = self.project()
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                for f in all_files(t):
+                    rel = f.relative_to(t).as_posix()
+                    if rel.startswith("product-knowledge/canon/") or \
+                            rel == "glados.yaml" or rel.startswith(".glados/src"):
+                        continue
+                    if f.suffix not in (".md", ".toml", ".json", ".yaml"):
+                        continue
+                    text = read(f)
+                    self.assertNotIn(self.MARKER, text, rel)
+                    if rel != ".glados/assembly-report.md":
+                        self.assertNotIn("Eric Evans", text, rel)
+                        self.assertNotIn("domain-driven-design", text, rel)
+
+    # -- where the fragment compiles ---------------------------------------------
+
+    def _assert_consult_cores_only(self, glados_dir):
+        for core in glados.CORES:
+            path = glados_dir / f"{core}.md"
+            if not path.exists():
+                continue
+            text = read(path)
+            with self.subTest(core=core):
+                full = text.count("## Consulting canon")
+                pointer = text.count("*(See **Consulting canon**")
+                if core in self.CONSULT_CORES:
+                    self.assertEqual(full, 1, f"{core}: one full copy")
+                    self.assertEqual(pointer, 0, f"{core}: no second route")
+                else:
+                    self.assertEqual(full + pointer, 0,
+                                     f"{core} is not a consult point")
+
+    def test_fragment_compiles_into_the_consult_points_only(self):
+        """Included in the bodies of the cores that consult canon, never
+        through a module: default-modules appends standards-gate and the
+        review panel to every core, so a module route would carry the
+        fragment into documents that never consult canon."""
+        self.assertEqual(sorted(self.CONSULT_CORES), sorted(
+            c for c in glados.CORES
+            if "vocabulary/canon.md" in self.source.cores[c]["body"]))
+        for m in glados.MODULES:
+            self.assertNotIn("vocabulary/canon.md",
+                             self.source.modules[m]["body"], m)
+        for phase in ("nascent", "production"):
+            with self.subTest(phase=phase):
+                t = make_target(self.MINIMAL.format(phase=phase))
+                rc, out = install("direct", t)
+                self.assertEqual(rc, 0, out)
+                self._assert_consult_cores_only(
+                    t / "product-knowledge" / "glados")
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self._assert_consult_cores_only(t / "product-knowledge" / "glados")
+        p = make_plugin_target()
+        self.assertEqual(install("claude-plugin", p)[0], 0)
+        self._assert_consult_cores_only(p / "compiled" / "claude-plugin")
+
+    def test_consult_points_declare_their_reads_and_observations(self):
+        """A core that consults canon reads manifest.canon, and one that
+        files canon conflicts emits `observation` (and writes the pending
+        observations unless its record goes to glados/ledger)."""
+        for core in self.CONSULT_CORES + ["steward"]:
+            unit = self.source.cores[core]
+            with self.subTest(core=core):
+                self.assertIn("manifest.canon", unit["reads"])
+                self.assertIn("canon.digests", unit["reads"])
+                if core != "steward":
+                    self.assertIn("observation", unit["emits"])
+                if core not in ("review-mr", "steward"):
+                    self.assertIn("observations.pending", unit["writes"])
+        self.assertNotIn("observations.pending",
+                         self.source.cores["review-mr"]["writes"])
+        self.assertIn("canon.digests", self.source.cores["steward"]["writes"])
+
+    def test_fragment_stays_lean_and_states_the_rules(self):
+        frag = read(REPO / "src" / "vocabulary" / "canon.md")
+        self.assertLessEqual(len(frag.split()), 460,
+                             "keep the consult instruction lean; "
+                             "explanation belongs in docs/guides/canon.md")
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        flat = " ".join(read(t / "product-knowledge" / "glados" /
+                             "plan-feature.md").split())
+        for rule in (
+            "If it has no `canon:` block, skip this section",
+            "Never fetch its `url` during a run",
+            "Never fill a principle in from memory",
+            "With no `applies-to`, it applies at `plan-feature`, `shape`, "
+            "`spec-feature`, `verify-feature` and `review-mr`",
+            "gets the digest paths for its seats, never a summary, and the "
+            "Weight, Recall drafts, Cite and Conflicts rules here, copied "
+            "verbatim",
+            "a decision the project recorded, its standards, its "
+            "philosophies, canon",
+            "is an `advisory` finding unless a `must` standard or a `core` "
+            "philosophy adopts the principle",
+            "the finding names its consequence",
+            "`drafted-from: recall`",
+            "`canon:<name>#<principle-id>`",
+            "the disagreement is an observation, not a finding",
+            "carries it in the outcome only",
+            "A fresh agent lists each conflict under **Canon conflicts** in "
+            "its output instead, and the workflow that spawned it files it",
+        ):
+            self.assertIn(rule, flat)
+
+    def test_consult_sites_and_routing_text(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        d = t / "product-knowledge" / "glados"
+
+        def core(name):
+            return " ".join(read(d / f"{name}.md").split())
+
+        self.assertIn("Check the approach against the canon that applies at "
+                      "`plan-feature`", core("plan-feature"))
+        self.assertIn("The pass also presses each principle of the canon "
+                      "that applies at `spec-feature`", core("spec-feature"))
+        self.assertIn("standards documents and canon digests (paths, not "
+                      "summaries", core("verify-feature"))
+        self.assertIn("| Canon digests | Only when this document has a "
+                      "*Consulting canon* section", core("verify-feature"))
+        self.assertIn("against each canon digest it lists",
+                      core("verify-feature"))
+        self.assertIn("Give each panelist the digest paths of the canon that "
+                      "applies at `review-mr`", core("review-mr"))
+        self.assertIn("**Canon**: set the architecture and conventions "
+                      "beside the canon", core("review-codebase"))
+        self.assertIn("routed to its seat", core("brunch"))
+        self.assertIn("brunch seats no standing lens, so an entry seated on a "
+                      "lens goes to every reviewer", core("brunch"))
+        self.assertIn("File each canon conflict a reviewer lists",
+                      core("brunch"))
+        rm = core("review-mr")
+        self.assertIn("and the rules *Consulting canon* gives a fresh agent, "
+                      "copied verbatim", rm)
+        self.assertIn("**File the canon conflicts.** Each `canon-conflicts` "
+                      "entry a panelist returns is an `observation` outcome",
+                      rm)
+        self.assertIn("When the brief lists canon digests, add "
+                      "`canon-conflicts`", rm)
+        self.assertIn("for a canon principle the canon rules it carries", rm)
+        vf = core("verify-feature")
+        self.assertIn("and the rules that section gives a fresh agent, copied "
+                      "verbatim", vf)
+        self.assertIn("Canon conflicts when the brief lists canon digests "
+                      "(canon id | what overrides it)", vf)
+        self.assertIn("File each canon conflict the evaluation lists", vf)
+        rp = core("run-pipeline")
+        self.assertIn("**Check the shape against canon.** The consult point "
+                      "is `shape`", rp)
+        self.assertIn("the consult point for *Consulting canon* is the "
+                      "step's id", rp)
+        self.assertIn("principle of the canon that applies at this step", rp)
+        self.assertIn("the digest of each entry that applies at the reviewed "
+                      "step, as *Consulting canon* sets out", rp)
+        self.assertIn("and the rules that section gives a fresh agent", rp)
+        self.assertIn("Canon conflicts when the brief lists canon digests", rp)
+        self.assertIn("File each canon conflict the review lists", rp)
+        # module wording rides everywhere, conditioned on the section
+        self.assertIn("| canon, not adopted | `advisory` |",
+                      core("implement-feature"))
+        self.assertIn("when the workflow consults canon, against the canon "
+                      "digests seated on this lens", core("run-epic"))
+        # steward refreshes; it is the one workflow that fetches
+        sw = core("steward")
+        self.assertIn("### 4. Refresh canon digests", sw)
+        self.assertIn("This is the one workflow that fetches a canon source",
+                      sw)
+        self.assertIn("Never make that change yourself", sw)
+        self.assertIn("### 8. Open the cleanup MR", sw)
+        self.assertIn("the suite result from step 6", sw)
+
+    # -- report, doctor, guard ---------------------------------------------------
+
+    def test_assembly_report_lists_declarations_only(self):
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("## Canon", report)
+        self.assertLess(report.index("## Sinks"), report.index("## Canon"))
+        self.assertLess(report.index("## Canon"),
+                        report.index("## RELAXED(phase)"))
+        self.assertIn("| clean-architecture | Robert C. Martin, Clean "
+                      "Architecture (2017) | "
+                      "`product-knowledge/canon/clean-architecture.md` | "
+                      "plan-feature, spec-feature, review-mr | "
+                      "philosophy, architect |", report)
+        self.assertIn("| domain-driven-design | Eric Evans, Domain-Driven "
+                      "Design (2003) | "
+                      "`product-knowledge/canon/domain-driven-design.md` | "
+                      "plan-feature, shape, spec-feature, verify-feature, "
+                      "review-mr (default) | philosophy (default) |", report)
+        self.assertNotIn(self.MARKER, report)
+        self.assertNotIn("example.com", report, "the URL is not reported")
+        # no block, no section, and a clean check
+        t2 = make_target()
+        self.assertEqual(install("direct", t2)[0], 0)
+        self.assertNotIn("## Canon", read(t2 / ".glados" / "assembly-report.md"))
+        rc, out = run_cli("check", "--target", t2, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("canon", out)
+
+    def test_doctor_reports_each_digest(self):
+        manifest = read(EXAMPLE) + "\n" + self.CANON + (
+            "  stale-book:\n    source: \"S\"\n"
+            "    digest: product-knowledge/canon/stale-book.md\n"
+            "  long-post:\n    source: \"L\"\n"
+            "    digest: product-knowledge/canon/long-post.md\n"
+            "  remembered:\n    source: \"R\"\n"
+            "    digest: product-knowledge/canon/remembered.md\n")
+        t = self.project(manifest, digests=("clean-architecture",))
+        old = (datetime.date.today() - datetime.timedelta(days=400)).isoformat()
+        canon = t / "product-knowledge" / "canon"
+        write(canon / "stale-book.md", self.digest("stale-book", retrieved=old))
+        write(canon / "long-post.md", self.digest("long-post", words=1200))
+        write(canon / "remembered.md",
+              self.digest("remembered", drafted="recall"))
+        self.assertEqual(install("direct", t)[0], 0)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("canon: 5 entries declared", out)
+        self.assertIn("- clean-architecture: product-knowledge/canon/"
+                      "clean-architecture.md ok (retrieved", out)
+        self.assertIn("- domain-driven-design: product-knowledge/canon/"
+                      "domain-driven-design.md missing", out)
+        self.assertIn(f"retrieved {old}, 400 days ago (over 180)", out)
+        self.assertIn("words (keep a digest under about 1,000", out)
+        self.assertIn("- remembered: product-knowledge/canon/remembered.md — "
+                      "drafted from recall", out)
+        self.assertNotIn(self.MARKER, out)
+        self.assertNotIn("Traceback", out)
+        # the guidance comment does not count toward the length: the
+        # fixture's body is 50 words, 58 with its comment
+        today = datetime.date.today().isoformat()
+        self.assertIn("- clean-architecture: product-knowledge/canon/"
+                      f"clean-architecture.md ok (retrieved {today}, 50 "
+                      "words)", out)
+        rc, out = run_cli("doctor", "--target", make_target(), "--source",
+                          REPO)
+        self.assertIn("canon: none declared", out)
+
+    def test_doctor_thresholds_and_odd_digests(self):
+        """In-process, on a fixed date: each limit at its boundary, and each
+        way a digest can be wrong reported on its own line."""
+        today = datetime.date(2026, 10, 17)
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        canon = t / "product-knowledge" / "canon"
+        # 200 words of guidance comment: counted, it would push w1000 over
+        comment = "<!-- " + " ".join(["guidance"] * 200) + " -->"
+
+        def body(words):
+            return "\n".join([comment, " ".join(["word"] * words), ""])
+
+        def fm(retrieved):
+            return (f"---\ncanon: x\nretrieved: {retrieved}\n"
+                    f"drafted-from: source\n---\n")
+
+        def days_ago(n):
+            return (today - datetime.timedelta(days=n)).isoformat()
+
+        write(canon / "d180.md", fm(days_ago(180)) + body(10))
+        write(canon / "d181.md", fm(days_ago(181)) + body(10))
+        write(canon / "w1000.md", fm(days_ago(1)) + body(1000))
+        write(canon / "w1001.md", fm(days_ago(1)) + body(1001))
+        write(canon / "future.md", fm("2027-12-01") + body(10))
+        write(canon / "not-a-date.md", fm("YYYY-MM-DD") + body(10))
+        write(canon / "no-date.md", "---\ncanon: x\n---\n" + body(10))
+        write(canon / "unterminated.md", "---\ncanon: x\n" + body(10))
+        (canon / "utf16.md").write_text(fm(days_ago(1)) + body(10),
+                                        encoding="utf-16")
+        (canon / "a-dir").mkdir()
+        names = ["d180", "d181", "w1000", "w1001", "future", "not-a-date",
+                 "no-date", "unterminated", "utf16", "a-dir"]
+        raw = {"canon": {n: {"source": "S", "digest":
+                             f"product-knowledge/canon/{n}"
+                             + ("" if n == "a-dir" else ".md")}
+                         for n in names}}
+        lines = glados._canon_doctor_lines(t, raw, today=today)
+        got = {l.split(":", 1)[0].strip(" -"): l for l in lines[1:]}
+        self.assertEqual(sorted(got), sorted(names), lines)
+        self.assertIn(f"d180.md ok (retrieved {days_ago(180)}, 10 words)",
+                      got["d180"])
+        self.assertIn("181 days ago (over 180)", got["d181"])
+        self.assertIn(f"w1000.md ok (retrieved {days_ago(1)}, 1000 words)",
+                      got["w1000"])
+        self.assertIn("1001 words (keep a digest under about 1,000",
+                      got["w1001"])
+        self.assertIn("`retrieved: 2027-12-01` is in the future",
+                      got["future"])
+        self.assertIn("`retrieved: YYYY-MM-DD` is not a date (YYYY-MM-DD)",
+                      got["not-a-date"])
+        self.assertIn("no `retrieved:` date (YYYY-MM-DD)", got["no-date"])
+        self.assertIn("unterminated.md has unreadable frontmatter — ",
+                      got["unterminated"])
+        self.assertIn("unterminated frontmatter", got["unterminated"])
+        self.assertIn("utf16.md cannot be read — ", got["utf16"])
+        self.assertIn("not valid UTF-8", got["utf16"])
+        self.assertIn("product-knowledge/canon/a-dir is a directory (run "
+                      "check for details)", got["a-dir"])
+        self.assertNotIn("missing", got["a-dir"])
+        # the template, copied unedited, reports its placeholder date and
+        # its safe default, recall
+        write(canon / "copied.md",
+              read(REPO / "src" / "templates" / "CANON.md"))
+        lines = glados._canon_doctor_lines(t, {"canon": {"copied": {
+            "digest": "product-knowledge/canon/copied.md"}}}, today=today)
+        self.assertIn("`retrieved: YYYY-MM-DD` is not a date", lines[1])
+        self.assertIn("drafted from recall", lines[1])
+        # a block that is not a mapping
+        self.assertEqual(glados._canon_doctor_lines(t, {"canon": ["a"]}),
+                         ["  canon: INVALID — the block must be a mapping "
+                          "keyed by name (run check for details)"])
+
+    def test_doctor_codeowners_covers_the_canon_dir(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertNotIn("product-knowledge/canon/", out,
+                         "no canon in use: nothing to report")
+        p = self.project()
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("CODEOWNERS: none found — consider one covering "
+                      "glados.yaml and product-knowledge/canon/", out)
+        self.assertIn("the canon digests weigh in reviews", out)
+        write(p / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("has no pattern found covering product-knowledge/canon/ "
+                      "— the canon digests weigh in reviews", out)
+        write(p / "CODEOWNERS",
+              "/glados.yaml @maintainers\n/product-knowledge/canon/ @m\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("covers product-knowledge/canon/", out)
+
+    def test_plugin_guard_names_canon(self):
+        flat = " ".join(glados.PLUGIN_BOOTSTRAP_GUARD.split())
+        self.assertIn("any canon (`canon:`) govern this run", flat)
 
 
 class TestReleaseHygiene(unittest.TestCase):

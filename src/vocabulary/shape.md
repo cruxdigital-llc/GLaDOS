@@ -40,6 +40,10 @@ Issues one invoice for a paid order. Follows `src/billing/receipts.py`.
   invariants, payloads and errors. When spec-feature runs after a shape, pass
   it the shape with the plan: the spec builds on the shape and states any
   departure, and its persona pass does not reopen settled shape decisions.
+- **Check the shape against canon.** The consult point is `shape`: read the
+  canon that applies, as *Consulting canon* sets out, and name in
+  Dependency direction, by canon id, each principle the shape relies on or
+  departs from.
 - **Gate the shape.** After the review its `review:` setting asks for, this is
   the standards gate's shape checkpoint: audit the shape against the
   project's standards tree, as *Standards gate* sets out, and hand on only a

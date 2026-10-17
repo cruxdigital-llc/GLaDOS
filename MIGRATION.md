@@ -451,3 +451,13 @@ look before you reinstall:
 `python .glados/glados.py validate --target .` (or the same command from a
 GLaDOS checkout, for a plugin-only repo) reports the second one without
 installing anything. The first is silent: check your list by hand.
+
+2.5 also adds `canon:`, the reference works a team follows (see
+[docs/guides/canon.md](docs/guides/canon.md)). It is optional and changes
+nothing until you declare it; install now creates an empty
+`product-knowledge/canon/`. Five of the workflows that consult canon
+(plan-feature, spec-feature, verify-feature, review-mr and run-pipeline) now
+also emit `observation`, for a canon conflict; review-codebase and brunch
+already did. Every preset binds it to the ledger, so
+only a manifest that sets `observation: []` under `channels:` needs a sink
+for it.

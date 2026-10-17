@@ -21,7 +21,7 @@ conversation:
 | What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
-| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies here. Paths, never summaries. |
+| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out (a lone reviewer holds every seat), and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
 | What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred: a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
 | Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
 
@@ -40,14 +40,16 @@ and what it is.
    context; do not ask for more.
 2. Read every file the brief names, directly.
 3. Check the artifact against what the brief says to check, through each
-   persona it seats, and against each standard it lists.
+   persona it seats, against each standard it lists, and against the
+   principles in each canon digest it lists, at the weight the brief gives.
 4. Run no tests and edit nothing.
 5. List every issue: what is wrong, where (file, and section or line), its
    severity per the vocabulary in the brief, and what would fix it.
 
 Write your review to <record>.<id>.review.md with sections: Checks
 (item | met/not met | notes), Issues (numbered; location, severity, what
-would fix it), and Result, exactly one of:
+would fix it), Canon conflicts when the brief lists canon digests (canon
+id | what overrides it), and Result, exactly one of:
 PASS: no blocking issue found.
 FAIL: list the blocking issues.
 ```
@@ -60,6 +62,8 @@ FAIL: list the blocking issues.
 - Each cycle spawns a **new** reviewer from a freshly written brief. Never
   reuse, continue or negotiate with an earlier one: fix the artifact, not the
   review. Cycles count against the step's bound, `params.pipeline.max-cycles`.
+- File each canon conflict the review lists, as *Consulting canon* sets
+  out. A conflict is never a finding and never fails the review.
 - Record the brief and review paths in the step's row. The result feeds the
   step table and, for a gate, its pass or fail. It never becomes a `verdict`
   outcome.

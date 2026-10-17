@@ -60,6 +60,12 @@ team states policy. Its load-bearing keys:
   own workflows, ordered lists of GLaDOS's steps and steps the project
   writes, run by the `run-pipeline` workflow. See
   [guides/pipelines.md](guides/pipelines.md).
+- **`canon:`** — explicit-only, optional: the reference works the team
+  holds as authoritative (a book, a paper, a post), each with a digest the
+  team writes in `product-knowledge/canon/`. Planning, speccing,
+  verification and review read the digests and cite principles as
+  `canon:<name>#<principle-id>`; a departure is advisory unless a standard
+  adopts the principle. See [guides/canon.md](guides/canon.md).
 
 Workflow text never states any of these; it reads the keys at run time. Two
 workflows therefore cannot contradict each other about who merges — the
@@ -132,7 +138,7 @@ changes instantly?
   behavior on the very next run. Example: rerouting bug reports from issues
   to MR comments is a lane-2 edit — no reinstall.
 - **Lane 3 — referenced on demand.** Bulky optional files: personas,
-  standards documents. Drop a file in the right directory, name it in the
+  standards documents, canon digests. Drop a file in the right directory, name it in the
   manifest, and the next run picks it up.
 
 **Project workflows are lane 2 by design, a deliberate exception.** The v2
@@ -148,13 +154,21 @@ install, at `check`, and in `glados.py validate`. Only each pipeline's name
 and description are structural, because they name a shortcut command. See
 [guides/pipelines.md](guides/pipelines.md).
 
+**Canon is lane 2 too, with lane-3 digests.** The `canon:` block is read
+live at each consult point, and the digests it names are files the agent
+reads on demand, never fetched from the web during a run. What is compiled is
+only how to consult them: read the digest, route it to its seats, weigh it
+below the project's own decisions, standards and philosophies. The compiler
+checks the block wherever it runs, and nothing from it or a digest enters a
+compiled file. See [guides/canon.md](guides/canon.md).
+
 Only the structural keys feed the manifest hash stamped into compiled output:
 `phase`, `optimize-for`, `default-modules`, `workflows`, `disabled-workflows`,
 `sda`, and the names and descriptions of `pipelines:`. `glados.py check`
 reports a stale compile when one of them changed after the last install,
 i.e. when a recompile is due; a lane-2 edit (a pipeline's sequence or step
-options included) never makes the compile stale, and comments or
-reformatting change nothing.
+options, or the `canon:` block, included) never makes the compile stale, and
+comments or reformatting change nothing.
 `check` still type-checks every value, lane 2 included, so a lane-2 edit
 fails it only when the new value is itself invalid: an undeclared sink, a
 relaxation nobody confessed, a misspelt decision class. `python

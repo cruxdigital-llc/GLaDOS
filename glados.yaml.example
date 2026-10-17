@@ -5,8 +5,8 @@
 # behavior on the next run, with no reinstall, and never makes the compile
 # stale (`glados.py check` still type-checks their values, so an undeclared
 # sink or an unconfessed relaxation fails it). Project workflows (pipelines,
-# steps) are live too, except each pipeline's name and description, which
-# name a shortcut command. Structural keys (phase, optimize-for,
+# steps) and canon are live too, except each pipeline's name and description,
+# which name a shortcut command. Structural keys (phase, optimize-for,
 # default-modules, workflows, disabled-workflows, sda, and those pipeline
 # names and descriptions) take effect at `glados.py install`, which stamps a
 # hash of them alone into the compiled output; `glados.py check` and
@@ -160,6 +160,27 @@ params:
 #       architecture-review:
 #         review: fresh-agent      # none | in-context | fresh-agent
 #         checkpoint: none         # none | record | human
+
+# Canon (lane 2, explicit-only: no phase preset sets it): the reference works
+# the team holds as authoritative. Each entry names a digest, the team's own
+# summary in the repo with one `## <principle-id>` section per principle
+# (start from .glados/src/templates/CANON.md, or src/templates/CANON.md
+# under the plugin root). Workflows read the digest at their consult points
+# and never fetch the url during a run; the steward pass refreshes digests
+# from it. A departure from canon is advisory unless
+# a `must` standard or `core` philosophy adopts the principle; findings cite
+# canon:<name>#<principle-id>. Double-quote `source` (a space then # starts
+# a comment). See docs/guides/canon.md. Example (uncomment to use):
+# canon:
+#   clean-architecture:
+#     source: "Robert C. Martin, The Clean Architecture (blog post, 2012)"
+#     url: https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html
+#     digest: product-knowledge/canon/clean-architecture.md
+#     # Consult points; default [plan-feature, shape, spec-feature,
+#     # verify-feature, review-mr]. A list replaces the default: to add
+#     # review-codebase, brunch or a step id, list the defaults you keep too.
+#     applies-to: [plan-feature, shape, spec-feature, review-mr]
+#     seats: [philosophy, architect]  # lenses or personas; replaces [philosophy]
 
 # SDA (Structured Development Artifacts) conformance — EXPLICIT-ONLY, and a
 # team declaration: phase presets may never set it. When true, install

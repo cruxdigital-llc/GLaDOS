@@ -110,7 +110,9 @@ install whenever a structural key changes (`phase`, `optimize-for`,
 `default-modules`, `workflows`, `disabled-workflows`, `sda`, and pipeline
 names and descriptions; `MANIFEST.md` records the fingerprint of those keys
 only). The live keys (`channels`,
-`decisions`, `merge-authority`, `params`, `sinks`, `branching`) are not baked
-into the bundle, so paste your current `glados.yaml` with the repo context;
-and pasting proprietary code into free-tier AI Studio may
-expose it to product-improvement use — check your tier's data policy first.
+`decisions`, `merge-authority`, `params`, `sinks`, `branching`, `canon`) are
+not baked into the bundle, so paste your current `glados.yaml` with the repo
+context, and when it declares `canon:`, the digest files the workflow
+consults (the model cannot open them itself); and pasting proprietary code
+into free-tier AI Studio may expose it to product-improvement use — check
+your tier's data policy first.

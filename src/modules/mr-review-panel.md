@@ -78,7 +78,8 @@ Your job is to find real problems, not to confirm success.
    the fix costs where that is not obviously small, and say you have not
    looked rather than implying it is cheap.
 7. Classify each finding and choose your verdict using ONLY the severity
-   scale, verdict words, and composition rules in the brief.
+   scale, verdict words, and composition rules in the brief, and for a
+   canon principle the canon rules it carries.
 8. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
@@ -87,6 +88,8 @@ Your job is to find real problems, not to confirm success.
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.
+   When the brief lists canon digests, add `canon-conflicts`: each canon
+   conflict, by canon id and what overrides it (an empty list when none).
 ```
 
 The `root-cause` line is a hypothesis from one lens, not a verdict. It binds

@@ -28,6 +28,11 @@ Bootstrap the GLaDOS framework in the current project directory.
      with no frontmatter); the steps and pipelines themselves are declared
      under `steps:` and `pipelines:` in `glados.yaml` (commented examples in
      the template; see `${CLAUDE_PLUGIN_ROOT}/docs/guides/pipelines.md`)
+   - `product-knowledge/canon/` — create empty directory. It holds the
+     digest of each reference work the team declares under `canon:` in
+     `glados.yaml`: the team's own summary, written from
+     `${CLAUDE_PLUGIN_ROOT}/src/templates/CANON.md` (commented example in the
+     template; see `${CLAUDE_PLUGIN_ROOT}/docs/guides/canon.md`)
    - `product-knowledge/observations/` — create directory with:
      - `observed-standards.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/OBSERVED_STANDARDS.md`
      - `observed-philosophies.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/OBSERVED_PHILOSOPHIES.md`
@@ -56,7 +61,9 @@ Bootstrap the GLaDOS framework in the current project directory.
    their own workflows, point them at the commented `steps:` and
    `pipelines:` blocks in `glados.yaml`, and at checking them with
    `python ${CLAUDE_PLUGIN_ROOT}/bin/glados.py validate --target .`; the
-   plugin runs one with `/glados:run-pipeline <name> <brief>`. Note that a full
+   plugin runs one with `/glados:run-pipeline <name> <brief>`. If the team
+   follows reference works (a book, a paper, a post), point them at the
+   commented `canon:` block; the same validate command checks it. Note that a full
    install — `python bin/glados.py install --mode claude --target
    /path/to/your/project`, run from a GLaDOS checkout — compiles the
    workflows against `glados.yaml` and vendors the persona library, guard

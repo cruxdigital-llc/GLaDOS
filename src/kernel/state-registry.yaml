@@ -14,7 +14,10 @@
 #
 # Keys with home: manifest list `writer: human` — the compiler treats them as
 # always-written (the manifest schema requires them), so reading them never
-# fails the check; WRITING them from a workflow is forbidden.
+# fails the check; WRITING them from a workflow is forbidden. A repo key may
+# list `writer: human` too, when people write it: reading it then never fails
+# the check either, and a workflow that also writes it declares the write
+# (canon.digests, which steward refreshes).
 
 keys:
   run.record:
@@ -76,9 +79,23 @@ keys:
   observations.pending:
     home: "repo:product-knowledge/observations/"
     doc: >
-      Observed-standard / observed-philosophy candidates awaiting promotion.
-      Written by retrospect, review-codebase, and brunch; read and cleared
-      (which is a write) by steward.
+      Observed-standard / observed-philosophy candidates awaiting promotion,
+      and canon conflicts (a canon principle a recorded decision, a standard
+      or a philosophy overrides). Written by retrospect, review-codebase and
+      brunch, and by the workflows that consult canon (plan-feature,
+      spec-feature, verify-feature, run-pipeline); read and cleared (which
+      is a write) by steward.
+  canon.digests:
+    home: "repo:product-knowledge/canon/"
+    writer: human
+    doc: >
+      The canon digests: one file per entry under manifest key `canon`, at
+      the entry's `digest:` path (conventionally
+      product-knowledge/canon/<name>.md). Written by people from the
+      CANON.md template, and refreshed by steward's canon step inside its
+      cleanup MR; read at each consult point (plan-feature, spec-feature,
+      verify-feature, review-mr, review-codebase, brunch, run-pipeline),
+      whose fresh agents get the paths. Never compiled.
   standards.index:
     home: "repo:product-knowledge/standards/"
     doc: >
@@ -180,6 +197,17 @@ keys:
       kind (produce | gate | change), stage, and what each produces or
       audits. Each step's body lives at product-knowledge/steps/<id>.md with
       no frontmatter. Read live by run-pipeline. Explicit-only.
+  manifest.canon:
+    home: manifest
+    writer: human
+    doc: >
+      The reference works the project holds as authoritative (glados.yaml
+      `canon:`): per entry a citation, an optional URL, the repo-relative
+      path of its digest (conventionally product-knowledge/canon/<name>.md),
+      the consult points it applies to and the seats that apply it. Read
+      live at each consult point, which reads the digest and never fetches
+      the URL; steward's refresh step is the one reader that fetches.
+      Nothing of it is compiled or hashed. Explicit-only.
 
 # Outcome types (emitted through channels; a type emitted by an enabled core
 # with zero sinks bound in manifest.channels is an install error):

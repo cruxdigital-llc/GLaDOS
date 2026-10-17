@@ -46,7 +46,7 @@ your-project/
 │   │   ├── fix-bug.md               #   retired v1 names to the current file,
 │   │   └── ...                      #   plus a pointer per declared pipeline
 │   ├── PROJECT_STATUS.md            # project-owned knowledge skeleton
-│   └── observations/ personas/ philosophies/ standards/ steps/
+│   └── canon/ observations/ personas/ philosophies/ standards/ steps/
 └── .glados/                         # committed support folder: vendored
     ├── glados.py                    #   installer/checker, workflow sources,
     ├── src/  ci/  hooks/  personas/ #   CI templates, guard scripts, personas

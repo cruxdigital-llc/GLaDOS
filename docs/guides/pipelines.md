@@ -94,6 +94,11 @@ product-knowledge/standards/layering.md
 GLaDOS owns everything else about the step: the step table, the severity
 scale, the revise bound, and where results go. A body cannot loosen a gate.
 
+A step can consult the project's canon: name its id in a canon entry's
+`applies-to`, or cite a principle (`canon:<name>#<principle-id>`) under
+*References*, and the step, its review and its gate read that digest. See
+[canon.md](canon.md).
+
 ## Declaring pipelines
 
 ```yaml

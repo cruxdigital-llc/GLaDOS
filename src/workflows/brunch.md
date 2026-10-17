@@ -2,7 +2,7 @@
 name: brunch
 kind: core
 description: Run the codebase critique roundtable and ship one surgical fix MR
-reads: [run.active-personas, manifest.panel-personas, manifest.branching, manifest.merge-authority, manifest.platform]
+reads: [run.active-personas, manifest.panel-personas, manifest.branching, manifest.merge-authority, manifest.platform, manifest.canon, canon.digests]
 writes: [observations.pending, work.base-sha]
 emits: [progress, verdict, bug, observation, escalation]
 mutates: branch
@@ -57,10 +57,16 @@ composition rules below, never by silently dropping the seat.
 
 Each reviewer, independently and in parallel:
 - loads its persona file as its role, with the persona's Tool Bias in force;
-- receives the same evidence bundle and review window;
+- receives the same evidence bundle and review window, plus the digest
+  paths of the canon that applies at `brunch` and is routed to its seat,
+  and the rules *Consulting canon* gives a fresh agent, copied verbatim
+  (brunch seats no standing lens, so an entry seated on a lens goes to
+  every reviewer);
 - writes findings in its persona's Finding Format, severities per below;
 - may disagree with the others — reviewers never coordinate; the moderator
   resolves conflicts.
+
+<!-- glados:include vocabulary/canon.md -->
 
 <!-- glados:include vocabulary/verdicts.md -->
 
@@ -79,6 +85,8 @@ Fix Now selection rules, and the ticket-hygiene waterfall
 - The discard-classification breakdown (sub-category counts with one-line
   reasons) is persona-calibration signal: append it to the pending
   observations (`observations.pending`); this produces an `observation` outcome.
+- File each canon conflict a reviewer lists, as *Consulting canon* sets out.
+  The moderator never classifies one as a finding.
 
 ### 5. Execute the fix
 - Resolve `branching.feature` from `glados.yaml`; cut the fix branch from the

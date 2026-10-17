@@ -35,6 +35,7 @@ Single-source rule partials, inlined where a core includes them via
 - `branch-naming.md` — branch names and MR targets resolve from `glados.yaml` → `branching:`.
 - `shape.md`, `open-mr.md`, `self-review.md` — the library steps `run-pipeline` runs itself (the shape step, opening the MR, the self-review).
 - `persona-pass.md`, `design-review.md` — the two ways `run-pipeline` reviews a step's artifact: an in-context persona pass, or a fresh agent with no memory of writing it.
+- `canon.md` — how a consult point reads the project's canon (`canon:` in `glados.yaml`): the digest, never the URL; seats; weight below decisions, standards and philosophies; the citation form. Included only by the cores that consult canon: plan-feature, spec-feature, verify-feature, review-mr, review-codebase, brunch and run-pipeline.
 
 ## `src/workflows/`
 
@@ -65,7 +66,9 @@ Boilerplate the install scaffolds — `PROJECT_STATUS.md` always; `CLAIMS.md`
 and `SPEC_LOG.md` when the manifest sets `sda: true` (create-only; see
 [guides/sda.md](guides/sda.md)) — plus what the plugin `init` skill copies on
 demand (`SDA_ROADMAP.md` as an optional starter, the two `OBSERVED_*`
-observation stubs).
+observation stubs), and `CANON.md`, the template a team copies into
+`product-knowledge/canon/` for each work it declares under `canon:` (see
+[guides/canon.md](guides/canon.md)).
 
 ## Other top-level directories
 
