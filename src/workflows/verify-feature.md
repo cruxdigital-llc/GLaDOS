@@ -23,11 +23,12 @@ surfaces is applied by the implementing context, then re-verified.
 ### 1. Assemble the evaluation brief
 Build a self-contained brief for an agent that knows nothing about how the
 code was written: what was requested, what was agreed (acceptance criteria in
-the spec's own words), the changed-file list, the commands to test, lint, and
-run the app, the applicable standards documents and canon digests (paths, not
-summaries; canon as *Consulting canon* sets out for `verify-feature`), and
-the review personas to consult. The brief plus the repo is the evaluator's
-entire world — anything the verdict should rest on must be in one of them.
+their own words, each with its source), the changed-file list, the shape's
+path when the run has one, the commands to test, lint, and run the app, the
+applicable standards documents and canon digests (paths, not summaries; canon
+as *Consulting canon* sets out for `verify-feature`), and the review personas
+to consult. The brief plus the repo is the evaluator's entire world —
+anything the verdict should rest on must be in one of them.
 
 <!-- glados:include vocabulary/canon.md -->
 

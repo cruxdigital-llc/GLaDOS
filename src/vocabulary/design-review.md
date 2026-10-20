@@ -18,12 +18,14 @@ conversation:
 
 | Section | Contents |
 |---|---|
-| What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`). |
+| What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
 | Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out (a lone reviewer holds every seat), and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
-| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred: a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
-| Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
+| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
+
+<!-- glados:include vocabulary/review-inputs.md -->
 
 <!-- glados:include vocabulary/verdicts.md -->
 

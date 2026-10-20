@@ -94,6 +94,12 @@ resolve its class from the manifest and apply it:
 | `escalate` | Stop. Emit an `escalation` outcome and wait for a human — do not proceed on a guess. |
 | `forbidden` | Refuse. Emit an `escalation` outcome and record the refusal in the run record — even if asked to proceed mid-run. |
 
+Judge a decision against the target branch. A table, migration, interface
+or format this branch adds is one decision, made once under its class;
+reworking it before it reaches the target is part of that decision, not a
+further schema migration or API break. That holds unless the project
+deploys or publishes from a branch other than the target.
+
 For judgment calls not listed in `decisions:`, apply the optimize-for line at
 the top of this file, and record the consequential ones in the run record.
 
@@ -119,11 +125,12 @@ surfaces is applied by the implementing context, then re-verified.
 ### 1. Assemble the evaluation brief
 Build a self-contained brief for an agent that knows nothing about how the
 code was written: what was requested, what was agreed (acceptance criteria in
-the spec's own words), the changed-file list, the commands to test, lint, and
-run the app, the applicable standards documents and canon digests (paths, not
-summaries; canon as *Consulting canon* sets out for `verify-feature`), and
-the review personas to consult. The brief plus the repo is the evaluator's
-entire world — anything the verdict should rest on must be in one of them.
+their own words, each with its source), the changed-file list, the shape's
+path when the run has one, the commands to test, lint, and run the app, the
+applicable standards documents and canon digests (paths, not summaries; canon
+as *Consulting canon* sets out for `verify-feature`), and the review personas
+to consult. The brief plus the repo is the evaluator's entire world —
+anything the verdict should rest on must be in one of them.
 
 ## Consulting canon
 
@@ -204,7 +211,7 @@ panelist, or evaluator may introduce another tier or another verdict word.
 
 | Severity | Meaning |
 |----------|---------|
-| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion, opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
+| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion the work received (one the ticket or someone other than the author set; the author's own are design under review), opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
 | `advisory` | Worth one line, not worth blocking: style, naming, simplification, prose, a standard whose breach changes no behaviour and crosses no boundary, any suggestion the author may decline. |
 
 Code is the truth and prose points at it. A finding about a comment, a
@@ -227,13 +234,30 @@ finding per instance. Listing them buries the three findings the author can
 act on among the fifteen they cannot, and an author who has skimmed one
 review skims the next one, which is how a real finding gets missed.
 
+Pre-existing means already on the target branch. Commits this branch already
+carries (an earlier revision, an earlier run's work) are part of the change
+and are not precedent. This settles what counts as pre-existing, not what a
+delta pass re-reads.
+
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
-**For every type, field or parameter a change adds, name the line that reads
-it.** No reader, no field. Say which line, not that one probably exists —
-a reader you cannot point at is the finding.
+**For every type, field, parameter, public method or function, and
+exception type a change adds, name the line that reads, calls or handles
+it.** No reader, no field. Say which line, not that one probably
+exists — a reader you cannot point at is the finding. A reader acts on the
+value in production code: it branches on it, computes with it, or passes it
+out of the change to a receiver that acts on it. A test, a copy into
+another field, a check of the value against itself or its twin, and a
+serializer whose output no receiver acts on are not readers; a check that
+only rejects the value reads it only when some production code can produce
+the value it rejects. A unit is public when code outside its own module can reach it.
+For a public method or function the change adds, or keeps while removing its
+last production caller, name its production caller; for one the project
+publishes as its API, name that export instead. For an exception type the
+change adds, name the handler that decides what happens next and what it
+decides for this failure; the framework's default is not a handler.
 
 This cuts the opposite way from the observation it is usually confused with.
 "This value is computed and then dropped" is a true sentence that sounds like
@@ -250,8 +274,8 @@ nothing *should* — a reader someone is about to write is invisible here, and
 "a later ticket will use it" is a real answer that only the people who know
 what the system is for can weigh. So this is stated as the fact and never as
 a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
-the author may decline like any other. It is `advisory` unless the unread
-thing also breaks something.
+the author may decline like any other. It is `advisory` unless the unread or
+uncalled thing also breaks something.
 
 **A finding is a claim and its evidence, and they are not the same length.**
 The claim is what breaks, where, and what to do about it — a few lines, in
@@ -401,14 +425,43 @@ conversation:
 | Section | Contents |
 |---|---|
 | What was requested | The requirements (for a fix, the reproduction steps), copied in full |
-| What was agreed | The acceptance criteria from the spec or plan; a contract file, if one exists, takes precedence |
-| What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`) — not the full diff; the evaluator reads files directly |
+| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted, or the author's plan or spec, labelled as the author's. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
+| What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`), or against the branch's merge-base with the target branch when that commit is not on the target — not the full diff; the evaluator reads files directly |
 | How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
 | Personas to consult | The feature's persona roster: `run.active-personas` (recorded by plan-feature); when that key is absent, the default roster in `params.review-panel.personas` from `glados.yaml`. List each persona as its name plus the path of its definition file so the evaluator reads it directly. Resolve each name project-first: `product-knowledge/personas/`, then the library personas in `.glados/personas/`. A name with no definition file in either is reported in the brief, not silently dropped |
 | Canon digests | Only when this document has a *Consulting canon* section and an entry applies: each digest's path (never a summary), and the rules that section gives a fresh agent, copied verbatim. Otherwise leave this row out |
-| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred — a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
-| Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
+| Shape | Only when the run has a shape: its path, and each departure from it that implement-feature's `progress` outcome states, labelled as the author's. Otherwise leave this row out |
+| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
+
+## What a fresh reviewer is given
+
+A fresh reviewer is only as independent as its brief, and the agent that did
+the work writes the brief. So a brief carries inputs, never the author's
+conclusions about them.
+
+- **Only the listed inputs.** A brief carries what the workflow that writes
+  it lists for it and nothing else: no verdict, approval or gate result from
+  an earlier pass, no disposition the author gave a finding, no instruction
+  about what is or is not a defect. A finding still open from an earlier
+  pass may be named, as open.
+- **Say who wrote each input.** The author is whoever wrote the change,
+  agent or person. Everything the author wrote (plan, shape, spec, a
+  contract file, the MR description) is labelled as the author's, and is
+  under review like the code. A person's words, meaning anyone's but the
+  author's (the ticket, an instruction given in the session or on the MR),
+  are quoted verbatim with where they were said (a file path or an MR note)
+  and labelled as theirs. A person set only what their quoted words name: a
+  go-ahead on the author's proposal approves the direction, and the
+  proposal stays the author's.
+- **A scope statement excuses an absence, never a presence.** "Deferred to
+  <item>" or "not in this MR" means the reviewer does not report that thing
+  as missing. No scope statement, the author's or a person's, makes what the
+  change does add correct: what it adds is reviewed on its merits. Deferring
+  a unit's consumer does not excuse the unit: that nothing calls it is still
+  a finding.
+
 
 *(See **Verdicts and finding severities**, earlier in this document.)*
 
@@ -429,21 +482,29 @@ what it actually does. Be skeptical. Be thorough.
 4. If the brief lists app entry points and you have the tools, start the app
    and use it. Do not judge by reading alone.
 5. Mark each acceptance criterion PASS or FAIL, with the evidence you
-   observed.
-6. Check the code against each standard listed in the brief, and against
+   observed. A failed criterion the brief labels as the author's is not
+   one the work received: it is an issue at the tier its consequence
+   earns, and where the criterion itself is unnecessary, say so.
+6. If the brief names a shape, list every public unit the diff adds that
+   the shape does not list, and every shape unit the diff drops. One the
+   brief does not list as a stated departure is an issue. A stated
+   departure is not undeclared drift, but a unit it adds is still reviewed
+   on its merits, and its stated reason is the author's.
+7. Check the code against each standard listed in the brief, and against
    each canon digest it lists, at the weight the brief gives.
-7. If the brief lists personas, read each definition file and critique the
+8. If the brief lists personas, read each definition file and critique the
    change from that persona's mandate.
-8. List every issue: what is wrong, where (file + line), and its severity per
+9. List every issue: what is wrong, where (file + line), and its severity per
    the vocabulary in the brief.
 
 Write your evaluation to
 .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation.md with sections:
-Acceptance criteria (criterion | PASS/FAIL | evidence), Standards
-(standard | met/violated | notes), Issues (numbered; location, severity,
-what would fix it), Canon conflicts when the brief lists canon digests
-(canon id | what overrides it), and Overall verdict — exactly one of:
-PASS — every criterion passed and no blocking issue found.
+Acceptance criteria (criterion | source | PASS/FAIL | evidence), Shape
+when the brief names one (unit | added/dropped | stated departure or not),
+Standards (standard | met/violated | notes), Issues (numbered; location,
+severity, what would fix it), Canon conflicts when the brief lists canon
+digests (canon id | what overrides it), and Overall verdict — exactly one of:
+PASS — every criterion the work received passed and no blocking issue found.
 FAIL — list the blocking issues.
 ```
 

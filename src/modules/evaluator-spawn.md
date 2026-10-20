@@ -34,14 +34,17 @@ conversation:
 | Section | Contents |
 |---|---|
 | What was requested | The requirements (for a fix, the reproduction steps), copied in full |
-| What was agreed | The acceptance criteria from the spec or plan; a contract file, if one exists, takes precedence |
-| What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`) — not the full diff; the evaluator reads files directly |
+| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted, or the author's plan or spec, labelled as the author's. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
+| What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`), or against the branch's merge-base with the target branch when that commit is not on the target — not the full diff; the evaluator reads files directly |
 | How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
 | Personas to consult | The feature's persona roster: `run.active-personas` (recorded by plan-feature); when that key is absent, the default roster in `params.review-panel.personas` from `glados.yaml`. List each persona as its name plus the path of its definition file so the evaluator reads it directly. Resolve each name project-first: `product-knowledge/personas/`, then the library personas in `.glados/personas/`. A name with no definition file in either is reported in the brief, not silently dropped |
 | Canon digests | Only when this document has a *Consulting canon* section and an entry applies: each digest's path (never a summary), and the rules that section gives a fresh agent, copied verbatim. Otherwise leave this row out |
-| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred — a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
-| Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
+| Shape | Only when the run has a shape: its path, and each departure from it that implement-feature's `progress` outcome states, labelled as the author's. Otherwise leave this row out |
+| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
+
+<!-- glados:include vocabulary/review-inputs.md -->
 
 <!-- glados:include vocabulary/verdicts.md -->
 
@@ -62,21 +65,29 @@ what it actually does. Be skeptical. Be thorough.
 4. If the brief lists app entry points and you have the tools, start the app
    and use it. Do not judge by reading alone.
 5. Mark each acceptance criterion PASS or FAIL, with the evidence you
-   observed.
-6. Check the code against each standard listed in the brief, and against
+   observed. A failed criterion the brief labels as the author's is not
+   one the work received: it is an issue at the tier its consequence
+   earns, and where the criterion itself is unnecessary, say so.
+6. If the brief names a shape, list every public unit the diff adds that
+   the shape does not list, and every shape unit the diff drops. One the
+   brief does not list as a stated departure is an issue. A stated
+   departure is not undeclared drift, but a unit it adds is still reviewed
+   on its merits, and its stated reason is the author's.
+7. Check the code against each standard listed in the brief, and against
    each canon digest it lists, at the weight the brief gives.
-7. If the brief lists personas, read each definition file and critique the
+8. If the brief lists personas, read each definition file and critique the
    change from that persona's mandate.
-8. List every issue: what is wrong, where (file + line), and its severity per
+9. List every issue: what is wrong, where (file + line), and its severity per
    the vocabulary in the brief.
 
 Write your evaluation to
 .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation.md with sections:
-Acceptance criteria (criterion | PASS/FAIL | evidence), Standards
-(standard | met/violated | notes), Issues (numbered; location, severity,
-what would fix it), Canon conflicts when the brief lists canon digests
-(canon id | what overrides it), and Overall verdict — exactly one of:
-PASS — every criterion passed and no blocking issue found.
+Acceptance criteria (criterion | source | PASS/FAIL | evidence), Shape
+when the brief names one (unit | added/dropped | stated departure or not),
+Standards (standard | met/violated | notes), Issues (numbered; location,
+severity, what would fix it), Canon conflicts when the brief lists canon
+digests (canon id | what overrides it), and Overall verdict — exactly one of:
+PASS — every criterion the work received passed and no blocking issue found.
 FAIL — list the blocking issues.
 ```
 

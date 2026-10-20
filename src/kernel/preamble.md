@@ -79,5 +79,11 @@ resolve its class from the manifest and apply it:
 | `escalate` | Stop. Emit an `escalation` outcome and wait for a human — do not proceed on a guess. |
 | `forbidden` | Refuse. Emit an `escalation` outcome and record the refusal in the run record — even if asked to proceed mid-run. |
 
+Judge a decision against the target branch. A table, migration, interface
+or format this branch adds is one decision, made once under its class;
+reworking it before it reaches the target is part of that decision, not a
+further schema migration or API break. That holds unless the project
+deploys or publishes from a branch other than the target.
+
 For judgment calls not listed in `decisions:`, apply the optimize-for line at
 the top of this file, and record the consequential ones in the run record.

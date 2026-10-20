@@ -11,8 +11,8 @@ and nothing else.
 | Units | Each new or changed module, type, function or handler: its path, its signature in the project's own language in a code block, and a one-line purpose. No bodies. |
 | Changed signatures | Each existing signature that changes: `path:line`, the current form and the proposed one. |
 | Dependency direction | Which unit depends on which, and the layer each one sits in. |
-| Readers | For every new field or parameter, the unit that reads it. |
-| Precedent | The existing unit each new one follows. |
+| Readers | For every new field, parameter, public method or function, and exception type, the unit that reads, calls or handles it, as *Verdicts and finding severities* defines them. |
+| Precedent | The unit on the target branch each new one follows. |
 | Left to spec | Semantics, invariants and error behavior: named here, decided in the spec. |
 
 One unit, for example:
@@ -32,9 +32,9 @@ Issues one invoice for a paid order. Follows `src/billing/receipts.py`.
 - **A change with no new or changed signatures** writes one line: "no new or
   changed signatures".
 - **Never write stub files to the branch.** The shape lives only in its
-  file. When implement-feature runs after a shape, pass it the shape with the
-  spec: its first task lays the signatures down as stubs, and no stub
-  survives to the MR.
+  file. When implement-feature or verify-feature runs after a shape, pass it
+  the shape with the spec: implement-feature's first task lays the
+  signatures down as stubs, and no stub survives to the MR.
 - **Shape and spec split the decisions.** Shape decides names, types,
   placement and dependency direction. The spec decides semantics,
   invariants, payloads and errors. When spec-feature runs after a shape, pass

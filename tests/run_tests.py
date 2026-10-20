@@ -1461,7 +1461,7 @@ class TestRootCauseSynthesis(unittest.TestCase):
         reader is one ticket away.
         """
         body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
-        self.assertIn("name the line that reads it", body)
+        self.assertIn("name the line that reads, calls or handles it", body)
         self.assertIn("It cannot establish that nothing *should*", body)
         self.assertIn("stated as the fact and never as a demand", body)
 
@@ -1756,7 +1756,9 @@ class TestRootCauseSynthesis(unittest.TestCase):
         """
         body = " ".join(read(REPO / "src" / "modules" / "evaluator-spawn.md").split())
         self.assertIn("What is deliberately out of scope", body)
-        self.assertIn("a decision already made, not a gap to report back", body)
+        self.assertIn("each labelled with who deferred it", body)
+        self.assertIn("A deferral excuses an absence", body)
+        self.assertNotIn("a decision already made", body)
 
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
@@ -1766,6 +1768,324 @@ class TestRootCauseSynthesis(unittest.TestCase):
             self.assertNotIn(invented, body)
         self.assertIn("`blocking`", body)
         self.assertIn("`advisory`", body)
+
+
+class TestReviewInputs(unittest.TestCase):
+    """What a fresh reviewer is told to treat as settled.
+
+    A fresh agent is independent of the author's context, but the author
+    writes its brief, and core text told it to settle what the author wrote:
+    the MR description's scope, a contract file copied from the author's own
+    spec, a criterion that named the author's mechanism. A project pipeline
+    cannot reach that text, so each rule is pinned into the compiled cores it
+    governs: review-mr, verify-feature, run-pipeline and implement-feature
+    (and plan-feature, which writes the criteria). Asserted with whitespace
+    flattened, so a re-wrap of the source does not break a test.
+    """
+
+    FRAGMENT = (
+        "## What a fresh reviewer is given",
+        "So a brief carries inputs, never the author's conclusions about them",
+        "A brief carries what the workflow that writes it lists for it and "
+        "nothing else",
+        "no verdict, approval or gate result from an earlier pass",
+        "no disposition the author gave a finding",
+        "no instruction about what is or is not a defect",
+        "A finding still open from an earlier pass may be named, as open",
+        "The author is whoever wrote the change, agent or person",
+        "is labelled as the author's, and is under review like the code",
+        "A person's words, meaning anyone's but the author's",
+        "are quoted verbatim with where they were said (a file path or an MR "
+        "note) and labelled as theirs",
+        "A person set only what their quoted words name: a go-ahead on the "
+        "author's proposal approves the direction, and the proposal stays "
+        "the author's",
+        "A scope statement excuses an absence, never a presence",
+        "No scope statement, the author's or a person's, makes what the "
+        "change does add correct: what it adds is reviewed on its merits",
+        "Deferring a unit's consumer does not excuse the unit: that nothing "
+        "calls it is still a finding",
+    )
+
+    VERDICTS = (
+        "breaks an acceptance criterion the work received (one the ticket "
+        "or someone other than the author set; the author's own are design "
+        "under review)",
+        "Pre-existing means already on the target branch",
+        "Commits this branch already carries (an earlier revision, an "
+        "earlier run's work) are part of the change and are not precedent. "
+        "This settles what counts as pre-existing, not what a delta pass "
+        "re-reads",
+        "**For every type, field, parameter, public method or function, and "
+        "exception type a change adds, name the line that reads, calls or "
+        "handles it.**",
+        "A reader acts on the value in production code: it branches on it, "
+        "computes with it, or passes it out of the change to a receiver "
+        "that acts on it",
+        "A test, a copy into another field, a check of the value against "
+        "itself or its twin, and a serializer whose output no receiver acts "
+        "on are not readers",
+        "a check that only rejects the value reads it only when some "
+        "production code can produce the value it rejects",
+        "A unit is public when code outside its own module can reach it",
+        "For a public method or function the change adds, or keeps while "
+        "removing its last production caller, name its production caller; "
+        "for one the project publishes as its API, name that export instead",
+        "For an exception type the change adds, name the handler that "
+        "decides what happens next and what it decides for this failure; "
+        "the framework's default is not a handler",
+        # the reader rule still states a fact, and still advises
+        "stated as the fact and never as a demand",
+        "It is `advisory` unless the unread or uncalled thing also breaks "
+        "something",
+    )
+
+    DECISION_RIGHTS = (
+        "Judge a decision against the target branch. A table, migration, "
+        "interface or format this branch adds is one decision, made once "
+        "under its class; reworking it before it reaches the target is part "
+        "of that decision, not a further schema migration or API break. That "
+        "holds unless the project deploys or publishes from a branch other "
+        "than the target",
+    )
+
+    FOUR = ("review-mr", "verify-feature", "run-pipeline", "implement-feature")
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, core):
+        text = self.core(core)
+        for rule in rules:
+            self.assertIn(rule, text, f"{core} lacks: {rule!r}")
+
+    def inlining(self, module):
+        """Every compiled core whose provenance header inlines `module`."""
+        names = set()
+        for path in self.dir.glob("*.md"):
+            header = next((l for l in read(path).splitlines()
+                           if "modules-inlined:" in l), "")
+            if module in header:
+                names.add(path.stem)
+        return names
+
+    def test_the_fragment_reaches_every_fresh_reviewer_once(self):
+        """One rule, three include sites, one copy per document.
+
+        The panel, the evaluator and the fresh-agent design review each brief
+        a reviewer, and each must carry the fragment. Identified from the
+        provenance header too, so a new core that seats a panel or an
+        evaluator is covered without editing this test.
+        """
+        reviewers = ({"review-mr", "verify-feature", "run-pipeline"}
+                     | self.inlining("mr-review-panel")
+                     | self.inlining("evaluator-spawn"))
+        for name in sorted(reviewers):
+            with self.subTest(core=name):
+                self.assertAllIn(self.FRAGMENT, name)
+                text = self.core(name)
+                self.assertEqual(
+                    text.count("excuses an absence, never a presence"), 1,
+                    f"{name} states the scope rule more than once")
+
+    def test_the_fragment_adds_no_tier_and_no_verdict_word(self):
+        body = read(REPO / "src" / "vocabulary" / "review-inputs.md")
+        for word in ("`blocking`", "`advisory`", "APPROVE", "REQUEST_CHANGES",
+                     "ESCALATE", "PASS", "FAIL"):
+            self.assertNotIn(word, body)
+
+    def test_no_reviewer_is_told_author_scope_is_settled(self):
+        """The phrase that disarmed every reviewer is gone from all three."""
+        for name in ("review-mr", "verify-feature", "run-pipeline"):
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertNotIn("a decision already made", text)
+                self.assertNotIn("work the author declared is a decision", text)
+                self.assertNotIn("a contract file, if one exists, takes "
+                                 "precedence", text)
+
+    def test_the_vocabulary_changes_reach_all_four_cores(self):
+        for name in self.FOUR:
+            with self.subTest(core=name):
+                self.assertAllIn(self.VERDICTS, name)
+                self.assertNotIn("breaks an acceptance criterion, opens",
+                                 self.core(name))
+
+    def test_decision_rights_are_judged_against_the_target_branch(self):
+        """Every core gets the preamble, so every core gets the sentence."""
+        cores = [p.stem for p in sorted(self.dir.glob("*.md"))
+                 if p.stem in glados.CORES]
+        self.assertTrue(set(self.FOUR) <= set(cores))
+        for name in cores:
+            with self.subTest(core=name):
+                self.assertAllIn(self.DECISION_RIGHTS, name)
+
+    def test_only_a_received_criterion_blocks_the_evaluator(self):
+        """An author's criterion is design under review, in the verdict too.
+
+        verdicts makes only a criterion the work received blocking, so the
+        evaluator's PASS cannot need every criterion: a plain design that
+        drops a mechanism the author's own criterion named would otherwise
+        FAIL, and map to REQUEST_CHANGES, whatever tier the vocabulary gives.
+        """
+        cores = self.inlining("evaluator-spawn")
+        self.assertIn("verify-feature", cores)
+        for name in sorted(cores):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "PASS — every criterion the work received passed and no "
+                    "blocking issue found.",
+                    "A failed criterion the brief labels as the author's is "
+                    "not one the work received: it is an issue at the tier "
+                    "its consequence earns, and where the criterion itself "
+                    "is unnecessary, say so",
+                    "Acceptance criteria (criterion | source | PASS/FAIL | "
+                    "evidence)",
+                ), name)
+                self.assertNotIn("PASS — every criterion passed",
+                                 self.core(name))
+
+    def test_the_panel_reads_scope_as_an_absence(self):
+        self.assertAllIn((
+            "**the merge-request description** without its step table or "
+            "the findings it lists",
+            "the rules in *Verdicts and finding severities* and *What a fresh "
+            "reviewer is given*, copied verbatim",
+            "3. Read the merge-request description before you raise "
+            "anything, as the brief carries it: without its step table or "
+            "the findings it lists",
+            "tells you what the change leaves out. Do not report that back "
+            "as a gap",
+            "It never makes what the change puts in correct, whoever asked "
+            "for it: that is reviewed on its merits",
+            "5. For every type, field, parameter, public method and "
+            "exception type this change adds, or leaves without a production "
+            "caller, find its reader, production caller or handler",
+            "what it declares left out is a deferral",
+            "**Which acceptance criteria the work received does the diff "
+            "meet?**",
+            "**What is in the diff that no criterion the work received asked "
+            "for?**",
+        ), "review-mr")
+        self.assertNotIn("the severity scale, verdict words, and composition "
+                         "rules above", self.core("review-mr"))
+
+    def test_a_replan_rebriefs_the_whole_change(self):
+        """A delta pass over a re-planned change never judges the new plan."""
+        self.assertAllIn((
+            "**Cycle 2 and after brief the delta**",
+            "**Unless the work was re-planned.** When a plan, shape or spec "
+            "record differs between `review.reviewed-head` and this head, "
+            "this cycle briefs the whole change against the target branch, "
+            "as cycle 1 does, with the open findings still named",
+            "**For a delta pass, check first that the reviewed head is still "
+            "an ancestor of this one.**",
+        ), "review-mr")
+        text = self.core("review-mr")
+        self.assertLess(text.index("**Cycle 2 and after brief the delta**"),
+                        text.index("**Unless the work was re-planned.**"))
+        self.assertLess(text.index("**Unless the work was re-planned.**"),
+                        text.index("**For a delta pass, check first"))
+
+    def test_the_evaluator_brief_labels_its_inputs(self):
+        self.assertAllIn((
+            "| What was agreed | The acceptance criteria, each with its "
+            "source: the ticket, a person's words quoted, or the author's "
+            "plan or spec, labelled as the author's",
+            "A contract file takes precedence over the plan and spec only for "
+            "what a person's words name; a criterion the author derived is "
+            "the author's, under review like the code",
+            "or against the branch's merge-base with the target branch when "
+            "that commit is not on the target",
+            "declares deferred, each labelled with who deferred it: the "
+            "author, or a person quoted. A deferral excuses an absence, as "
+            "*What a fresh reviewer is given* sets out",
+            "| Vocabulary | The rules in *Verdicts and finding severities* and "
+            "*What a fresh reviewer is given*, copied verbatim |",
+            "acceptance criteria in their own words, each with its source",
+        ), "verify-feature")
+        self.assertNotIn("wrote or approved", self.core("verify-feature"))
+
+    def test_the_design_review_brief_labels_its_deferrals(self):
+        self.assertAllIn((
+            "| What is deliberately out of scope | Anything the plan, the "
+            "spec or an earlier step deferred, each labelled with who "
+            "deferred it",
+            "| Vocabulary | The rules in *Verdicts and finding severities* and "
+            "*What a fresh reviewer is given*, copied verbatim |",
+            "the base commit (`work.base-sha`, or the branch's merge-base "
+            "with the target branch when that commit is not on the target)",
+        ), "run-pipeline")
+
+    def test_the_shape_is_laid_down_and_then_checked(self):
+        """shape.md promised implement-feature lays the shape down first.
+
+        The promise was only in the shape step; implement-feature and
+        verify-feature never mentioned a shape. Now the implementer lays it
+        down and states departures, and the evaluator lists every public unit
+        the diff adds or drops against it. Stating a departure declares it;
+        it never excuses a unit the diff adds.
+        """
+        self.assertAllIn((
+            "When the caller passes a shape with the spec, take it too. Its "
+            "units are the first task of the breakdown: lay their signatures "
+            "down before any body",
+            "Any public unit the diff adds that the shape does not list, or a "
+            "shape unit the diff drops, is a departure",
+            "the test result, and each departure from the shape with its "
+            "reason",
+        ), "implement-feature")
+        self.assertAllIn((
+            "the shape's path when the run has one",
+            "| Shape | Only when the run has a shape: its path, and each "
+            "departure from it that implement-feature's `progress` outcome "
+            "states, labelled as the author's",
+            "6. If the brief names a shape, list every public unit the diff "
+            "adds that the shape does not list, and every shape unit the diff "
+            "drops. One the brief does not list as a stated departure is an "
+            "issue. A stated departure is not undeclared drift, but a unit it "
+            "adds is still reviewed on its merits, and its stated reason is "
+            "the author's",
+            "Shape when the brief names one (unit | added/dropped | stated "
+            "departure or not)",
+        ), "verify-feature")
+        self.assertNotIn("Each is an issue unless the brief lists it as a "
+                         "stated departure", self.core("verify-feature"))
+        self.assertAllIn((
+            "When implement-feature or verify-feature runs after a shape, "
+            "pass it the shape with the spec",
+            "| Readers | For every new field, parameter, public method or "
+            "function, and exception type, the unit that reads, calls or "
+            "handles it, as *Verdicts and finding severities* defines them. |",
+            "| Precedent | The unit on the target branch each new one "
+            "follows. |",
+        ), "run-pipeline")
+
+    def test_each_requirement_names_its_source(self):
+        """The label does the work; a mechanism criterion is not moved.
+
+        A criterion the author invented is an assumption, and verdicts makes
+        only a received criterion blocking, so labelling is enough. Moving a
+        criterion that names a code construct to Approach is left to a
+        project plan step.
+        """
+        self.assertAllIn((
+            "Label each requirement with its source: the ticket, a person's "
+            "words (quoted, with where they were said), or \"assumption\" for "
+            "one you invented rather than received, so spec-feature can "
+            "confirm or kill it",
+        ), "plan-feature")
+        text = self.core("plan-feature")
+        self.assertNotIn("names a code construct", text)
+        self.assertNotIn("Requirements you invented rather than received are "
+                         "assumptions", text)
 
 
 class TestSinkConfig(unittest.TestCase):

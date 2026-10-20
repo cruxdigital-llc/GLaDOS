@@ -94,6 +94,12 @@ resolve its class from the manifest and apply it:
 | `escalate` | Stop. Emit an `escalation` outcome and wait for a human — do not proceed on a guess. |
 | `forbidden` | Refuse. Emit an `escalation` outcome and record the refusal in the run record — even if asked to proceed mid-run. |
 
+Judge a decision against the target branch. A table, migration, interface
+or format this branch adds is one decision, made once under its class;
+reworking it before it reaches the target is part of that decision, not a
+further schema migration or API break. That holds unless the project
+deploys or publishes from a branch other than the target.
+
 For judgment calls not listed in `decisions:`, apply the optimize-for line at
 the top of this file, and record the consequential ones in the run record.
 
@@ -303,7 +309,7 @@ panelist, or evaluator may introduce another tier or another verdict word.
 
 | Severity | Meaning |
 |----------|---------|
-| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion, opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
+| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion the work received (one the ticket or someone other than the author set; the author's own are design under review), opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
 | `advisory` | Worth one line, not worth blocking: style, naming, simplification, prose, a standard whose breach changes no behaviour and crosses no boundary, any suggestion the author may decline. |
 
 Code is the truth and prose points at it. A finding about a comment, a
@@ -326,13 +332,30 @@ finding per instance. Listing them buries the three findings the author can
 act on among the fifteen they cannot, and an author who has skimmed one
 review skims the next one, which is how a real finding gets missed.
 
+Pre-existing means already on the target branch. Commits this branch already
+carries (an earlier revision, an earlier run's work) are part of the change
+and are not precedent. This settles what counts as pre-existing, not what a
+delta pass re-reads.
+
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
-**For every type, field or parameter a change adds, name the line that reads
-it.** No reader, no field. Say which line, not that one probably exists —
-a reader you cannot point at is the finding.
+**For every type, field, parameter, public method or function, and
+exception type a change adds, name the line that reads, calls or handles
+it.** No reader, no field. Say which line, not that one probably
+exists — a reader you cannot point at is the finding. A reader acts on the
+value in production code: it branches on it, computes with it, or passes it
+out of the change to a receiver that acts on it. A test, a copy into
+another field, a check of the value against itself or its twin, and a
+serializer whose output no receiver acts on are not readers; a check that
+only rejects the value reads it only when some production code can produce
+the value it rejects. A unit is public when code outside its own module can reach it.
+For a public method or function the change adds, or keeps while removing its
+last production caller, name its production caller; for one the project
+publishes as its API, name that export instead. For an exception type the
+change adds, name the handler that decides what happens next and what it
+decides for this failure; the framework's default is not a handler.
 
 This cuts the opposite way from the observation it is usually confused with.
 "This value is computed and then dropped" is a true sentence that sounds like
@@ -349,8 +372,8 @@ nothing *should* — a reader someone is about to write is invisible here, and
 "a later ticket will use it" is a real answer that only the people who know
 what the system is for can weigh. So this is stated as the fact and never as
 a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
-the author may decline like any other. It is `advisory` unless the unread
-thing also breaks something.
+the author may decline like any other. It is `advisory` unless the unread or
+uncalled thing also breaks something.
 
 **A finding is a claim and its evidence, and they are not the same length.**
 The claim is what breaks, where, and what to do about it — a few lines, in
@@ -469,9 +492,37 @@ verdict composition rules, never by silently dropping the seat.
 Panelists cannot ask questions, so the brief must be self-contained. It
 carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
 spec or ticket, the commands to run tests and linters, each panelist's seated
-mandate, and the severity scale, verdict words, and composition rules above,
-copied verbatim. If anything is missing, assemble it before spawning — a
-panelist that has to guess reviews the wrong change.
+mandate, and the rules in *Verdicts and finding severities* and *What a fresh
+reviewer is given*, copied verbatim. If anything is missing, assemble it
+before spawning — a panelist that has to guess reviews the wrong change.
+
+## What a fresh reviewer is given
+
+A fresh reviewer is only as independent as its brief, and the agent that did
+the work writes the brief. So a brief carries inputs, never the author's
+conclusions about them.
+
+- **Only the listed inputs.** A brief carries what the workflow that writes
+  it lists for it and nothing else: no verdict, approval or gate result from
+  an earlier pass, no disposition the author gave a finding, no instruction
+  about what is or is not a defect. A finding still open from an earlier
+  pass may be named, as open.
+- **Say who wrote each input.** The author is whoever wrote the change,
+  agent or person. Everything the author wrote (plan, shape, spec, a
+  contract file, the MR description) is labelled as the author's, and is
+  under review like the code. A person's words, meaning anyone's but the
+  author's (the ticket, an instruction given in the session or on the MR),
+  are quoted verbatim with where they were said (a file path or an MR note)
+  and labelled as theirs. A person set only what their quoted words name: a
+  go-ahead on the author's proposal approves the direction, and the
+  proposal stays the author's.
+- **A scope statement excuses an absence, never a presence.** "Deferred to
+  <item>" or "not in this MR" means the reviewer does not report that thing
+  as missing. No scope statement, the author's or a person's, makes what the
+  change does add correct: what it adds is reviewed on its merits. Deferring
+  a unit's consumer does not excuse the unit: that nothing calls it is still
+  a finding.
+
 
 ### Spawn the panel (parallel)
 
@@ -488,10 +539,13 @@ Your job is to find real problems, not to confirm success.
    finding about prose is advisory, one line. Cite file + line per finding.
    Review what this change introduced — a breach you find in a touched file
    that the change did not write is not your finding to raise.
-3. Read the merge-request description before you raise anything. Scope it
-   states — "that is a change of its own and is not in this MR", "deferred
-   to <item>" — is a decision already made. Reporting it back as a gap costs
-   the author an exchange to repeat what they already wrote.
+3. Read the merge-request description before you raise anything, as the
+   brief carries it: without its step table or the findings it lists. Scope
+   it states — "that is a change of its own and is not in this MR",
+   "deferred to <item>" — tells you what the change leaves out. Do not
+   report that back as a gap: it costs the author an exchange to repeat
+   what they already wrote. It never makes what the change puts in
+   correct, whoever asked for it: that is reviewed on its merits.
 4. Write each finding as one plain sentence saying what is wrong, in the
    words you would use saying it out loud. Then where it is, then the rule
    it breaks if there is one. The rule is evidence for the finding, never
@@ -499,12 +553,14 @@ Your job is to find real problems, not to confirm success.
    of thing it is" lands in one read; "this is exactly the case that
    paragraph warns against" sends the reader to another file to find out
    what you meant.
-5. For every type, field or parameter this change adds, find the line that
-   reads it. If you cannot point at one, say so — that is a finding, and it
-   is the fact ("nothing reads this") rather than the remedy. Before asking
-   for a dropped value to be carried further, ask whether anyone wanted it:
-   carrying it costs a field, a shape, a caller and a test, and the usual
-   answer is to stop computing it instead.
+5. For every type, field, parameter, public method and exception type this
+   change adds, or leaves without a production caller, find its reader,
+   production caller or handler, as the vocabulary in the brief defines
+   them. If you cannot point at one, say so — that is a finding, and it is
+   the fact ("nothing reads this") rather than the remedy. Before asking
+   for a dropped value to be carried further, ask whether anyone wanted
+   it: carrying it costs a field, a shape, a caller and a test, and the
+   usual answer is to stop computing it instead.
 6. Before you write an advisory down, name what acting on it would
    change: behaviour, whether a defect gets caught, or what someone has
    to work with when it fails. If you cannot name one, it is a

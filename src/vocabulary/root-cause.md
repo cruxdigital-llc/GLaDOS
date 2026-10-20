@@ -89,13 +89,14 @@ individual finding stands up.
 
 Answer it in two parts:
 
-- **Which acceptance criteria does the diff meet?** Name them. A criterion the
-  diff does not meet is an ordinary finding under the severity scale — it
-  breaks an acceptance criterion, so it blocks.
-- **What is in the diff that no criterion asked for?** Name that too, with
-  where it came from: work the ticket implies, work a review asked for, work
-  the author added. Each is legitimate on its own; what matters is the size of
-  the pile and whether it can be separated.
+- **Which acceptance criteria the work received does the diff meet?** Name
+  them. A criterion the diff does not meet is an ordinary finding under the
+  severity scale — it breaks an acceptance criterion the work received, so
+  it blocks.
+- **What is in the diff that no criterion the work received asked for?**
+  Name that too, with where it came from: work the ticket implies, work a
+  review asked for, work the author added. Each is legitimate on its own;
+  what matters is the size of the pile and whether it can be separated.
 
 **Work a review asked for is the case to be most careful about, because the
 review is not a neutral party to it.** A finding says a value is computed and
@@ -120,5 +121,5 @@ follow-up is the author's call to make, not the review's to demand.
 
 Two cautions. A change that is entirely in scope gets one sentence saying so,
 not silence — the question is answered every pass. And this is not licence to
-relitigate a scope the description already settles: work the author declared
-is a decision already made, and the deferral rule above governs it.
+relitigate a scope the description already settles: what it declares left
+out is a deferral, and the deferral rule above governs it.

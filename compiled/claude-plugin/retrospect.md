@@ -94,6 +94,12 @@ resolve its class from the manifest and apply it:
 | `escalate` | Stop. Emit an `escalation` outcome and wait for a human — do not proceed on a guess. |
 | `forbidden` | Refuse. Emit an `escalation` outcome and record the refusal in the run record — even if asked to proceed mid-run. |
 
+Judge a decision against the target branch. A table, migration, interface
+or format this branch adds is one decision, made once under its class;
+reworking it before it reaches the target is part of that decision, not a
+further schema migration or API break. That holds unless the project
+deploys or publishes from a branch other than the target.
+
 For judgment calls not listed in `decisions:`, apply the optimize-for line at
 the top of this file, and record the consequential ones in the run record.
 
@@ -234,7 +240,7 @@ panelist, or evaluator may introduce another tier or another verdict word.
 
 | Severity | Meaning |
 |----------|---------|
-| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion, opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
+| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion the work received (one the ticket or someone other than the author set; the author's own are design under review), opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
 | `advisory` | Worth one line, not worth blocking: style, naming, simplification, prose, a standard whose breach changes no behaviour and crosses no boundary, any suggestion the author may decline. |
 
 Code is the truth and prose points at it. A finding about a comment, a
@@ -257,13 +263,30 @@ finding per instance. Listing them buries the three findings the author can
 act on among the fifteen they cannot, and an author who has skimmed one
 review skims the next one, which is how a real finding gets missed.
 
+Pre-existing means already on the target branch. Commits this branch already
+carries (an earlier revision, an earlier run's work) are part of the change
+and are not precedent. This settles what counts as pre-existing, not what a
+delta pass re-reads.
+
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
-**For every type, field or parameter a change adds, name the line that reads
-it.** No reader, no field. Say which line, not that one probably exists —
-a reader you cannot point at is the finding.
+**For every type, field, parameter, public method or function, and
+exception type a change adds, name the line that reads, calls or handles
+it.** No reader, no field. Say which line, not that one probably
+exists — a reader you cannot point at is the finding. A reader acts on the
+value in production code: it branches on it, computes with it, or passes it
+out of the change to a receiver that acts on it. A test, a copy into
+another field, a check of the value against itself or its twin, and a
+serializer whose output no receiver acts on are not readers; a check that
+only rejects the value reads it only when some production code can produce
+the value it rejects. A unit is public when code outside its own module can reach it.
+For a public method or function the change adds, or keeps while removing its
+last production caller, name its production caller; for one the project
+publishes as its API, name that export instead. For an exception type the
+change adds, name the handler that decides what happens next and what it
+decides for this failure; the framework's default is not a handler.
 
 This cuts the opposite way from the observation it is usually confused with.
 "This value is computed and then dropped" is a true sentence that sounds like
@@ -280,8 +303,8 @@ nothing *should* — a reader someone is about to write is invisible here, and
 "a later ticket will use it" is a real answer that only the people who know
 what the system is for can weigh. So this is stated as the fact and never as
 a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
-the author may decline like any other. It is `advisory` unless the unread
-thing also breaks something.
+the author may decline like any other. It is `advisory` unless the unread or
+uncalled thing also breaks something.
 
 **A finding is a claim and its evidence, and they are not the same length.**
 The claim is what breaks, where, and what to do about it — a few lines, in

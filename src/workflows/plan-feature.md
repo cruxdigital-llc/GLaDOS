@@ -33,8 +33,9 @@ contract, implement-feature the code. It touches no branch.
   - **Goal** — what the feature does and for whom.
   - **Success criteria** — observable checks that would prove it works.
   - **Non-goals** — what this feature deliberately does not do.
-- Requirements you invented rather than received are assumptions: label them
-  as such so spec-feature can confirm or kill them.
+- Label each requirement with its source: the ticket, a person's words
+  (quoted, with where they were said), or "assumption" for one you invented
+  rather than received, so spec-feature can confirm or kill it.
 
 ### 3. Approach
 - Draft the high-level plan: components touched, sequencing, notable risks,

@@ -182,9 +182,10 @@ and without bodies, before the spec is written: the units with their paths
 and signatures, changed signatures, dependency direction, the unit that reads
 each new field, the precedent each unit follows, and what is left to the
 spec. It never writes stub files to the branch. implement-feature writes the
-stubs as its first task, and none survive to the MR. Shape decides names,
-types, placement and direction; the spec decides semantics, invariants,
-payloads and errors.
+stubs as its first task, and none survive to the MR. verify-feature's
+evaluator checks the public units the diff adds or drops against it. Shape
+decides names, types, placement and direction; the spec decides semantics,
+invariants, payloads and errors.
 
 **open-mr** commits, opens the MR with the step table and links to every
 artifact, and delivers outcomes that were waiting for an MR.

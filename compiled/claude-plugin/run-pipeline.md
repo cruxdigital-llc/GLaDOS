@@ -94,6 +94,12 @@ resolve its class from the manifest and apply it:
 | `escalate` | Stop. Emit an `escalation` outcome and wait for a human — do not proceed on a guess. |
 | `forbidden` | Refuse. Emit an `escalation` outcome and record the refusal in the run record — even if asked to proceed mid-run. |
 
+Judge a decision against the target branch. A table, migration, interface
+or format this branch adds is one decision, made once under its class;
+reworking it before it reaches the target is part of that decision, not a
+further schema migration or API break. That holds unless the project
+deploys or publishes from a branch other than the target.
+
 For judgment calls not listed in `decisions:`, apply the optimize-for line at
 the top of this file, and record the consequential ones in the run record.
 
@@ -371,7 +377,7 @@ panelist, or evaluator may introduce another tier or another verdict word.
 
 | Severity | Meaning |
 |----------|---------|
-| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion, opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
+| `blocking` | The change must not merge as-is: it breaks behaviour, breaks an acceptance criterion the work received (one the ticket or someone other than the author set; the author's own are design under review), opens a security, tenancy or data-loss hole, crosses a boundary the project's architecture standards draw, or leaves a test gap that hides one of these. |
 | `advisory` | Worth one line, not worth blocking: style, naming, simplification, prose, a standard whose breach changes no behaviour and crosses no boundary, any suggestion the author may decline. |
 
 Code is the truth and prose points at it. A finding about a comment, a
@@ -394,13 +400,30 @@ finding per instance. Listing them buries the three findings the author can
 act on among the fifteen they cannot, and an author who has skimmed one
 review skims the next one, which is how a real finding gets missed.
 
+Pre-existing means already on the target branch. Commits this branch already
+carries (an earlier revision, an earlier run's work) are part of the change
+and are not precedent. This settles what counts as pre-existing, not what a
+delta pass re-reads.
+
 Two things are not pre-existing, whatever their line numbers say: a breach
 the change makes worse, and one the change now depends on. Both are findings
 about this change and land at whatever tier they earn.
 
-**For every type, field or parameter a change adds, name the line that reads
-it.** No reader, no field. Say which line, not that one probably exists —
-a reader you cannot point at is the finding.
+**For every type, field, parameter, public method or function, and
+exception type a change adds, name the line that reads, calls or handles
+it.** No reader, no field. Say which line, not that one probably
+exists — a reader you cannot point at is the finding. A reader acts on the
+value in production code: it branches on it, computes with it, or passes it
+out of the change to a receiver that acts on it. A test, a copy into
+another field, a check of the value against itself or its twin, and a
+serializer whose output no receiver acts on are not readers; a check that
+only rejects the value reads it only when some production code can produce
+the value it rejects. A unit is public when code outside its own module can reach it.
+For a public method or function the change adds, or keeps while removing its
+last production caller, name its production caller; for one the project
+publishes as its API, name that export instead. For an exception type the
+change adds, name the handler that decides what happens next and what it
+decides for this failure; the framework's default is not a handler.
 
 This cuts the opposite way from the observation it is usually confused with.
 "This value is computed and then dropped" is a true sentence that sounds like
@@ -417,8 +440,8 @@ nothing *should* — a reader someone is about to write is invisible here, and
 "a later ticket will use it" is a real answer that only the people who know
 what the system is for can weigh. So this is stated as the fact and never as
 a demand: "nothing reads `x`" is the finding; "delete `x`" is a suggestion
-the author may decline like any other. It is `advisory` unless the unread
-thing also breaks something.
+the author may decline like any other. It is `advisory` unless the unread or
+uncalled thing also breaks something.
 
 **A finding is a claim and its evidence, and they are not the same length.**
 The claim is what breaks, where, and what to do about it — a few lines, in
@@ -584,8 +607,8 @@ and nothing else.
 | Units | Each new or changed module, type, function or handler: its path, its signature in the project's own language in a code block, and a one-line purpose. No bodies. |
 | Changed signatures | Each existing signature that changes: `path:line`, the current form and the proposed one. |
 | Dependency direction | Which unit depends on which, and the layer each one sits in. |
-| Readers | For every new field or parameter, the unit that reads it. |
-| Precedent | The existing unit each new one follows. |
+| Readers | For every new field, parameter, public method or function, and exception type, the unit that reads, calls or handles it, as *Verdicts and finding severities* defines them. |
+| Precedent | The unit on the target branch each new one follows. |
 | Left to spec | Semantics, invariants and error behavior: named here, decided in the spec. |
 
 One unit, for example:
@@ -605,9 +628,9 @@ Issues one invoice for a paid order. Follows `src/billing/receipts.py`.
 - **A change with no new or changed signatures** writes one line: "no new or
   changed signatures".
 - **Never write stub files to the branch.** The shape lives only in its
-  file. When implement-feature runs after a shape, pass it the shape with the
-  spec: its first task lays the signatures down as stubs, and no stub
-  survives to the MR.
+  file. When implement-feature or verify-feature runs after a shape, pass it
+  the shape with the spec: implement-feature's first task lays the
+  signatures down as stubs, and no stub survives to the MR.
 - **Shape and spec split the decisions.** Shape decides names, types,
   placement and dependency direction. The spec decides semantics,
   invariants, payloads and errors. When spec-feature runs after a shape, pass
@@ -672,12 +695,40 @@ conversation:
 
 | Section | Contents |
 |---|---|
-| What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`). |
+| What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
 | Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out (a lone reviewer holds every seat), and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
-| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred: a decision already made, not a gap to report back. Raise one only where living with it breaks something, and then say what breaks |
-| Vocabulary | The rules in *Verdicts and finding severities*, copied verbatim |
+| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
+
+## What a fresh reviewer is given
+
+A fresh reviewer is only as independent as its brief, and the agent that did
+the work writes the brief. So a brief carries inputs, never the author's
+conclusions about them.
+
+- **Only the listed inputs.** A brief carries what the workflow that writes
+  it lists for it and nothing else: no verdict, approval or gate result from
+  an earlier pass, no disposition the author gave a finding, no instruction
+  about what is or is not a defect. A finding still open from an earlier
+  pass may be named, as open.
+- **Say who wrote each input.** The author is whoever wrote the change,
+  agent or person. Everything the author wrote (plan, shape, spec, a
+  contract file, the MR description) is labelled as the author's, and is
+  under review like the code. A person's words, meaning anyone's but the
+  author's (the ticket, an instruction given in the session or on the MR),
+  are quoted verbatim with where they were said (a file path or an MR note)
+  and labelled as theirs. A person set only what their quoted words name: a
+  go-ahead on the author's proposal approves the direction, and the
+  proposal stays the author's.
+- **A scope statement excuses an absence, never a presence.** "Deferred to
+  <item>" or "not in this MR" means the reviewer does not report that thing
+  as missing. No scope statement, the author's or a person's, makes what the
+  change does add correct: what it adds is reviewed on its merits. Deferring
+  a unit's consumer does not excuse the unit: that nothing calls it is still
+  a finding.
+
 
 *(See **Verdicts and finding severities**, earlier in this document.)*
 

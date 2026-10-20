@@ -71,6 +71,8 @@ after its opening paragraph.
 - [proposals/composable-workflows.md](proposals/composable-workflows.md) —
   design rationale for 2.5: project workflows, the shape step, and canon,
   with the decisions taken and what was left for later.
+- [proposals/review-inputs.md](proposals/review-inputs.md) — why what a
+  fresh reviewer is given is core text, and what 2.5 changed in it.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.

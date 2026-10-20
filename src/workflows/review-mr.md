@@ -42,11 +42,12 @@ commits to it.
 
 ### 4. Assemble the review brief
 - Gather: the MR id, the diff, the changed-file list, **the merge-request
-  description**, the spec or ticket, the test commands, and the personas
-  active for this feature (`run.active-personas`, when present). The
-  description is not furniture: it is where the author states what this
-  change deliberately leaves undone, and a panel that never reads it spends
-  a cycle reporting decisions back to the person who made them.
+  description** without its step table or the findings it lists, the spec
+  or ticket, the test commands, and the personas active for this feature
+  (`run.active-personas`, when present). The description is not furniture:
+  it is where the author states what this change deliberately leaves undone,
+  and a panel that never reads it spends a cycle reporting decisions back to
+  the person who made them.
 - **Read the pipeline's JOBS, not its status.** A pipeline reports success
   when every job it chose to count succeeded, and a job configured to allow
   failure is not counted — so a red job sits under a green rollup reporting
@@ -81,8 +82,13 @@ commits to it.
   named and still open until this pass says otherwise. Ground a previous
   cycle already judged is not judged again — this cycle answers which open
   findings the new commits closed, and what the new commits broke.
-- **Check first that the reviewed head is still an ancestor of this one.**
-  Where it is, the delta is the commit range `<review.reviewed-head>..<head>`.
+- **Unless the work was re-planned.** When a plan, shape or spec record
+  differs between `review.reviewed-head` and this head, this cycle briefs
+  the whole change against the target branch, as cycle 1 does, with the
+  open findings still named.
+- **For a delta pass, check first that the reviewed head is still an
+  ancestor of this one.** Where it is, the delta is the commit range
+  `<review.reviewed-head>..<head>`.
   Where it is **not**, the branch was rebased or rewritten, and that range is
   not a delta at all: it lists every replayed commit as though it were new,
   which sends the panel back over the whole branch — the outcome this step

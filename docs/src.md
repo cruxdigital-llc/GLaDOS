@@ -35,6 +35,7 @@ Single-source rule partials, inlined where a core includes them via
 - `branch-naming.md` — branch names and MR targets resolve from `glados.yaml` → `branching:`.
 - `shape.md`, `open-mr.md`, `self-review.md` — the library steps `run-pipeline` runs itself (the shape step, opening the MR, the self-review).
 - `persona-pass.md`, `design-review.md` — the two ways `run-pipeline` reviews a step's artifact: an in-context persona pass, or a fresh agent with no memory of writing it.
+- `review-inputs.md` — what a fresh reviewer's brief may carry and who wrote each input. Included by `design-review.md` and the `evaluator-spawn` and `mr-review-panel` modules.
 - `canon.md` — how a consult point reads the project's canon (`canon:` in `glados.yaml`): the digest, never the URL; seats; weight below decisions, standards and philosophies; the citation form. Included only by the cores that consult canon: plan-feature, spec-feature, verify-feature, review-mr, review-codebase, brunch and run-pipeline.
 
 ## `src/workflows/`

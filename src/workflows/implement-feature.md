@@ -25,6 +25,9 @@ those belong to the workflows around it.
   title. Return to the caller for spec-feature first.
 - Read the spec in full before touching code. Its acceptance criteria are the
   definition of done for the loop below.
+- When the caller passes a shape with the spec, take it too. Its units are
+  the first task of the breakdown: lay their signatures down before any
+  body.
 
 ### 2. Claim the branch
 - When the caller already put this run on a working branch, stay on it.
@@ -61,11 +64,15 @@ Work the checklist top to bottom. For each task:
   written above. A green per-task loop with a red suite is unfinished work.
 - Re-read the spec's acceptance criteria against the final diff; anything
   unmet goes back on the checklist.
+- With a shape, compare the final diff with it. Any public unit the diff
+  adds that the shape does not list, or a shape unit the diff drops, is a
+  departure, and the handoff states it.
 
 ### 6. Handoff
 - Leave the working diff on the branch for the caller's verify and commit
   steps.
 - This run produces a `progress` outcome carrying the checklist state, a
-  summary of the diff, and the test result.
+  summary of the diff, the test result, and each departure from the shape
+  with its reason.
 - Run the verify-feature workflow next (the calling pipeline does this
   automatically).
