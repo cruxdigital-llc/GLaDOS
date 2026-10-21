@@ -54,9 +54,10 @@ verify-feature record the same way:
 
 | File | Written by |
 |---|---|
-| `<record>.<step-id>.md` | a project step of a `run-pipeline` run (its result, its change notes, or a gate's findings) |
+| `<record>.<step-id>.md` | a project step of a `run-pipeline` run (its result or its change notes) |
 | `<record>.shape.md` | the `shape` step |
-| `<record>.<step-id>.review-brief.md`, `<record>.<step-id>.review.md` | a fresh-agent design review of a step |
+| `<record>.<step-id>.review-brief-<n>.md`, `<record>.<step-id>.review-<n>.md` | a fresh-agent design review of a step, the n-th check in its cycle table |
+| `<record>.<step-id>.audit-<n>.md` | a gate's audit done in the run itself, the n-th check in its cycle table |
 | `<record>.requirements.md`, `<record>.spec.md` | `spec-feature` |
 | `<record>.evaluation-brief.md`, `<record>.evaluation.md` | the evaluator |
 

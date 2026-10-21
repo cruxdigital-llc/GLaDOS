@@ -74,14 +74,15 @@ For each ticket, on a working branch off the integration branch (named per
    build-feature workflow instead. Either way the MR targets the
    integration branch. When the run switched an
    `(agent)` pipeline (its record says so), update the row to the new one,
-   still marked `(agent)`. A ticket whose run parks at a checkpoint waits
-   for its approval: mark its row `awaiting-approval:<step>` and note the
-   parked branch and record the park's escalation names, hold its
-   dependents, and carry on with tickets that do not depend on it. Once no
-   other ticket can run, check each parked ticket's approval once and
-   resume the approved ones. When every remaining row is parked or waits on
-   a parked row, end this run with a `progress` outcome listing each parked
-   row and the approval it waits for; a later run-epic run resumes them
+   still marked `(agent)`. A ticket whose run parks, at a checkpoint or on
+   a question, waits for its approval or answer: mark its row
+   `awaiting-approval:<step>` and note the parked branch and record the
+   park's escalation names, hold its dependents, and carry on with tickets
+   that do not depend on it. Once no other ticket can run, check each
+   parked ticket once for its approval or answer and resume those that
+   have one. When every remaining row is parked or waits on a parked row,
+   end this run with a `progress` outcome listing each parked row and the
+   approval or answer it waits for; a later run-epic run resumes them
    through step 0. This run has not finished the epic: it keeps its claim
    and appends no work-unit row, as *Before ending this run* sets out.
    Never loop over the queue again within one run.

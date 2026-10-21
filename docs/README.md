@@ -73,6 +73,9 @@ after its opening paragraph.
   with the decisions taken and what was left for later.
 - [proposals/review-inputs.md](proposals/review-inputs.md) — why what a
   fresh reviewer is given is core text, and what 2.5 changed in it.
+- [proposals/design-loop.md](proposals/design-loop.md) — why a question for
+  a person parks instead of failing a gate, and why run-pipeline's revise
+  loop also stops on stalled cycles.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.

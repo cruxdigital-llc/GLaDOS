@@ -32,9 +32,9 @@ team can see, and no step that was not declared.
   a park of this work, fetch that branch and check it out first, whatever
   branch this run started on, and read the record with the `parked` row
   there. This run resumes it: take that record's pipeline, record
-  `pipeline: <name> (selected by: resume)`, and check the approval as
-  **Resume** in step 4 sets out before step 2. The rules are not applied
-  again.
+  `pipeline: <name> (selected by: resume)`, and check the approval or
+  answer as **Resume** in step 4 sets out before step 2. The rules are not
+  applied again.
 - Otherwise the first rule that applies picks the pipeline:
 
 | # | Rule | Selected by |
@@ -129,9 +129,9 @@ takes its spec from the caller.
   `glados.yaml` and of each step body used. Re-check them before each step
   and before finishing. A change means an `escalation` ("gating inputs
   changed mid-run") and a stop.
-- A resumed run (step 1) copies the parked run's step table instead,
-  finished rows and their artifacts kept, and compares its fresh pins with
-  the parked run's. It takes the fresh pins from the branch the work
+- A resumed run (step 1) copies the parked run's step and cycle tables
+  instead, finished rows and their artifacts kept, and compares its fresh
+  pins with the parked run's. It takes the fresh pins from the branch the work
   targets (`git rev-parse <target>:<path>` after a fetch), since the parked
   branch still holds the copies pinned at the park. Any difference,
   including a sequence edited while the work was parked, is "gating inputs
@@ -163,7 +163,8 @@ the sequence does not list.
   edit code on the branch and record what changed in `<record>.<id>.md`.
   `gate`: audit the latest artifact from a step its `audits` names, against
   the body, and write findings on the *Verdicts and finding severities*
-  scale to `<record>.<id>.md`. A gate passes with no `blocking` finding.
+  scale to its audit's file (**Bound**). A gate passes with no `blocking`
+  finding.
   While a project step runs, with its review and its gate, the consult point
   for *Consulting canon* is the step's id.
 - **Modifiers** (`modifier:`, default `required`):
@@ -183,10 +184,29 @@ the sequence does not list.
 - **Nothing to work on.** An optional step is skipped too, its row saying
   why, when every earlier producer of a kind it needs was skipped, or (for a
   gate) every step its `audits` names was.
-- **Bound.** Count each step's revise cycles in the record and check
-  `params.pipeline.max-cycles` before starting another, as *Loop bounds*
-  sets out. At the bound, mark the row `failed`, emit an `escalation`, and
-  stop.
+- **Bound.** A revise cycle is one revision of a step's artifact, whatever
+  it answers (open blocking findings, a person's answers, a refusal), and
+  the check after it. A checked step has a cycle table below the step
+  table, one row per check (a review, a gate's audit, or an ask at a
+  `human` checkpoint):
+
+  `check | file | given | closed | raised | questions | stalled`
+
+  - `check` is the row's number n. Each check's files carry it, so none
+    overwrites another; a gate's audit done here is
+    `<record>.<id>.audit-<n>.md`. `file` links them, or quotes the answer
+    to an ask.
+  - A finding is named by its check and number (`2.1`). `given`: what
+    earlier rows left open. `closed`: those its file reports closed or not a
+    defect, naming whose call it was; a check done here reports as step 5 of
+    the reviewer's prompt sets out. `raised`: its new blocking findings,
+    each `new`, or `re-opens <n>` when the table shows it closed (same path,
+    input and consequence), which stops the run (*Loop bounds*).
+    `questions`: those it asked (**Questions**).
+  - `stalled`: `yes` for a revise cycle given findings that closes none,
+    `—` for a check after no revision, else `no`.
+
+  At either bound in *Loop bounds*, mark the row `failed`.
 - **Review** (`review:`) of the step's artifact; for a gate, it is how the
   audit is done. `none`: this agent alone. `in-context`: a *Persona pass*.
   `fresh-agent`: a *Fresh-agent design review*.
@@ -198,9 +218,10 @@ the sequence does not list.
   a person invoked the run, mark the row `parked` in that commit, ask them
   in the session, record who answered what, and set the row as the answer
   decides; a session that ends before the answer leaves a park that a later
-  run resumes. A refusal, with the person's reasons, is a blocking finding:
-  revise the artifact as `required` does, whatever the modifier, and ask
-  again within the step's bound; a person who says stop ends the run.
+  run resumes. A refusal, with the person's reasons, is a blocking finding
+  the ask raises: revise the artifact as `required` does, whatever the
+  modifier, and ask again within the step's bounds; a person who says stop
+  ends the run.
   Unattended (run-epic, headless), park: mark the row `parked`, keep the
   branch, emit one `escalation` naming the branch, this run's record, the
   artifact paths and the approval needed, and end the run. Push the branch
@@ -211,18 +232,40 @@ the sequence does not list.
   parked-run rule in step 3 of *Before ending this run*, and its pending MR
   items stay pending (step 5 there).
 - **Resume.** A run resuming parked work (step 1) continues after the
-  checkpoint once a maintainer, or a CODEOWNER of `glados.yaml` or
-  `product-knowledge/steps/`, has approved on the park's escalation. Check
-  the approver's role with the platform CLI and quote the approval in the
+  checkpoint, or inside the step for answers, once a maintainer, or a
+  CODEOWNER of `glados.yaml` or `product-knowledge/steps/`, has approved
+  or answered on the park's escalation. Check that person's role with the
+  platform CLI and quote the approval or answers in the
   new record. A park left by a session that ended before its in-session
   answer has no escalation: a person who invoked this run answers as at the
   checkpoint, and an unattended run parks it as above. Build on the parked
-  record and step table (step 3); a claim the parked run left is the one
-  this run resumes, not contention. With no approval yet, say so in the
-  record and end the run there, running no step and copying no step table.
+  record and its tables (step 3); a claim the parked run left is the one
+  this run resumes, not contention. With no approval or answer yet, say so
+  in the record and end the run there, running no step and copying no
+  table.
   It ends as a park does, with no new escalation: the claim stays, no
   work-unit row is appended, pending MR items stay pending, and the branch
   is pushed again once the epilogue has committed the record.
+- **Questions.** The run records each question for a person, a nested
+  plan's open ones included, and how it went, routing each from the
+  readings as their finder wrote them, never reworded:
+  - A reading that needs a choice classed `forbidden` is refused as
+    *Decision rights* sets out, never asked; one classed `agent` or
+    `record` is made under its class and by itself asks nothing. A
+    question left with no reading materially different from the plainest
+    is an advisory finding.
+  - **Every other question parks the step** once its check is done (with
+    no check, once its artifact is written): one park for all of them, as
+    at a `human` checkpoint, the questions standing where the approval
+    would. A run with no branch of its own cuts one before parking, as
+    **Branch** does. At a bound, the run stops instead, its escalation
+    carrying the questions too.
+  - **Answers.** Record each verbatim, with who gave it and where, noting
+    when that is not the person whose words the question turns on; the
+    question and its readings stay their finder's. The author then revises
+    for the answers and any finding still open (**Bound**).
+  - A step after open-mr parks for no question: its questions go on the MR
+    with its `verdict`.
 - **Selection re-check.** After the first step that produces a plan or spec,
   re-test `when:` against what that artifact says the work touches. A
   pipeline the agent chose (rules 4 to 6, or a rule 3 row marked `(agent)`)
