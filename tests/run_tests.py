@@ -1921,6 +1921,24 @@ class TestManifestKeysAndDecisions(unittest.TestCase):
         self.assertIn("agent | record | escalate | forbidden", out)
         self.assertNotIn("Traceback", out)
 
+    def test_bad_merge_authority_is_fatal(self):
+        """A merge authority outside human | agent-integration-only | agent
+        installed: it has no defined behaviour at run time, and the
+        relaxation check compares an unknown value as not laxer."""
+        for value in ("humna", "agnet", ""):
+            with self.subTest(value=value):
+                text = read(EXAMPLE).replace(
+                    "merge-authority: human ",
+                    f"merge-authority: {value} ")
+                self.assertNotEqual(text, read(EXAMPLE))
+                rc, out = install("direct", make_target(text))
+                self.assertEqual(rc, 1, out)
+                shown = repr(value or None) if not value else f"'{value}'"
+                self.assertIn(f"merge-authority: {shown} is not a merge "
+                              f"authority", out)
+                self.assertIn("human | agent-integration-only | agent", out)
+                self.assertNotIn("Traceback", out)
+
     def test_decision_leaf_names_stay_open(self):
         text = read(EXAMPLE).replace("  new-dependency: agent",
                                      "  new-dependency: agent\n"
@@ -5159,6 +5177,54 @@ class TestPipelines(unittest.TestCase):
                  + "\nevolving:\n  params: 5\n"
                  + original[original.index("\nproduction:"):],
                  "presets.yaml (phase:evolving): params: must be a mapping")):
+            with self.subTest(table=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotRegex(out, r"[0-9a-f]{64}")
+                self.assertNotIn("Traceback", out)
+        write(table, original)
+        self.effective(t)
+
+    def test_the_run_table_must_spell_every_decision_right(self):
+        """effective-config checked the run's own table for bounds only. A
+        decision class it misspells (`agnet`) printed a digest to pin, and
+        so did one written as a YAML alias (`*dr`, its anchor `&dr agent`
+        elsewhere): the parser kept the alias as text, so editing the
+        anchor left the digest unchanged while an agent that resolves
+        aliases read `agent`. Each is refused, and so is a merge authority
+        outside the three."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        evolving = original.index("\nevolving:")
+        production = original.index("\nproduction:")
+        head, block, tail = (original[:evolving],
+                             original[evolving:production],
+                             original[production:])
+        right = "    pipeline-discretion: agent\n"
+        merge = "  merge-authority: agent-integration-only\n"
+        self.assertEqual(block.count(right), 1)
+        self.assertEqual(block.count(merge), 1)
+        for label, edited, needle in (
+                ("misspelt class", head + block.replace(
+                    right, "    pipeline-discretion: agnet\n") + tail,
+                 "decisions.pipeline-discretion: 'agnet' is not a decision "
+                 "class"),
+                ("alias", head + block.replace(
+                    right, "    pipeline-discretion: *dr\n")
+                 + tail.replace("    pipeline-discretion: record\n",
+                                "    pipeline-discretion: &dr agent\n", 1),
+                 "'*dr' starts with '*'"),
+                ("merge authority", head + block.replace(
+                    merge, "  merge-authority: agent-integration-onyl\n")
+                 + tail,
+                 "merge-authority: 'agent-integration-onyl' is not a merge "
+                 "authority")):
             with self.subTest(table=label):
                 self.assertNotEqual(edited, original)
                 write(table, edited)

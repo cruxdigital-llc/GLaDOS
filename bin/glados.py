@@ -1903,16 +1903,7 @@ def run_type_checks(source: Source, comp: Compilation,
     errors.extend(_check_phase_invariants(source, r))
 
     # ---- (6b) decision values ------------------------------------------------
-    # Leaf NAMES under decisions: are open (a project names its own decision
-    # points), but every VALUE must be one of the four classes the preamble's
-    # decision-rights table defines. A misspelt class has no defined behaviour
-    # at run time, and _is_laxer would wave it through the relaxation check.
-    for leaf, val in sorted((r.values.get("decisions") or {}).items()):
-        if val not in DECISION_ORDER:
-            prov = r.provenance.get(f"decisions.{leaf}", "baseline")
-            errors.append(f"decisions.{leaf}: '{val}' is not a decision class "
-                          f"— use one of agent | record | escalate | "
-                          f"forbidden (value from {prov})")
+    errors.extend(decision_value_errors(r))
 
     # ---- (7) alias-map integrity -------------------------------------------
     for alias, aliased in source.aliases.items():
@@ -1953,6 +1944,29 @@ def run_type_checks(source: Source, comp: Compilation,
         if w not in comp.warnings:
             comp.warnings.append(w)
 
+    return errors
+
+
+def decision_value_errors(r: Resolved) -> list[str]:
+    """Check (6b). Leaf NAMES under decisions: are open (a project names its
+    own decision points), but every VALUE must be one of the four classes
+    the preamble's decision-rights table defines, and merge-authority one of
+    its three. A misspelt value has no defined behaviour at run time, and
+    _is_laxer would wave it through the relaxation check. effective-config
+    runs it on the table a run reads too, which validate does not."""
+    errors = []
+    for leaf, val in sorted((r.values.get("decisions") or {}).items()):
+        if val not in DECISION_ORDER:
+            prov = r.provenance.get(f"decisions.{leaf}", "baseline")
+            errors.append(f"decisions.{leaf}: '{val}' is not a decision class "
+                          f"— use one of agent | record | escalate | "
+                          f"forbidden (value from {prov})")
+    val = r.values.get("merge-authority")
+    if val not in MERGE_AUTHORITY_ORDER:
+        prov = r.provenance.get("merge-authority", "baseline")
+        errors.append(f"merge-authority: {val!r} is not a merge authority — "
+                      f"use one of {' | '.join(MERGE_AUTHORITY_ORDER)} "
+                      f"(value from {prov})")
     return errors
 
 
@@ -4577,14 +4591,16 @@ def cmd_effective_config(args) -> int:
     stop at is refused, not pinned: one that is not a whole number of 1 or
     more, and one a workflow this configuration enables references but the
     table leaves absent or null (validate resolves against the toolchain's
-    table, not the one the run reads)."""
+    table, not the one the run reads). So is a decision class or merge
+    authority the table misspells."""
     source = _resolve_source(args)
     target = Path(args.target).resolve()
     if not target.is_dir():
         raise Fatal(f"target directory does not exist: {target}")
     r, where = run_configuration(source, target, args.ref)
     comp = compile_all(source, r, structural_hash(r.raw))
-    errors = unresolved_params_errors(comp) + loop_bound_errors(r)
+    errors = (unresolved_params_errors(comp) + loop_bound_errors(r)
+              + decision_value_errors(r))
     if errors:
         print(f"glados effective-config: FAIL — {where}")
         for e in errors:

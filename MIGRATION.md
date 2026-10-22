@@ -458,9 +458,10 @@ before you reinstall:
   covers it". Set `branching.default-target`, or add `run-pipeline` to
   `disabled-workflows:`.
 - **A `decisions:` value that is not a decision class.** Every value must
-  be one of `agent`, `record`, `escalate` or `forbidden`. 2.4 ignored any
-  other value (`vendor-choice: ask`); 2.5 fails install and check on it,
-  naming the key.
+  be one of `agent`, `record`, `escalate` or `forbidden`, and
+  `merge-authority:` one of `human`, `agent-integration-only` or `agent`.
+  2.4 ignored any other value (`vendor-choice: ask`); 2.5 fails install
+  and check on it, naming the key.
 - **A loop bound that is not a whole number.** Every `max-cycles` under
   `params:` must be a whole number of 1 or more. 2.4 installed `"5"`,
   `true`, a list or `0`, leaving the loop no count to stop at; 2.5 fails
