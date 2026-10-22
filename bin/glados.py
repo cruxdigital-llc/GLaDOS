@@ -1257,9 +1257,13 @@ def load_manifest(path: Path) -> dict:
     if not path.exists():
         raise Fatal(f"no manifest at {path} — copy glados.yaml.example to "
                     f"{path.name} in your repo root and edit it")
-    raw = parse_yaml(read_text(path), path.name)
+    return parse_manifest(read_text(path), path.name)
+
+
+def parse_manifest(text: str, name: str) -> dict:
+    raw = parse_yaml(text, name)
     if not isinstance(raw, dict):
-        raise Fatal(f"{path.name}: the top level must be a mapping of "
+        raise Fatal(f"{name}: the top level must be a mapping of "
                     f"'key: value' lines, got a {type(raw).__name__} — start "
                     f"from glados.yaml.example")
     return raw
@@ -1922,36 +1926,10 @@ def run_type_checks(source: Source, comp: Compilation,
                           f"real core — fix the target or add the core")
 
     # ---- (8) dotted params literals resolve ---------------------------------
-    # Compiled text tells the agent to resolve `params.<ns>.<key>` from
-    # glados.yaml at run time; a literal with no resolved value is a safety
-    # bound that resolves to nothing (an unbounded loop, a missing roster).
-    params = r.values.get("params") or {}
-    for c, text in comp.cores.items():
-        for lit in sorted(set(PARAMS_LITERAL_RE.findall(text))):
-            _, ns, key = lit.split(".")
-            if (params.get(ns) or {}).get(key) is None:
-                errors.append(f"compiled {c}: references `{lit}` but the "
-                              f"resolved manifest has no value for it — set it "
-                              f"under params: in glados.yaml or a phase-preset "
-                              f"baseline")
+    errors.extend(unresolved_params_errors(comp))
 
     # ---- (8b) loop bounds are whole numbers ----------------------------------
-    # Every `params.<ns>.max-…` key bounds a loop (*Loop bounds*), whichever
-    # layer set it. Text, true/false, a list or a number below 1 is no count
-    # an agent can stop at. An absent value is (8)'s; a retired key is read
-    # by nothing.
-    for ns, cfg in sorted(params.items()):
-        for key, val in sorted(cfg.items()):
-            if (not key.startswith("max-") or val is None
-                    or f"{ns}.{key}" in RETIRED_PARAMS):
-                continue
-            problem = _loop_bound_problem(val)
-            if problem:
-                prov = r.provenance.get(f"params.{ns}.{key}", "baseline")
-                errors.append(f"params.{ns}.{key}: must be a whole number of "
-                              f"1 or more (it bounds a loop) — {problem} "
-                              f"(value from {prov}); write a plain integer "
-                              f"such as 3, with no quotes or decimal point")
+    errors.extend(loop_bound_errors(r))
 
     # ---- (9) project workflows: pipelines + steps ----------------------------
     # Lane 2 by design (run-pipeline reads them live), but they decide which
@@ -1978,6 +1956,25 @@ def run_type_checks(source: Source, comp: Compilation,
     return errors
 
 
+def unresolved_params_errors(comp: Compilation) -> list[str]:
+    """Check (8). Compiled text tells the agent to resolve
+    `params.<ns>.<key>` from glados.yaml at run time; a literal with no
+    resolved value is a safety bound that resolves to nothing (an unbounded
+    loop, a missing roster). effective-config runs it on the configuration
+    a run obeys too, whose preset table validate does not read."""
+    errors = []
+    params = comp.resolved.values.get("params") or {}
+    for c, text in comp.cores.items():
+        for lit in sorted(set(PARAMS_LITERAL_RE.findall(text))):
+            _, ns, key = lit.split(".")
+            if (params.get(ns) or {}).get(key) is None:
+                errors.append(f"compiled {c}: references `{lit}` but the "
+                              f"resolved manifest has no value for it — set it "
+                              f"under params: in glados.yaml or a phase-preset "
+                              f"baseline")
+    return errors
+
+
 def _loop_bound_problem(val):
     """What is wrong with ``val`` as a loop bound, or None for a whole number
     of 1 or more. YAML's `true` is a bool, which Python counts as an int, so
@@ -1989,6 +1986,27 @@ def _loop_bound_problem(val):
     if isinstance(val, str):
         return f"got the text '{val}'"
     return f"got {_fmt(val)}"
+
+
+def loop_bound_errors(r: Resolved) -> list[str]:
+    """Every `params.<ns>.max-…` key bounds a loop (*Loop bounds*), whichever
+    layer set it. Text, true/false, a list or a number below 1 is no count
+    an agent can stop at. An absent value is check (8)'s; a retired key is
+    read by nothing."""
+    errors = []
+    for ns, cfg in sorted((r.values.get("params") or {}).items()):
+        for key, val in sorted(cfg.items()):
+            if (not key.startswith("max-") or val is None
+                    or f"{ns}.{key}" in RETIRED_PARAMS):
+                continue
+            problem = _loop_bound_problem(val)
+            if problem:
+                prov = r.provenance.get(f"params.{ns}.{key}", "baseline")
+                errors.append(f"params.{ns}.{key}: must be a whole number of "
+                              f"1 or more (it bounds a loop) — {problem} "
+                              f"(value from {prov}); write a plain integer "
+                              f"such as 3, with no quotes or decimal point")
+    return errors
 
 
 def _check_phase_invariants(source: Source, r: Resolved) -> list[str]:
@@ -4478,6 +4496,105 @@ def cmd_validate(args) -> int:
     return 0
 
 
+# ---- effective-config ---------------------------------------------------------
+#
+# A run obeys glados.yaml layered over the preset table (baseline < phase <
+# explicit), not glados.yaml alone: a bound or decision class the manifest
+# leaves out comes from the table. Pinning only glados.yaml's blob let such a
+# value change mid-run unseen — a re-vendored or edited .glados/presets.yaml,
+# a plugin update, a toolchain whose layering moved. run-pipeline pins this
+# digest of the resolved values beside the blobs; a resumed run takes the
+# fresh one from the branch the work targets with --ref.
+
+RUN_PRESETS = ".glados/presets.yaml"
+
+
+def _blob_text(data: bytes, name: str) -> str:
+    """A blob's bytes as read_text reads a file: UTF-8, a BOM allowed, LF."""
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise Fatal(f"{name}: not valid UTF-8 ({exc.reason} at byte "
+                    f"{exc.start}) — re-save the file as UTF-8")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def run_configuration(source: Source, target: Path, ref=None):
+    """(resolved, where): the configuration a run in ``target`` obeys and
+    where it was read. glados.yaml is layered over the preset table the
+    preamble names, `.glados/presets.yaml`, else this toolchain's own (the
+    plugin's path mapping). With ``ref``, each is read as that commit has
+    it; a table the commit does not track is read from the working tree,
+    as the run reads it."""
+    git = sha = None
+    if ref is None:
+        raw = load_manifest(target / "glados.yaml")
+        where = "glados.yaml"
+    else:
+        git = _LedgerGit(target)
+        sha = git.rev(ref)
+        if sha is None:
+            raise Fatal(f"--ref {ref}: not a commit in {target}")
+        proc = git.run("cat-file", "blob", f"{sha}:./glados.yaml", check=False)
+        if proc.returncode != 0:
+            raise Fatal(f"{ref} has no glados.yaml in {target} — a run there "
+                        f"has no manifest to obey")
+        raw = parse_manifest(_blob_text(proc.stdout, f"{ref}:glados.yaml"),
+                             "glados.yaml")
+        where = f"glados.yaml at {ref}"
+    table, table_where = None, f"{RUN_PRESETS} at {ref}"
+    if sha is not None:
+        proc = git.run("cat-file", "blob", f"{sha}:./{RUN_PRESETS}",
+                       check=False)
+        if proc.returncode == 0:
+            table = parse_yaml(_blob_text(proc.stdout, table_where),
+                               "presets.yaml")
+    if table is None and (target / RUN_PRESETS).is_file():
+        table, table_where = (parse_yaml(read_text(target / RUN_PRESETS),
+                                         "presets.yaml"), RUN_PRESETS)
+    if table is None:
+        table = source.presets
+        table_where = (source.kernel / "presets" / "phases.yaml").as_posix()
+    if not isinstance(table, dict):
+        raise Fatal(f"{table_where}: the preset table must be a mapping of "
+                    f"'baseline:' and one entry per phase")
+    return (resolve_manifest(raw, table, "glados.yaml", table_where),
+            f"{where} over {table_where}")
+
+
+def effective_config_digest(r: Resolved) -> str:
+    """sha256 of the canonical JSON of every resolved value (bounds,
+    decision classes, merge authority, channels and the rest) as layering
+    left them: only a change to what a run obeys moves it."""
+    canonical = json.dumps(r.values, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def cmd_effective_config(args) -> int:
+    """Print the digest run-pipeline pins: the configuration a run obeys,
+    inherited bounds and decision rights included. A bound no loop could
+    stop at is refused, not pinned: one that is not a whole number of 1 or
+    more, and one a workflow this configuration enables references but the
+    table leaves absent or null (validate resolves against the toolchain's
+    table, not the one the run reads)."""
+    source = _resolve_source(args)
+    target = Path(args.target).resolve()
+    if not target.is_dir():
+        raise Fatal(f"target directory does not exist: {target}")
+    r, where = run_configuration(source, target, args.ref)
+    comp = compile_all(source, r, structural_hash(r.raw))
+    errors = unresolved_params_errors(comp) + loop_bound_errors(r)
+    if errors:
+        print(f"glados effective-config: FAIL — {where}")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    print(f"glados effective-config: {effective_config_digest(r)} — {where} "
+          f"(phase: {r.phase})")
+    return 0
+
+
 def _emit_check(problems: list[str], report_only: bool) -> None:
     if not problems:
         print("glados check: OK — no drift, checks pass, manifest hash current")
@@ -6385,6 +6502,20 @@ def build_parser() -> argparse.ArgumentParser:
     pval.add_argument("--target", default=".")
     pval.add_argument("--source")
     pval.set_defaults(func=cmd_validate)
+
+    pe = sub.add_parser(
+        "effective-config",
+        help="print the digest of the configuration a run obeys: the "
+             "target's glados.yaml layered over the preset table "
+             "(.glados/presets.yaml, else this toolchain's), inherited "
+             "bounds and decision rights included. run-pipeline pins it")
+    pe.add_argument("--target", default=".")
+    pe.add_argument("--source")
+    pe.add_argument("--ref",
+                    help="read glados.yaml and the preset table as this "
+                         "commit has them (a resumed run passes the branch "
+                         "its work targets)")
+    pe.set_defaults(func=cmd_effective_config)
 
     pd = sub.add_parser("doctor", help="staleness + wiring report (never fails)")
     pd.add_argument("--target", required=True)

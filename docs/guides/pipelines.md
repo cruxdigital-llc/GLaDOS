@@ -487,8 +487,15 @@ Warnings, which never fail:
   Built-in stages run as nested workflows with their own records, as under
   build-feature, and their rows link them.
 - **Pinned inputs.** The record holds the git blob hashes of `glados.yaml`
-  and each step body used. If either changes on the branch mid-run, the run
-  escalates, so an agent cannot loosen its own gates.
+  and each step body used, and the digest `glados.py effective-config`
+  prints of the configuration in effect: `glados.yaml` layered over the
+  preset table, so a bound or decision right the manifest inherits is
+  pinned too. If any of them changes mid-run, the run escalates, so an
+  agent cannot loosen its own gates. A resumed run takes the fresh pins
+  from the branch the work targets (`effective-config --ref <target>`).
+  `effective-config` refuses a table that leaves a bound a workflow uses
+  absent, null or not a whole number of 1 or more, and that refusal stops
+  the run too.
 - **SDA.** The
   [v2.1 profile](../standards/sda-profile-glados-v2.1.md) reports a
   pipeline's phase as the `stage` of its first row that is not done, skipped
@@ -504,8 +511,8 @@ Warnings, which never fail:
 - **Step table.** Written before any work, with every row pending. A
   required row can end only as done (with its artifact) or waived (by a
   named person).
-- **Pinned inputs.** A mid-run change to `glados.yaml` or a step body
-  escalates.
+- **Pinned inputs.** A mid-run change to `glados.yaml`, a step body, or a
+  bound or decision right the preset table supplies escalates.
 - **MR description.** The step table goes into the MR, where review-mr and
   the team read it.
 - **Ownership.** CODEOWNERS should cover `product-knowledge/steps/` as well

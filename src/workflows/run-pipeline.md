@@ -134,15 +134,21 @@ takes its spec from the caller.
   files, and how the revision before check n answered them in
   `<record>.<id>.revision-<n>.md`, which no brief names.
 - Pin the gating inputs: record the git blob SHA (`git hash-object`) of
-  `glados.yaml` and of each step body used. Re-check them before each step
-  and before finishing. A change means an `escalation` ("gating inputs
-  changed mid-run") and a stop.
+  `glados.yaml` and of each step body used, and the digest of the
+  configuration in effect that `glados.py effective-config --target .`
+  prints, which takes in the bounds and decision rights the preset table
+  supplies (without Python, the preset table's blob SHA). Re-check them,
+  in the working tree, before each step and before finishing. A change
+  means an `escalation` ("gating inputs changed mid-run") and a stop; so
+  does an `effective-config` that fails or prints no digest, naming what
+  it printed.
 - A resumed run (step 1) copies the parked run's step and cycle tables
   instead, finished rows and their artifacts kept, and compares its fresh
   pins with the parked run's, taking the fresh pins from the branch the
-  work targets (`git rev-parse <target>:<path>` after a fetch), not the
-  parked branch. Any difference, including a sequence edited while the
-  work was parked, is "gating inputs changed mid-run".
+  work targets (`git rev-parse <target>:<path>` after a fetch, and
+  `effective-config --ref <target>`), not the parked branch. Any
+  difference, including a sequence edited while the work was parked, is
+  "gating inputs changed mid-run".
 
 ### 4. Run the sequence
 Run the rows in order. Never fold steps together, skip ahead, or run a step

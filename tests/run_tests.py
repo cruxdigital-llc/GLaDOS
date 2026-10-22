@@ -1071,6 +1071,7 @@ class TestParamsResolution(unittest.TestCase):
             t = make_target(manifest)
             write(installed / "glados.yaml", manifest)
             for args in (("validate", "--target", t),
+                         ("effective-config", "--target", t),
                          ("install", "--mode", "claude", "--target", t),
                          ("check", "--target", installed)):
                 with self.subTest(case=name, command=args[0]):
@@ -5032,6 +5033,192 @@ class TestPipelines(unittest.TestCase):
         # one hand-off rule, stated once (step 5), not in each fragment
         self.assertNotIn("### Hand off", text)
         self.assertNotIn("for review-mr and address-review to settle", text)
+
+    # -- the configuration a run obeys is pinned (B2) ------------------------
+
+    def effective(self, t, *extra, source=REPO):
+        """The digest `effective-config` prints for target ``t``."""
+        rc, out = run_cli("effective-config", "--target", t, "--source",
+                          source, *extra)
+        self.assertEqual(rc, 0, out)
+        found = re.search(r"glados effective-config: ([0-9a-f]{64})", out)
+        self.assertTrue(found, out)
+        return found.group(1)
+
+    @staticmethod
+    def blob(t, rel):
+        return subprocess.run(["git", "hash-object", str(t / rel)],
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_a_run_pins_the_configuration_in_effect(self):
+        """glados.yaml's blob is not the configuration a run obeys: a bound
+        or a decision class it leaves out comes from the preset table, so
+        the run pins the digest of the layered result too, in one rule."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        self.assertIn("record the git blob SHA (`git hash-object`) of "
+                      "`glados.yaml` and of each step body used, and the "
+                      "digest of the configuration in effect that "
+                      "`glados.py effective-config --target .` prints", text)
+        self.assertIn("(without Python, the preset table's blob SHA)", text)
+        self.assertIn("(`git rev-parse <target>:<path>` after a fetch, and "
+                      "`effective-config --ref <target>`)", text)
+        self.assertEqual(text.count("Pin the gating inputs"), 1)
+        self.assertEqual(text.count("effective-config"), 3)
+        # a configuration the command refuses is no pin to run under
+        self.assertIn("Re-check them, in the working tree, before each step "
+                      "and before finishing. A change means an `escalation` "
+                      "(\"gating inputs changed mid-run\") and a stop; so does "
+                      "an `effective-config` that fails or prints no digest, "
+                      "naming what it printed.", text)
+
+    def test_an_inherited_bound_or_decision_right_moves_the_pin(self):
+        """A preset change that alters a run's bounds or decision rights
+        leaves glados.yaml's blob as it was and moves the digest, from the
+        vendored table or, with no .glados/ (the plugin), the toolchain's
+        own. A change that alters nothing (a comment) leaves it alone."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        manifest_blob = self.blob(t, "glados.yaml")
+        pinned = self.effective(t)
+        evolving = original.index("\nevolving:")
+        for label, edited in (
+                ("baseline bound", original.replace(
+                    "      max-cycles: 8\n", "      max-cycles: 20\n")),
+                ("phase decision class", original[:evolving]
+                 + original[evolving:].replace(
+                     "    pipeline-discretion: agent\n",
+                     "    pipeline-discretion: escalate\n", 1))):
+            with self.subTest(change=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                self.assertEqual(self.blob(t, "glados.yaml"), manifest_blob)
+                self.assertNotEqual(self.effective(t), pinned)
+        write(table, "# a comment changes nothing a run obeys\n" + original)
+        self.assertEqual(self.effective(t), pinned)
+        # a bound the table makes unenforceable is refused, not pinned
+        write(table, original.replace("      max-cycles: 8\n",
+                                      "      max-cycles: \"8\"\n"))
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("params.pipeline.max-cycles: must be a whole number", out)
+        self.assertNotIn("Traceback", out)
+        # no .glados/: the plugin's own table, which an update can change
+        plugin_side = self.project()
+        src = make_doctored_source()
+        before = self.effective(plugin_side, source=src)
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        write(presets, read(presets).replace("      max-cycles: 8\n",
+                                             "      max-cycles: 20\n"))
+        self.assertNotEqual(self.effective(plugin_side, source=src), before)
+
+    def test_the_run_table_must_bound_every_loop_it_runs(self):
+        """validate resolves against the toolchain's table, but a run reads
+        .glados/presets.yaml, and effective-config, the gate run-pipeline
+        runs on that table, skipped an absent or null bound: a table with
+        no params.pipeline.max-cycles (or a null review-panel bound) printed
+        a digest to pin. Every bound a compiled workflow references must
+        resolve there, and a table out of shape is named, not a traceback."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        bound = "      max-cycles: 8\n"
+        self.assertEqual(original.count(bound), 1)
+        evolving = original.index("\nevolving:")
+        pipeline_ns = re.search(r"^    pipeline:\n(?:(?:      .*| *#.*)?\n)*",
+                                original, re.M).group(0)
+        baseline = re.search(r"^baseline:\n(?:(?:[ #].*)?\n)*", original,
+                             re.M).group(0)
+        for label, edited, needle in (
+                ("null", original.replace(bound, "      max-cycles:\n"),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("line deleted", original.replace(bound, ""),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("namespace removed", original.replace(pipeline_ns, ""),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("phase bound null", original[:evolving]
+                 + original[evolving:].replace("      max-cycles: 5\n",
+                                               "      max-cycles:\n", 1),
+                 "`params.review-panel.max-cycles` but the resolved manifest "
+                 "has no value"),
+                ("baseline not a mapping", original.replace(
+                    baseline, "baseline: 5\n\n"),
+                 "presets.yaml: 'baseline:' must be a mapping"),
+                ("phase not a mapping", original[:evolving] + "\nevolving: 5\n"
+                 + original[original.index("\nproduction:"):],
+                 "presets.yaml: 'evolving:' must be a mapping"),
+                ("params not a mapping", original[:evolving]
+                 + "\nevolving:\n  params: 5\n"
+                 + original[original.index("\nproduction:"):],
+                 "presets.yaml (phase:evolving): params: must be a mapping")):
+            with self.subTest(table=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotRegex(out, r"[0-9a-f]{64}")
+                self.assertNotIn("Traceback", out)
+        write(table, original)
+        self.effective(t)
+
+    def test_a_resumed_run_takes_the_targets_configuration(self):
+        """--ref reads glados.yaml and the preset table as the branch the
+        work targets has them, so a bound the target changed while the work
+        was parked is a changed pin, though the parked checkout still has
+        the old table."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+
+        def git(*a):
+            p = subprocess.run(["git", "-C", str(t), *a],
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        git("checkout", "-q", "-b", "main")
+        git("add", "-A")
+        git("commit", "-q", "-m", "chore: install glados")
+        git("branch", "feat/parked")
+        parked = self.effective(t)
+        self.assertEqual(self.effective(t, "--ref", "main"), parked)
+        table = t / ".glados" / "presets.yaml"
+        write(table, read(table).replace("      max-cycles: 8\n",
+                                         "      max-cycles: 20\n"))
+        git("commit", "-q", "-am", "chore: raise the pipeline bound")
+        on_main = self.effective(t)
+        git("checkout", "-q", "feat/parked")
+        self.assertEqual(self.effective(t), parked)
+        self.assertEqual(self.effective(t, "--ref", "main"), on_main)
+        self.assertNotEqual(on_main, parked)
+        for ref, needle in (("no-such-branch", "not a commit"),
+                            ("main~1^{tree}", "not a commit")):
+            with self.subTest(ref=ref):
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO, "--ref", ref)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+        # the target's manifest is read even where the checkout has none
+        git("rm", "-q", "glados.yaml")
+        git("commit", "-q", "-m", "chore: drop the manifest")
+        self.assertEqual(self.effective(t, "--ref", "main"), on_main)
+        rc, out = run_cli("effective-config", "--target", t, "--source",
+                          REPO, "--ref", "HEAD")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no glados.yaml", out)
+        self.assertNotIn("Traceback", out)
 
     def test_run_epic_assigns_pipelines(self):
         t = make_target(read(EXAMPLE))

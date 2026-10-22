@@ -153,8 +153,9 @@ workflows (`pipelines:` and `steps:` in the manifest, with step bodies in
 instead, because the Claude Code plugin is compiled once from GLaDOS's own
 template and could never compile them. What keeps a skipped step visible is
 compiled into `run-pipeline`: the step table written before any step runs,
-the pinned hashes of `glados.yaml` and the step bodies, the bounded revise
-loops, and the step table in the MR. The compiler checks both blocks at
+the pinned hashes of `glados.yaml`, the step bodies and the configuration
+they resolve to with the presets, the bounded revise loops, and the step
+table in the MR. The compiler checks both blocks at
 install, at `check`, and in `glados.py validate`. Only each pipeline's name
 and description are structural, because they name a shortcut command. See
 [guides/pipelines.md](guides/pipelines.md).
