@@ -18,7 +18,7 @@ Write the brief self-contained:
 |---|---|
 | What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
-| What was asked | The ticket, each instruction a person gave this run, and each question answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
+| What was asked | The ticket, each instruction a person gave this run, and each question a person answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
 | Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out, and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
 | What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
@@ -54,8 +54,10 @@ and what it is.
 6. List every other issue: what is wrong, where (file, and section or
    line), its severity per the vocabulary in the brief, and what would fix
    it.
-7. Check each assumption the artifact labels, and raise questions for a
-   person, as the vocabulary in the brief sets out.
+7. Check each assumption, tag, challenge and question (its form and
+   door) the artifact states, and any person's words it rests on untagged
+   or departs from unstated; raise questions for a person, as the
+   vocabulary in the brief sets out.
 
 Write your review to <record>.<id>.review-<n>.md with sections: Checks
 (item | met/not met | notes), Open findings (number | status | where or

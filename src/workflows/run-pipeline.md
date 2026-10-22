@@ -162,9 +162,10 @@ the sequence does not list.
   record) go in one commit when the row ends or parks, never file by file.
 - **Nested workflows** run as build-feature runs them ("run the spec-feature
   workflow"). Pass the artifacts that meet their needs, by path from the
-  step table, and the run's answers as caller context. Those artifacts
-  bind, and a stage states any departure in its own artifact. Its "run X
-  next" line gives way to this sequence.
+  step table, and the run's answers and the tags of *What a fresh reviewer
+  is given* as caller context. Those artifacts bind, and a stage states any
+  departure in its own artifact. Its "run X next" line gives way to this
+  sequence.
 - **Project steps.** The body says what to produce or check; this document
   says how. `produce`: write the result to `<record>.<id>.md`. `change`:
   edit code on the branch and record what changed in `<record>.<id>.md`.
@@ -215,8 +216,9 @@ the sequence does not list.
 
   A stalled check parks the step at once, naming the open findings, their
   kind and how the author would remove it, for the person to approve that,
-  rule a finding not a defect, waive findings by name, or stop. At the
-  bound, mark the row `failed`.
+  rule a finding not a defect, waive findings by name, or stop, with a
+  scenario, each option's cost and risk, and the author's recommendation,
+  confidence and evidence. At the bound, mark the row `failed`.
 - **Review** (`review:`) of the step's artifact; for a gate, it is how the
   audit is done. `none`: this agent alone. `in-context`: a *Persona pass*.
   `fresh-agent`: a *Fresh-agent design review*.
@@ -250,24 +252,31 @@ the sequence does not list.
   plan's open ones included, and how it went:
   - A reading that needs a choice classed `forbidden` is refused as
     *Decision rights* sets out, never asked.
-  - **Every other question parks the step** once its check is done (with
-    no check, once its artifact is written), or at the end or skip of a
-    later step its body names, none up to it producing `change` or `mr`:
-    one park for all of them, as at a `human` checkpoint, the questions
-    standing where the approval would. At a bound, the run stops instead,
-    its escalation carrying the questions too.
+  - **A one-way door parks the step** once its check is done (with no
+    check, once its artifact is written), or at the end or skip of a later
+    step its body names, none up to it producing `change` or `mr`: one park
+    for all of them, as at a `human` checkpoint, the questions standing
+    where the approval would. At a bound, the run stops instead, its
+    escalation carrying the questions too.
+  - **A two-way door parks nothing.** The author answers it by its
+    finder's recommendation, except that a person's Directive or chosen
+    reading stands until they answer. The question joins the next park,
+    else the MR, for the person to confirm or overturn; unanswered, the
+    answer stands.
   - **A declined advisory** (a fresh agent's, left undone when its row
     ends) is noted in that row by file and number. Once two fresh reviewers
     or evaluators in this run have raised it (the same defect at the same
     unit), it is a question for the person, asked once whatever
     *Materially* says: whether they want it, readings "wanted" and "not
-    wanted", the two findings quoted as its words. It joins the next park,
-    or the MR when none comes before open-mr, and is neither declined again
-    nor made blocking.
+    wanted", the two findings quoted as its words and recommendation,
+    beside the author's reasons for declining. Routed by its door, the
+    work unchanged until they answer, it is neither declined again nor
+    made blocking.
   - **Answers.** Record each verbatim, with who gave it and where, noting
     when that is not the person whose words the question turns on; the
     question and its readings stay their finder's. The author then revises
-    for the answers and any finding still open (**Bound**).
+    for the answers, in each artifact they reach, and any finding still
+    open (**Bound**).
   - A step after open-mr parks for no question: its questions go on the MR
     with its `verdict`.
 - **Selection re-check.** After the first step that produces a plan or spec,
@@ -293,8 +302,10 @@ the sequence does not list.
 ### 5. Finish
 - Bring the step table up to date.
 - When there is anything to list, emit one pooled `decision` outcome: every
-  `record` checkpoint and, when `decisions.pipeline-discretion` is `record`,
-  every discretionary act. This holds on every way the run ends: here, at a
+  `record` checkpoint, every two-way door the author answered
+  (**Questions**), every challenge the work followed and, when
+  `decisions.pipeline-discretion` is `record`, every discretionary act.
+  This holds on every way the run ends: here, at a
   park, and at a stop on an `escalation`, each listing the acts made so far.
 - When this run, or the parked run it resumed, opened an MR, hand it to
   review after the last step: run the review-mr workflow, handing it the

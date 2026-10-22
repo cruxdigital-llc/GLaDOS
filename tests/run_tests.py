@@ -1796,26 +1796,51 @@ class TestReviewInputs(unittest.TestCase):
         "is labelled as the author's, and is under review like the code",
         "A person's words, meaning anyone's but the author's",
         "are quoted verbatim with where they were said (a file path or an MR "
-        "note) and labelled as theirs",
+        "note) and labelled as theirs, untagged.",
+        # words bind as firmly as they were said: one commitment tag per
+        # clause, read from its own words, so a hedge never softens a whole
+        # quote and a firm clause in an answer keeps its force (v3.1)
+        "**A person set only what their quoted words name, as firmly as "
+        "they said it.** Each clause takes the tag its words give until the "
+        "person corrects it:",
+        "*Directive* (\"must\", \"need\", \"never\", \"always\", or a "
+        "plain statement of what is wanted) binds.",
+        # a hedged want is a Preference, never a Hunch: code cannot test a
+        # want (v3.1)
+        "*Preference* (\"should\", \"I'd like\", \"prefer\", or a hedged "
+        "want: \"I think we need\") sets a default that evidence may "
+        "override.",
+        # a Hunch is a belief the code can test, and stands until it is
+        # contradicted (v3.1)
+        "*Hunch* (\"I think\", \"maybe\", \"probably\", \"I wonder\") is "
+        "a belief about what is true (a cause, what code does), which the "
+        "artifact tests against the code, reporting what it finds; it "
+        "stands unless contradicted.",
         # a go-ahead approves only what was shown; an answer binds the
-        # outcome its reading describes, never the option's wording (v3)
-        "A person set only what their quoted words name: a go-ahead "
-        "approves the direction of what they were shown, which stays its "
-        "writer's; an answer choosing a question's reading binds that "
-        "reading's outcome, not its mechanism, scope words or phrasing.",
-        # words bind as firmly as they were said (v3)
-        "**Words bind as firmly as they were said.** \"Must\", \"need\", "
-        "\"never\" or a plain statement of what is wanted, in a person's "
-        "own phrasing, binds. Hedged words (\"I think\", \"maybe\", "
-        "\"should\", \"I'd like\", \"seems reasonable\") and a chosen "
-        "reading's words beyond its outcome set a default that evidence can "
-        "revise.",
-        # evidence against a default is routed, never blocking, and has a
-        # channel where the workflow takes no questions (evaluator, panel)
-        "Evidence against a default is never a blocking finding: where it "
-        "changes an outcome the person names, it is a question for them (an "
-        "advisory written as one where the workflow takes none); otherwise "
-        "the work follows it and says so.",
+        # outcome its reading describes, never the option's wording, and
+        # only named evidence the person never saw reopens it (v3, v3.1)
+        "*Assent* (\"seems fine\", \"yes\", \"go with that\", choosing a "
+        "question's reading) approves only the direction of what they were "
+        "shown, which stays its writer's: a chosen reading's outcome, not "
+        "its mechanism, scope words or phrasing. Material evidence they "
+        "were not shown reopens it as a question naming that evidence.",
+        # evidence against words is stated in one form, from outside the
+        # change, never blocking, and has a channel where the workflow takes
+        # no questions (v3.1)
+        "**Challenge in the open.** Where evidence outside the change "
+        "suggests a person's words miss what they want, the artifact says "
+        "\"your words say X (tag); the code shows Y; I propose Z\", naming "
+        "where.",
+        "Against a Directive, which stands until they answer, or where it is "
+        "material, that is a question for them; otherwise the work follows "
+        "Z.",
+        "Neither raising a challenge nor following one past a Preference or "
+        "Hunch blocks: where the workflow takes no questions, a challenge is "
+        "an advisory written as one.",
+        # a change that does not do what the words say, or departs under a
+        # softened tag, is not a challenge (v3.1)
+        "Any other departure from a person's words, under too soft a tag "
+        "included, breaks a criterion the work received.",
         "A scope statement excuses an absence, never a presence",
         # an author's deferral never excuses an outcome a person set, and
         # only words that name it let it go (v3)
@@ -2135,15 +2160,17 @@ class TestDesignLoop(unittest.TestCase):
         "**Materially**: one reading changes an outcome the ticket or a "
         "person names, or needs a choice `decisions:` classes `escalate`.",
         # narrow variants do not park: they take the project's own
-        # precedent before the plainest, and a test pins the assumption
+        # precedent before the plainest, and a test pins the assumption; a
+        # stored record is one, its class in `decisions:` deciding whether
+        # it is asked (v3, v3.1)
         "Readings that differ otherwise (a unit, a stored record, a failure "
         "path) are not: the artifact takes the one the project's standards "
         "or nearest in-tree precedent follows, else the plainest, labelled "
         "as an assumption for a test to pin.",
         "**Form**: numbered, under *Questions for a person* in its finder's "
         "file",
-        "the words it turns on, quoted with where said, or the `escalate` "
-        "class it needs",
+        "the words it turns on, quoted with where said and their tag, or "
+        "the `escalate` class it needs",
         "the readings, plainest first, each an outcome the person might "
         "want, never a mechanism",
         # a question is never a way around a finding
@@ -2172,11 +2199,11 @@ class TestDesignLoop(unittest.TestCase):
         "or needs a choice `decisions:` classes `escalate`",
         # a body may defer its questions to a later step, which parks even
         # when it asks nothing, and never past code or the MR
-        "**Every other question parks the step** once its check is done "
-        "(with no check, once its artifact is written), or at the end or "
-        "skip of a later step its body names, none up to it producing "
-        "`change` or `mr`: one park for all of them, as at a `human` "
-        "checkpoint, the questions standing where the approval would",
+        "**A one-way door parks the step** once its check is done (with no "
+        "check, once its artifact is written), or at the end or skip of a "
+        "later step its body names, none up to it producing `change` or "
+        "`mr`: one park for all of them, as at a `human` checkpoint, the "
+        "questions standing where the approval would",
         "Any other pipeline claims no branch, and its rows commit nothing, "
         "until it parks and cuts one.",
         "At a bound, the run stops instead, its escalation carrying the "
@@ -2184,9 +2211,11 @@ class TestDesignLoop(unittest.TestCase):
         "**Answers.** Record each verbatim, with who gave it and where, "
         "noting when that is not the person whose words the question turns "
         "on; the question and its readings stay their finder's",
-        # an answer costs a revise cycle (Bound's definition counts it)
-        "The author then revises for the answers and any finding still open "
-        "(**Bound**)",
+        # an answer costs a revise cycle (Bound's definition counts it),
+        # wherever it reaches: an overturned two-way door from an earlier
+        # step is revised in each artifact built on it (v3.1)
+        "The author then revises for the answers, in each artifact they "
+        "reach, and any finding still open (**Bound**)",
         "A step after open-mr parks for no question: its questions go on "
         "the MR with its `verdict`",
         # a question park resumes inside the step, on an answer
@@ -2225,10 +2254,13 @@ class TestDesignLoop(unittest.TestCase):
         "given findings that closes none of them; `—` for a check after no "
         "revision; else `no`",
         # a stall parks at once, with the decision framed for the person
+        # and the research an informed answer needs, named field by field
+        # since a stall turns on findings, not words (v3.1)
         "A stalled check parks the step at once, naming the open findings, "
         "their kind and how the author would remove it, for the person to "
         "approve that, rule a finding not a defect, waive findings by name, "
-        "or stop.",
+        "or stop, with a scenario, each option's cost and risk, and the "
+        "author's recommendation, confidence and evidence.",
         "At the bound, mark the row `failed`.",
         "On hitting a bound: stop, emit an `escalation` outcome carrying the "
         "open findings and the cycle history, and end the run.",
@@ -2253,10 +2285,12 @@ class TestDesignLoop(unittest.TestCase):
         "| Findings still open | Those the cycle table leaves open, by "
         "number, copied verbatim from where they were raised |",
         # the reviewer knows what the work received, not only the author's
-        # restatement of it (v3)
+        # restatement of it (v3); an answer the author gave a two-way door
+        # is the author's, not a criterion the work received (v3.1)
         "| What was asked | The ticket, each instruction a person gave this "
-        "run, and each question answered, with its readings and answer, "
-        "copied verbatim with where said: the criteria the work received |",
+        "run, and each question a person answered, with its readings and "
+        "answer, copied verbatim with where said: the criteria the work "
+        "received |",
         "| Vocabulary | The rules in *Verdicts and finding severities*, *What "
         "a fresh reviewer is given* and *Questions for a person*, copied "
         "verbatim |",
@@ -2269,8 +2303,12 @@ class TestDesignLoop(unittest.TestCase):
         "input or place of its kind); not closed, and where it still holds; "
         "or not a defect, and why. One not closed is still blocking.",
         "6. List every other issue",
-        "7. Check each assumption the artifact labels, and raise questions "
-        "for a person, as the vocabulary in the brief sets out.",
+        # the reviewer checks what the author filed and how it routed it,
+        # and looks for words used untagged or departed from silently (v3.1)
+        "7. Check each assumption, tag, challenge and question (its form "
+        "and door) the artifact states, and any person's words it rests on "
+        "untagged or departs from unstated; raise questions for a person, as "
+        "the vocabulary in the brief sets out.",
         "Open findings (number | status | where or why)",
         "Issues (numbered; location, severity, what would fix it), Questions "
         "for a person, Canon conflicts",
@@ -2308,9 +2346,10 @@ class TestDesignLoop(unittest.TestCase):
         self.assertIn("`pending | done | skipped | waived | parked | "
                       "failed`", self.text, "no new step status")
 
-    def test_a_question_always_parks_and_is_routed_from_its_readings(self):
+    def test_a_one_way_door_parks_and_is_routed_from_its_readings(self):
         self.assertAllIn(self.PARK, self.text)
-        # one route only: no going on under an assumption to the MR
+        # no going on under an unasked assumption to the MR: a question that
+        # does not park is answered and put to the person (v3.1, two-way door)
         self.assertNotIn("the author goes on with the plainest reading",
                          self.text)
         self.assertNotIn("every question for a person the run went on "
@@ -2448,9 +2487,9 @@ class TestHealthierRun(unittest.TestCase):
         reviewer and the panel too, the author's spec labelled as such."""
         self.assertAllIn((
             "| What was asked | The ticket, each instruction a person gave "
-            "this run, and each question answered, with its readings and "
-            "answer, copied verbatim with where said: the criteria the work "
-            "received |",), "run-pipeline")
+            "this run, and each question a person answered, with its "
+            "readings and answer, copied verbatim with where said: the "
+            "criteria the work received |",), "run-pipeline")
         self.assertAllIn((
             "the ticket or a person's brief, the spec labelled as the "
             "author's,",), "review-mr")
@@ -2460,13 +2499,16 @@ class TestHealthierRun(unittest.TestCase):
     def test_words_bind_as_firmly_as_they_were_said(self):
         """Hedged words set a default evidence can revise; firm ones bind;
         an answer binds its reading's outcome, never the option's wording.
-        Pinned into every reviewer by TestReviewInputs.FRAGMENT; here, that
-        each core says it once and that the old readings are gone."""
+        v3.1's commitment tags absorb v3's wording rather than sit beside
+        it: pinned into every reviewer by TestReviewInputs.FRAGMENT; here,
+        that each core says it once and that the old readings are gone."""
         for name in ("run-pipeline", "verify-feature", "review-mr"):
             with self.subTest(core=name):
                 text = self.core(name)
-                self.assertEqual(text.count(
-                    "Words bind as firmly as they were said"), 1)
+                self.assertEqual(text.count("as firmly as they said it"), 1)
+                self.assertNotIn("Words bind as firmly as they were said",
+                                 text)
+                self.assertNotIn("Evidence against a default", text)
                 self.assertNotIn("and the proposal stays the author's", text)
                 self.assertNotIn("and its wording stays its writer's", text)
 
@@ -2488,13 +2530,17 @@ class TestHealthierRun(unittest.TestCase):
         ), "verify-feature")
         # the answers reach the nested verify-feature that writes the brief
         self.assertAllIn((
+            # a nested stage tags people's words as the design review it
+            # faces checks them (v3.1)
             "Pass the artifacts that meet their needs, by path from the step "
-            "table, and the run's answers as caller context.",
+            "table, and the run's answers and the tags of *What a fresh "
+            "reviewer is given* as caller context.",
         ), "run-pipeline")
 
     def test_a_repeated_declined_advisory_goes_to_the_person(self):
-        """Recorded where a reader of the index finds it, asked once, never
-        parking on its own, whatever the materiality rule says."""
+        """Recorded where a reader of the index finds it, asked once
+        whatever the materiality rule says, and parking only where its
+        door is one-way."""
         self.assertAllIn((
             "**A declined advisory** (a fresh agent's, left undone when its "
             "row ends) is noted in that row by file and number.",
@@ -2502,14 +2548,21 @@ class TestHealthierRun(unittest.TestCase):
             "it (the same defect at the same unit), it is a question for the "
             "person, asked once whatever *Materially* says: whether they "
             "want it, readings \"wanted\" and \"not wanted\", the two "
-            "findings quoted as its words.",
-            "It joins the next park, or the MR when none comes before "
-            "open-mr, and is neither declined again nor made blocking.",
+            "findings quoted as its words and recommendation, beside the "
+            "author's reasons for declining.",
+            # the author who declined it twice does not write the case it
+            # is asked on; its door routes it, so one that needs an
+            # `escalate` choice parks, and the work keeps the declined state
+            # meanwhile rather than taking the recommendation (v3.1)
+            "Routed by its door, the work unchanged until they answer, it is "
+            "neither declined again nor made blocking.",
         ), "run-pipeline")
         text = self.core("run-pipeline")
         self.assertNotIn("**An advisory two fresh agents", text)
-        # it sits with the question routes, after the rule for parking
-        self.assertLess(text.index("**Every other question parks the step**"),
+        # it sits with the question routes, after the two it builds on
+        self.assertLess(text.index("**A one-way door parks the step**"),
+                        text.index("**A two-way door parks nothing.**"))
+        self.assertLess(text.index("**A two-way door parks nothing.**"),
                         text.index("**A declined advisory**"))
 
     def test_a_fix_covers_its_kind_in_code(self):
@@ -2646,6 +2699,174 @@ class TestHealthierRun(unittest.TestCase):
         report = read(t / ".glados" / "assembly-report.md")
         self.assertIn("| params.pipeline.max-stalled-cycles | 2 | (explicit; "
                       "retired, read by nothing) |", report)
+
+
+class TestInformedInput(unittest.TestCase):
+    """The v3.1 rules (docs/proposals/v3.md, *v3.1*): people's words carry
+    a commitment tag, evidence against them is stated as a challenge, a
+    question reaches a person only with the research behind it, and only a
+    one-way door parks the run. A project cannot change what a fresh
+    reviewer is told about people's words, what a question must carry or
+    when run-pipeline parks, so each rule is pinned into the compiled cores
+    it governs, with whitespace flattened so a re-wrap of the source does
+    not break a test.
+    """
+
+    TAGS = ("*Directive* (", "*Preference* (", "*Hunch* (", "*Assent* (")
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    def reviewers(self):
+        names = {"review-mr", "verify-feature", "run-pipeline"}
+        for path in self.dir.glob("*.md"):
+            header = next((l for l in read(path).splitlines()
+                           if "modules-inlined:" in l), "")
+            if "mr-review-panel" in header or "evaluator-spawn" in header:
+                names.add(path.stem)
+        return sorted(names)
+
+    def test_each_clause_carries_one_of_four_tags_defined_once(self):
+        """V31-1: every fresh reviewer gets the four tags, each defined once,
+        in order from firmest to the assent that binds only what was shown.
+        A tag is read from each clause's own words, so a hedge in front of
+        a want leaves a Preference and a firm clause inside an answer keeps
+        its force; the brief quotes the words untagged, so a reviewer is
+        never handed the author's reading of them."""
+        for name in self.reviewers():
+            with self.subTest(core=name):
+                text = self.core(name)
+                at = [text.index(tag) for tag in self.TAGS]
+                self.assertEqual(at, sorted(at))
+                for tag in self.TAGS:
+                    self.assertEqual(text.count(tag), 1, tag)
+                self.assertIn("Each clause takes the tag its words give "
+                              "until the person corrects it:", text)
+                self.assertIn("or a hedged want: \"I think we need\")", text)
+                self.assertIn("is a belief about what is true (a cause, "
+                              "what code does)", text)
+                self.assertIn("and labelled as theirs, untagged.", text)
+                # no rule lets a hedge anywhere soften the whole quote
+                self.assertNotIn("the softer where they mix", text)
+
+    def test_evidence_against_words_is_a_challenge_never_a_block(self):
+        """V31-2: one form, said once, from evidence outside the change; a
+        Directive's challenge is a question and the Directive stands
+        meanwhile; a softer tag's is the work's decision unless it is
+        material; raising one never blocks. A change that does not do what
+        the words say is not a challenge, nor is a departure under a tag
+        softer than the words: both break a criterion the work received."""
+        for name in self.reviewers():
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertEqual(text.count(
+                    "\"your words say X (tag); the code shows Y; I propose "
+                    "Z\""), 1)
+                self.assertIn("Where evidence outside the change suggests a "
+                              "person's words miss what they want", text)
+                self.assertIn("Against a Directive, which stands until they "
+                              "answer, or where it is material, that is a "
+                              "question for them; otherwise the work follows "
+                              "Z.", text)
+                self.assertIn("Any other departure from a person's words, "
+                              "under too soft a tag included, breaks a "
+                              "criterion the work received.", text)
+                self.assertNotIn("Where code or evidence points away", text)
+        # the design reviewer checks what the artifact filed and how it
+        # routed each question, and looks for words it used untagged or left
+        # without saying so (v3.1)
+        self.assertAllIn((
+            "7. Check each assumption, tag, challenge and question (its form "
+            "and door) the artifact states, and any person's words it rests "
+            "on untagged or departs from unstated;",), "run-pipeline")
+        # every challenge the work followed is pooled with the run's other
+        # decisions, so the person whose words were overridden can see it
+        self.assertAllIn(("every two-way door the author answered "
+                          "(**Questions**), every challenge the work "
+                          "followed and,",), "run-pipeline")
+
+    def test_a_question_carries_what_an_informed_answer_needs(self):
+        """V31-3: no question reaches a person without the decision, a
+        scenario, each reading's consequences, its door and what makes it
+        one-way, a recommendation with its confidence, evidence a reader can
+        open and what favours it over the other readings, and what silence
+        means; a part that says nothing about this question is missing. A
+        stall's park names the parts that fit a choice among findings."""
+        self.assertAllIn((
+            "**Form**: numbered, under *Questions for a person* in its "
+            "finder's file, complete and specific to it before a person sees "
+            "it: the decision, in one line; the words it turns on, quoted "
+            "with where said and their tag, or the `escalate` class it "
+            "needs; a concrete scenario, today and under each reading; the "
+            "readings, plainest first, each an outcome the person might "
+            "want, never a mechanism, with what users would see, its cost "
+            "and risk; the door, naming what makes it one-way; the finder's "
+            "recommendation, with its confidence, evidence (a file and line, "
+            "test, data or quote) and what favours it over each other "
+            "reading; and what happens if no one answers.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("in its finder's file: the question;", text)
+        self.assertNotIn("never a mechanism; and what each changes", text)
+        self.assertNotIn("in the form *Questions for a person* sets out",
+                         text)
+
+    def test_only_a_one_way_door_parks(self):
+        """V31-4: a door is judged from the readings by one list, so a
+        reviewer can check the routing. The project's `decisions:` classes
+        decide schema, API and data choices, as every phase preset sets
+        them; core adds only an outcome a person names left unmet or
+        changed where users see it. A one-way door parks with the informed
+        question; a two-way door is answered on its finder's recommendation,
+        except that a person's Directive or chosen reading stands, and is
+        pooled with the run's other decisions and put to the person without
+        waiting, standing if no one answers."""
+        self.assertAllIn((
+            "**Doors**: a question is a one-way door when one reading needs "
+            "an `escalate` choice or leaves such an outcome unmet, or the "
+            "readings differ in what users see of one; when unsure, one-way; "
+            "the author answering one assumes its answer. Others are two-way "
+            "doors.",
+            "**A two-way door parks nothing.** The author answers it by its "
+            "finder's recommendation, except that a person's Directive or "
+            "chosen reading stands until they answer. The question joins the "
+            "next park, else the MR, for the person to confirm or overturn; "
+            "unanswered, the answer stands.",
+            "emit one pooled `decision` outcome: every `record` checkpoint, "
+            "every two-way door the author answered (**Questions**), every "
+            "challenge the work followed and, when "
+            "`decisions.pipeline-discretion` is `record`, every "
+            "discretionary act.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("**Every other question parks the step**", text)
+        self.assertEqual(text.count("**Doors**"), 1)
+        # one test, not a list and a gloss that disagree; no fixed list of
+        # mechanisms that would override a phase's `agent` or `record`
+        for gone in ("a stored schema or format", "a public API, data no "
+                     "change could take back", "no user to tell",
+                     "a named outcome users see"):
+            self.assertNotIn(gone, text)
+        # the route sits with the other question routes in step 4
+        self.assertLess(text.index("- **Questions.**"),
+                        text.index("**A two-way door parks nothing.**"))
+        self.assertLess(text.index("**A two-way door parks nothing.**"),
+                        text.index("- **Selection re-check.**"))
+        # Doors builds on the outcomes materiality names
+        self.assertLess(text.index("**Materially**"),
+                        text.index("**Doors**"))
 
 
 class TestSinkConfig(unittest.TestCase):

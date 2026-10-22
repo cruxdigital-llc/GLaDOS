@@ -264,9 +264,10 @@ the sequence does not list.
   record) go in one commit when the row ends or parks, never file by file.
 - **Nested workflows** run as build-feature runs them ("run the spec-feature
   workflow"). Pass the artifacts that meet their needs, by path from the
-  step table, and the run's answers as caller context. Those artifacts
-  bind, and a stage states any departure in its own artifact. Its "run X
-  next" line gives way to this sequence.
+  step table, and the run's answers and the tags of *What a fresh reviewer
+  is given* as caller context. Those artifacts bind, and a stage states any
+  departure in its own artifact. Its "run X next" line gives way to this
+  sequence.
 - **Project steps.** The body says what to produce or check; this document
   says how. `produce`: write the result to `<record>.<id>.md`. `change`:
   edit code on the branch and record what changed in `<record>.<id>.md`.
@@ -317,8 +318,9 @@ the sequence does not list.
 
   A stalled check parks the step at once, naming the open findings, their
   kind and how the author would remove it, for the person to approve that,
-  rule a finding not a defect, waive findings by name, or stop. At the
-  bound, mark the row `failed`.
+  rule a finding not a defect, waive findings by name, or stop, with a
+  scenario, each option's cost and risk, and the author's recommendation,
+  confidence and evidence. At the bound, mark the row `failed`.
 - **Review** (`review:`) of the step's artifact; for a gate, it is how the
   audit is done. `none`: this agent alone. `in-context`: a *Persona pass*.
   `fresh-agent`: a *Fresh-agent design review*.
@@ -352,24 +354,31 @@ the sequence does not list.
   plan's open ones included, and how it went:
   - A reading that needs a choice classed `forbidden` is refused as
     *Decision rights* sets out, never asked.
-  - **Every other question parks the step** once its check is done (with
-    no check, once its artifact is written), or at the end or skip of a
-    later step its body names, none up to it producing `change` or `mr`:
-    one park for all of them, as at a `human` checkpoint, the questions
-    standing where the approval would. At a bound, the run stops instead,
-    its escalation carrying the questions too.
+  - **A one-way door parks the step** once its check is done (with no
+    check, once its artifact is written), or at the end or skip of a later
+    step its body names, none up to it producing `change` or `mr`: one park
+    for all of them, as at a `human` checkpoint, the questions standing
+    where the approval would. At a bound, the run stops instead, its
+    escalation carrying the questions too.
+  - **A two-way door parks nothing.** The author answers it by its
+    finder's recommendation, except that a person's Directive or chosen
+    reading stands until they answer. The question joins the next park,
+    else the MR, for the person to confirm or overturn; unanswered, the
+    answer stands.
   - **A declined advisory** (a fresh agent's, left undone when its row
     ends) is noted in that row by file and number. Once two fresh reviewers
     or evaluators in this run have raised it (the same defect at the same
     unit), it is a question for the person, asked once whatever
     *Materially* says: whether they want it, readings "wanted" and "not
-    wanted", the two findings quoted as its words. It joins the next park,
-    or the MR when none comes before open-mr, and is neither declined again
-    nor made blocking.
+    wanted", the two findings quoted as its words and recommendation,
+    beside the author's reasons for declining. Routed by its door, the
+    work unchanged until they answer, it is neither declined again nor
+    made blocking.
   - **Answers.** Record each verbatim, with who gave it and where, noting
     when that is not the person whose words the question turns on; the
     question and its readings stay their finder's. The author then revises
-    for the answers and any finding still open (**Bound**).
+    for the answers, in each artifact they reach, and any finding still
+    open (**Bound**).
   - A step after open-mr parks for no question: its questions go on the MR
     with its `verdict`.
 - **Selection re-check.** After the first step that produces a plan or spec,
@@ -395,8 +404,10 @@ the sequence does not list.
 ### 5. Finish
 - Bring the step table up to date.
 - When there is anything to list, emit one pooled `decision` outcome: every
-  `record` checkpoint and, when `decisions.pipeline-discretion` is `record`,
-  every discretionary act. This holds on every way the run ends: here, at a
+  `record` checkpoint, every two-way door the author answered
+  (**Questions**), every challenge the work followed and, when
+  `decisions.pipeline-discretion` is `record`, every discretionary act.
+  This holds on every way the run ends: here, at a
   park, and at a stop on an `escalation`, each listing the acts made so far.
 - When this run, or the parked run it resumed, opened an MR, hand it to
   review after the last step: run the review-mr workflow, handing it the
@@ -735,7 +746,7 @@ Write the brief self-contained:
 |---|---|
 | What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
-| What was asked | The ticket, each instruction a person gave this run, and each question answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
+| What was asked | The ticket, each instruction a person gave this run, and each question a person answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
 | Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out, and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
 | What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
@@ -759,18 +770,32 @@ conclusions about them.
   under review like the code. A person's words, meaning anyone's but the
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
-  and labelled as theirs. A person set only what their quoted words name: a
-  go-ahead approves the direction of what they were shown, which stays its
-  writer's; an answer choosing a question's reading binds that reading's
-  outcome, not its mechanism, scope words or phrasing.
-- **Words bind as firmly as they were said.** "Must", "need", "never" or a
-  plain statement of what is wanted, in a person's own phrasing, binds.
-  Hedged words ("I think", "maybe", "should", "I'd like", "seems
-  reasonable") and a chosen reading's words beyond its outcome set a
-  default that evidence can revise. Evidence against a default is never a
-  blocking finding: where it changes an outcome the person names, it is a
-  question for them (an advisory written as one where the workflow takes
-  none); otherwise the work follows it and says so.
+  and labelled as theirs, untagged.
+- **A person set only what their quoted words name, as firmly as they
+  said it.** Each clause takes the tag its words give until the person
+  corrects it:
+  - *Directive* ("must", "need", "never", "always", or a plain statement
+    of what is wanted) binds.
+  - *Preference* ("should", "I'd like", "prefer", or a hedged want: "I
+    think we need") sets a default that evidence may override.
+  - *Hunch* ("I think", "maybe", "probably", "I wonder") is a belief about
+    what is true (a cause, what code does), which the artifact tests
+    against the code, reporting what it finds; it stands unless
+    contradicted.
+  - *Assent* ("seems fine", "yes", "go with that", choosing a question's
+    reading) approves only the direction of what they were shown, which
+    stays its writer's: a chosen reading's outcome, not its mechanism,
+    scope words or phrasing. Material evidence they were not shown reopens
+    it as a question naming that evidence.
+- **Challenge in the open.** Where evidence outside the change suggests
+  a person's words miss what they want, the artifact says "your words say
+  X (tag); the code shows Y; I propose Z", naming where. Against a
+  Directive, which stands until they answer, or where it is material,
+  that is a question for them; otherwise the work follows Z. Neither
+  raising a challenge nor following one past a Preference or Hunch
+  blocks: where the workflow takes no questions, a challenge is an
+  advisory written as one. Any other departure from a person's words,
+  under too soft a tag included, breaks a criterion the work received.
 - **A scope statement excuses an absence, never a presence.** "Deferred to
   <item>" or "not in this MR" means the reviewer does not report that thing
   as missing, except a criterion the work received: only a person's quoted
@@ -795,10 +820,20 @@ finding.
   artifact takes the one the project's standards or nearest in-tree
   precedent follows, else the plainest, labelled as an assumption for a
   test to pin.
-- **Form**: numbered, under *Questions for a person* in its finder's file:
-  the question; the words it turns on, quoted with where said, or the
-  `escalate` class it needs; the readings, plainest first, each an outcome
-  the person might want, never a mechanism; and what each changes.
+- **Doors**: a question is a one-way door when one reading needs an
+  `escalate` choice or leaves such an outcome unmet, or the readings
+  differ in what users see of one; when unsure, one-way; the author
+  answering one assumes its answer. Others are two-way doors.
+- **Form**: numbered, under *Questions for a person* in its finder's file,
+  complete and specific to it before a person sees it: the decision, in
+  one line; the words it turns on, quoted with where said and their tag,
+  or the `escalate` class it needs; a concrete scenario, today and under
+  each reading; the readings, plainest first, each an outcome the person
+  might want, never a mechanism, with what users would see, its cost and
+  risk; the door, naming what makes it one-way; the finder's
+  recommendation, with its confidence, evidence (a file and line, test,
+  data or quote) and what favours it over each other reading; and what
+  happens if no one answers.
 - **A question never replaces a finding** and fails nothing. What code,
   files, a standard, a stated outcome or the blocking definition settles is
   a finding at its tier, even where a person's words are silent. A question
@@ -831,8 +866,10 @@ and what it is.
 6. List every other issue: what is wrong, where (file, and section or
    line), its severity per the vocabulary in the brief, and what would fix
    it.
-7. Check each assumption the artifact labels, and raise questions for a
-   person, as the vocabulary in the brief sets out.
+7. Check each assumption, tag, challenge and question (its form and
+   door) the artifact states, and any person's words it rests on untagged
+   or departs from unstated; raise questions for a person, as the
+   vocabulary in the brief sets out.
 
 Write your review to <record>.<id>.review-<n>.md with sections: Checks
 (item | met/not met | notes), Open findings (number | status | where or

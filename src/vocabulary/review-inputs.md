@@ -15,18 +15,32 @@ conclusions about them.
   under review like the code. A person's words, meaning anyone's but the
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
-  and labelled as theirs. A person set only what their quoted words name: a
-  go-ahead approves the direction of what they were shown, which stays its
-  writer's; an answer choosing a question's reading binds that reading's
-  outcome, not its mechanism, scope words or phrasing.
-- **Words bind as firmly as they were said.** "Must", "need", "never" or a
-  plain statement of what is wanted, in a person's own phrasing, binds.
-  Hedged words ("I think", "maybe", "should", "I'd like", "seems
-  reasonable") and a chosen reading's words beyond its outcome set a
-  default that evidence can revise. Evidence against a default is never a
-  blocking finding: where it changes an outcome the person names, it is a
-  question for them (an advisory written as one where the workflow takes
-  none); otherwise the work follows it and says so.
+  and labelled as theirs, untagged.
+- **A person set only what their quoted words name, as firmly as they
+  said it.** Each clause takes the tag its words give until the person
+  corrects it:
+  - *Directive* ("must", "need", "never", "always", or a plain statement
+    of what is wanted) binds.
+  - *Preference* ("should", "I'd like", "prefer", or a hedged want: "I
+    think we need") sets a default that evidence may override.
+  - *Hunch* ("I think", "maybe", "probably", "I wonder") is a belief about
+    what is true (a cause, what code does), which the artifact tests
+    against the code, reporting what it finds; it stands unless
+    contradicted.
+  - *Assent* ("seems fine", "yes", "go with that", choosing a question's
+    reading) approves only the direction of what they were shown, which
+    stays its writer's: a chosen reading's outcome, not its mechanism,
+    scope words or phrasing. Material evidence they were not shown reopens
+    it as a question naming that evidence.
+- **Challenge in the open.** Where evidence outside the change suggests
+  a person's words miss what they want, the artifact says "your words say
+  X (tag); the code shows Y; I propose Z", naming where. Against a
+  Directive, which stands until they answer, or where it is material,
+  that is a question for them; otherwise the work follows Z. Neither
+  raising a challenge nor following one past a Preference or Hunch
+  blocks: where the workflow takes no questions, a challenge is an
+  advisory written as one. Any other departure from a person's words,
+  under too soft a tag included, breaks a criterion the work received.
 - **A scope statement excuses an absence, never a presence.** "Deferred to
   <item>" or "not in this MR" means the reviewer does not report that thing
   as missing, except a criterion the work received: only a person's quoted
