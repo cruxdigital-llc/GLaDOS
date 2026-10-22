@@ -65,7 +65,7 @@ kind maps to:
 | `issue` | A new GitLab issue | `glab issue create --title ... --description ...` |
 | `issue-comment` | A comment on an existing issue | `glab issue note <num> --message ...` |
 | `label` | A label on the MR or issue | `glab mr update <num> --label ...` |
-| `ledger` | A committed file under `.glados/runs/` in the repo (the **run ledger** — one record per workflow run) | plain git commit |
+| `ledger` | A file under `.glados/runs/`, saved to the repo's `glados/ledger` branch (the **run ledger** — one record per workflow run, never on the work's branch) | `glados.py ledger save` |
 
 A working GitLab binding looks like:
 

@@ -22,7 +22,8 @@ What you get:
 - **Nothing important lives only in a chat transcript.** Review verdicts land
   as merge-request comments (a merge request, or MR, is GitLab's name for a
   pull request), problems become issues, and every run writes a record file
-  into `.glados/runs/` that is committed alongside the work.
+  into `.glados/runs/` and saves it to the repo's `glados/ledger` branch,
+  never to the work's branch, so a merge request's diff is the change.
 - **One config file controls behavior.** `glados.yaml` declares who may merge,
   which decisions the agent may make on its own, and where each kind of result
   gets posted. The installer refuses any configuration under which a result
@@ -61,8 +62,8 @@ Now open your agent inside the project and run your first command:
 
 The agent studies your codebase, writes what it learns (structure,
 conventions, candidate coding standards) into `product-knowledge/`, and leaves
-a record of the run in `.glados/runs/` — ordinary files you review and commit
-like any other change.
+a record of the run, saved to the repo's `glados/ledger` branch. The
+knowledge tree is ordinary files you review and commit like any other change.
 
 ## What a run looks like
 
@@ -71,8 +72,8 @@ jump straight to editing code: it first reproduces the bug and writes down
 how; it fixes the root cause rather than the symptom; then a second, fresh
 agent session — one that never saw the fix being written — independently
 verifies it. What you end up with is a merge request with the review verdict
-posted as a comment on it, plus a committed record in `.glados/runs/` saying
-what was decided and why. Six months later, `git log` still knows the whole
+posted as a comment on it, plus a record on the `glados/ledger` branch
+saying what was decided and why. Six months later, `git log` still knows the whole
 story.
 
 `fix-bug` is one of sixteen commands. The everyday ones are `build-feature`

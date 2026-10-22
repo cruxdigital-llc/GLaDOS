@@ -63,7 +63,7 @@ kind maps to:
 | `issue` | A new GitHub issue | `gh issue create --title ... --body ...` |
 | `issue-comment` | A comment on an existing issue | `gh issue comment <num> --body ...` |
 | `label` | A label on the PR or issue | `gh pr edit <num> --add-label ...` |
-| `ledger` | A committed file under `.glados/runs/` in the repo (the **run ledger** — one record per workflow run) | plain git commit |
+| `ledger` | A file under `.glados/runs/`, saved to the repo's `glados/ledger` branch (the **run ledger** — one record per workflow run, never on the work's branch) | `glados.py ledger save` |
 
 A working GitHub binding looks like:
 

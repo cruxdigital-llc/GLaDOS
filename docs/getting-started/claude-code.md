@@ -11,7 +11,7 @@ If your team instead distributes GLaDOS as a shared Claude Code plugin, see
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 
 ## Install
 
@@ -70,8 +70,8 @@ A good, read-only first run:
 ```
 
 This audits the codebase and reports structure and health without changing
-any code — and, like every GLaDOS run, finishes by committing a run record
-under `.glados/runs/`.
+any code — and, like every GLaDOS run, finishes by saving a run record to
+the `glados/ledger` branch.
 
 ## Verify
 
@@ -94,9 +94,9 @@ GitHub workflow copy).
 
 ## Guard hook
 
-Every run promises to commit its run record before ending. Claude Code has a
+Every run promises to save its run record before ending. Claude Code has a
 **Stop hook** that makes this mechanical: it blocks the session from ending
-while a run is in flight without a committed record. The guard script is
+while a run is in flight without a saved record. The guard script is
 already vendored at `.glados/hooks/claude-stop-hook.py`; wire it into
 `.claude/settings.json` with the snippet in
 [hooks/README.md](../../hooks/README.md). It only activates while a run is

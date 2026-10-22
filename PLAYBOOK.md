@@ -56,7 +56,7 @@ The third loop runs per merge request, not per week: **`review-mr` ⇄ `address-
 
 ## The Run Ledger and Channels
 
-Every workflow run leaves exactly one committed record in `.glados/runs/` — what ran, what it decided, what it emitted. This folder of records is the **run ledger**. Epic and feature state lives in the ledger on the branch, so a fresh session on any machine resumes from `git pull`, not from a scratch file that exists only where the last run happened. The results themselves — GLaDOS calls them outcomes, and there are six kinds: `verdict`, `escalation`, `bug`, `progress`, `decision`, `observation` — land wherever your `glados.yaml` channels point them: verdicts as MR comments, escalations and bugs as issues, by default. Nothing important lives only in a chat transcript. The weekly `steward` pass condenses settled records into a one-line-per-run digest, keeping the ledger readable. The assembly report printed at install is the ledger's front door: it shows where every resolved configuration value came from and marks anything your phase preset relaxed, so the team can see exactly what it traded away. If the report shows a relaxation you didn't intend, fix the manifest before the first run — not after the first incident.
+Every workflow run leaves exactly one record, with its step artifacts — what ran, what it decided, what it emitted. Agents write them in `.glados/runs/` and save them to the repo's `glados/ledger` branch (`glados.py ledger save`), never to the work's branch, so a merge request's diff is the change. That branch of records is the **run ledger**. Epic and feature state lives in it, so a fresh session on any machine resumes from it (`glados.py ledger restore`), not from a scratch file that exists only where the last run happened. The results themselves — GLaDOS calls them outcomes, and there are six kinds: `verdict`, `escalation`, `bug`, `progress`, `decision`, `observation` — land wherever your `glados.yaml` channels point them: verdicts as MR comments, escalations and bugs as issues, by default. Nothing important lives only in a chat transcript. The weekly `steward` pass condenses settled records into a one-line-per-run digest, keeping the ledger readable. The assembly report printed at install is the ledger's front door: it shows where every resolved configuration value came from and marks anything your phase preset relaxed, so the team can see exactly what it traded away. If the report shows a relaxation you didn't intend, fix the manifest before the first run — not after the first incident.
 
 ---
 
@@ -113,7 +113,7 @@ One person installs GLaDOS, uses it for a sprint, and documents the experience. 
 Expand to a small group. This is where you discover which standards are truly shared vs. personal preference, and whether the personas need tuning for your domain. **Key action**: review a `steward` promotion MR together — arguing over whether an observation deserves to be a standard naturally surfaces disagreements and builds consensus.
 
 #### Stage 3: Team (Full Adoption)
-- Commit `glados.yaml`, `product-knowledge/`, and `.glados/` to version control (the ledger only works committed).
+- Commit `glados.yaml`, `product-knowledge/`, and `.glados/` to version control. Runs save their records to the `glados/ledger` branch and push it themselves; install, like every `ledger` command, adds `/.glados/runs/*` to the clone's git exclude file, which keeps them off every other branch.
 - Add the GLaDOS install to your onboarding docs.
 - Use `adopt-codebase` for any new team member's first session — guided analysis is a great way to learn a codebase.
 
@@ -185,7 +185,7 @@ Old command names (`mission`, `plan-product`, `identify-bug`, `plan-fix`, `imple
 | **Faster onboarding** | New hires use `adopt-codebase` and read standards instead of asking 50 questions |
 | **Nothing lost silently** | The CI `verify-ledger` job (copied into `.glados/ci/` at install; enabling it is the project's job — see "What does NOT migrate automatically" in [MIGRATION.md](MIGRATION.md)) reports zero runs whose results never reached a team-visible place, week over week |
 | **Outcomes are visible** | Verdicts sit on MRs, escalations and bugs are issues — no decision lives only in a chat transcript |
-| **Preserved decisions** | Run records and `decision` outcomes explain *why*, resumable from `git pull` |
+| **Preserved decisions** | Run records and `decision` outcomes explain *why*, resumable from the `glados/ledger` branch |
 | **Living standards** | Steward regularly promotes observations; brunch MRs stay small because big findings got fixed earlier |
 
 ---

@@ -38,8 +38,9 @@ compiler with a type-checker — it assembles the commands for your agent
 runtime and refuses any configuration under which a result (a review verdict,
 an escalation) would silently disappear. **Third:** state moved from
 machine-local scratch to the *run ledger* — every workflow run writes exactly
-one committed record file under `.glados/runs/`, so a fresh session resumes
-from `git pull` instead of a scratchpad file that exists on one machine.
+one record file under `.glados/runs/` and saves it to the `glados/ledger`
+branch, so a fresh session resumes from that branch instead of a scratchpad
+file that exists on one machine.
 
 Full rationale, audit evidence, and the nine load-bearing decisions:
 [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md). The v2 vocabulary used below
@@ -170,7 +171,8 @@ from it.
 
 Everything the tool writes or removes is inside a fixed set of paths:
 `specs/`, the v1 GLaDOS-owned command layouts listed above, `glados.yaml`,
-`.glados/`, and `product-knowledge/SPEC_LOG.md`. Your source code, docs,
+`.glados/`, `product-knowledge/SPEC_LOG.md`, and the one `/.glados/runs/*`
+line it adds to the clone's git exclude file. Your source code, docs,
 CI configuration, and anything else in the repo are out of bounds. Without
 `--clean` it removes nothing at all.
 
@@ -220,8 +222,11 @@ While you have the manifest open, two more keys deserve a look:
    and flags any phase-derived relaxations. The install also cleans the v1
    command layout for the mode it installs (only known v1 files — never your
    own).
-3. **Commit** — `glados.yaml`, `.glados/`, the converted run records, the
-   SPEC_LOG rows, and the removed v1 files, in one migration commit.
+3. **Commit** — `glados.yaml`, `.glados/`, the SPEC_LOG rows, and the
+   removed v1 files, in one migration commit. It takes no converted run
+   record: `migrate` added `/.glados/runs/*` to the clone's git exclude
+   file. Then save the records to the run ledger, the `glados/ledger`
+   branch, with `python .glados/glados.py ledger save`.
 4. **Optionally `migrate --clean`** — re-run with `--clean` to remove the
    converted `specs/` dirs and any v1 command layouts the install didn't
    already clean (layouts for modes you didn't install). `--clean` removes a
@@ -496,3 +501,33 @@ also emit `observation`, for a canon conflict; review-codebase and brunch
 already did. Every preset binds it to the ledger, so
 only a manifest that sets `observation: []` under `channels:` needs a sink
 for it.
+
+**Run records move to the ledger branch.** From 2.5, every run saves its
+record and step artifacts to the `glados/ledger` branch with
+`python .glados/glados.py ledger save`, and none goes on a work branch, so a
+merge request's diff is the change; review-mr and address-review already
+did this. The 2.5 install, like every `ledger` command, adds
+`/.glados/runs/*` to the clone's git exclude file (`.git/info/exclude`), so
+committing the reinstalled `.glados/` takes no record, and nothing is
+committed for it. Nothing is migrated or rewritten. Records your branches
+already carry stay there as history; a save does not copy them and a restore does
+not overwrite them. A `glados/ledger` branch that already exists (cut from
+the main line, as review-mr's commits made it) is built on as it is. The
+vendored CI templates now fetch the ledger branch before `verify-ledger`
+scans it (GitLab), and on a merge request `verify-ledger` lists any run
+record the branch commits. Two things to do by hand:
+
+- If the ledger branch is checked out in a worktree, remove that worktree
+  (`git worktree remove <path>`): `ledger save` refuses to move a branch
+  under a checkout.
+- Plugin-only repos that copied the guard hooks copy them again: they now
+  check that a run's record is saved to the ledger, not committed.
+
+**GLaDOS marks what it posts on a merge request.** From 2.5, everything a
+run posts on a merge request starts with `(GLaDOS <workflow>)`, and
+review-mr and address-review read a note or reply without it, written by
+someone with a role on the project, as that person's review, whichever
+account posted it. Notes GLaDOS posted before the upgrade carry no marker.
+On a merge request opened before you upgrade, edit each GLaDOS note so its
+first line starts with `(GLaDOS <workflow>)` before running review-mr or
+address-review on it: resolving its thread does not change how it is read.

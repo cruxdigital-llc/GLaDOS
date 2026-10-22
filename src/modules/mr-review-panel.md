@@ -33,12 +33,15 @@ Two invariants govern the panel:
 ### Assemble the brief
 
 Panelists cannot ask questions, so the brief must be self-contained. It
-carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
-ticket or a person's brief, the spec labelled as the author's, the commands
-to run tests and linters, each panelist's seated mandate, and the rules in
-*Verdicts and finding severities* and *What a fresh reviewer is given*,
-copied verbatim. If anything is missing, assemble it before spawning — a
-panelist that has to guess reviews the wrong change.
+carries: the MR id, the diff (`<base>...<head>`), the changed-file list; the
+ticket or a person's brief, each question a person answered in the run that
+opened the MR, with its readings and answer, and each instruction or answer
+people gave on the MR, quoted with where said; the spec and the merge-request
+description (without its step table or the findings it lists), labelled as
+the author's; the commands to run tests and linters; each panelist's seated
+mandate; and the rules in *Verdicts and finding severities* and *What a
+fresh reviewer is given*, copied verbatim. If anything is missing, assemble
+it before spawning — a panelist that has to guess reviews the wrong change.
 
 <!-- glados:include vocabulary/review-inputs.md -->
 

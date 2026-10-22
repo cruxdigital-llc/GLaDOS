@@ -10,7 +10,7 @@ Not sure which runtime you have? See the [chooser](README.md).
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 - Gemini CLI installed (`gemini` on your PATH).
 
 ## Install
@@ -65,8 +65,8 @@ Inside a `gemini` session in your project, a good read-only first run:
 ```
 
 This audits the codebase and reports structure and health without changing
-code — and, like every GLaDOS run, finishes by committing a run record under
-`.glados/runs/`.
+code — and, like every GLaDOS run, finishes by saving a run record to the
+`glados/ledger` branch.
 
 Every command is also headless-invocable, which is how the standing
 housekeeping ceremonies get scheduled from cron or CI:
@@ -91,7 +91,7 @@ installer prints the one-paste enable stanza for GitLab or GitHub.
 
 Gemini CLI's session-end event cannot block, but its **AfterAgent** hook can:
 exiting with code 2 retries the turn, so the guard can insist the in-flight
-run commits its run record before the session moves on. Wire
+run saves its run record before the session moves on. Wire
 `.glados/hooks/gemini-afteragent-guard.py` (vendored by the install) into
 `.gemini/settings.json` using the snippet in
 [hooks/README.md](../../hooks/README.md). The guard stays silent unless a

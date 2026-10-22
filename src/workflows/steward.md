@@ -15,9 +15,10 @@ requires: []
 keeps the project's memory honest: it compacts settled run records into a
 digest, refreshes documentation that has drifted from the code, promotes
 pending observations into standards and philosophies, and sanity-checks the
-test suite. Everything it changes rides **one cleanup MR per pass**. The deep
-codebase critique is the brunch ceremony, not this one; regenerating code from
-intent is out of scope too — that belongs to a later regenerate-component core.
+test suite. Everything it changes on its branch rides **one cleanup MR per
+pass**. The deep codebase critique is the brunch ceremony, not this one;
+regenerating code from intent is out of scope too — that belongs to a later
+regenerate-component core.
 
 ## Process
 
@@ -29,13 +30,16 @@ intent is out of scope too — that belongs to a later regenerate-component core
 ### 2. Compact the run ledger
 - Scan `.glados/runs/` for **settled** records: runs whose linked MR is merged
   or closed and whose outcomes need no further action. Leave in-flight and
-  recent records alone.
+  recent records alone, and any this branch tracks.
 - For each settled record, append one row to the ledger digest
-  (`.glados/runs/DIGEST.md` — create it if absent), then delete the record:
+  (`.glados/runs/DIGEST.md` — create it if absent), then delete the record
+  and its step artifacts:
 
   | Date | Workflow | Outcome | Links | One-line summary |
   |------|----------|---------|-------|------------------|
 
+- Save the digest and every deleted path to the ledger
+  (`.glados/glados.py ledger save <paths>`).
 - The digest preserves the audit trail at one line per run; when in doubt
   whether a record is settled, keep it — compaction must never lose the only
   copy of an open thread.
@@ -118,7 +122,7 @@ intent is out of scope too — that belongs to a later regenerate-component core
   (the suite result from step 6).
 - Resolve `merge-authority` from `glados.yaml` for who may merge — this
   document states no authority, and this step never merges.
-- If nothing changed — nothing settled, nothing stale, nothing pending — skip
+- If nothing changed — nothing stale, nothing pending — skip
   the MR rather than manufacture one. The canon report (digest ages, recall
   drafts awaiting confirmation, missing digests) then goes in this run's
   `progress` outcome instead.

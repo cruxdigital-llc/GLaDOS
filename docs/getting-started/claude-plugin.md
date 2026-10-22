@@ -66,8 +66,9 @@ The plugin brings the *workflows*; each consuming repo still owns its state:
 - **`glados.yaml`** — created per repo. Run `/glados:init` (ships with the
   plugin) to copy the template in, set the required `phase:`, and scaffold
   `product-knowledge/`.
-- **`.glados/runs/`** — run records are committed to the repo the run
-  happened in, never to the plugin.
+- **`.glados/runs/`** — run records are written in the repo the run
+  happened in, never in the plugin, and saved to that repo's
+  `glados/ledger` branch.
 - **`product-knowledge/`** — the project's own standards, personas, status
   file, the bodies of its own pipeline steps (`product-knowledge/steps/`),
   and the digests of its canon (`product-knowledge/canon/`).
@@ -126,7 +127,7 @@ plus each repo's `glados.yaml` do the work at run time.
 
 ## Guard hook
 
-Claude Code's Stop hook (blocks a session ending mid-run without a committed
+Claude Code's Stop hook (blocks a session ending mid-run without a saved
 run record) is wired per consuming repo in `.claude/settings.json` — snippet
 in [hooks/README.md](../../hooks/README.md). The snippet expects the guard
 script at `.glados/hooks/claude-stop-hook.py`, which plugin-only repos don't

@@ -47,8 +47,9 @@ Whatever mode you pick, three things end up in your project:
 
 ## What a "run" leaves behind
 
-Every workflow ends by writing a **run record** — a short committed Markdown
-file in `.glados/runs/` saying what was attempted, what was decided, and how
+Every workflow ends by writing a **run record** — a short Markdown file in
+`.glados/runs/`, saved to the repo's `glados/ledger` branch rather than the
+work's, saying what was attempted, what was decided, and how
 it ended. Guard hooks (per runtime) and a CI job exist purely to make that
 promise mechanical; each runtime page covers its own setup.
 

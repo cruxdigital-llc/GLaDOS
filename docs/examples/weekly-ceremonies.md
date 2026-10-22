@@ -19,10 +19,11 @@ page is illustrative; commands, file paths, and scheduling recipes are real.
 
 Steward keeps the project's memory honest. On one dated cleanup branch it:
 
-1. **Compacts the run ledger.** Every workflow run commits a record to
-   `.glados/runs/` (the run ledger — the project's durable memory). Steward
-   folds *settled* records — runs whose linked MR is merged or closed — into
-   `.glados/runs/DIGEST.md` at one line per run, then deletes the originals.
+1. **Compacts the run ledger.** Every workflow run saves a record to the
+   `glados/ledger` branch (the run ledger — the project's durable memory).
+   Steward folds *settled* records — runs whose linked MR is merged or
+   closed — into `.glados/runs/DIGEST.md` at one line per run, then deletes
+   the originals, on the ledger itself rather than in the cleanup MR.
    In-flight records are left alone; when in doubt, it keeps the record.
 2. **Refreshes stale documentation**, bottom-up: per-directory READMEs first,
    then the top-level README and the project status file. It updates what
@@ -135,7 +136,7 @@ or operator to execute.
 
 Whatever the runtime, the result lands in the same places: one MR per
 ceremony to review Monday morning, outcomes posted where `glados.yaml` routes
-them, and a committed run record in `.glados/runs/` either way — even a no-op
+them, and a run record on the `glados/ledger` branch either way — even a no-op
 steward pass says so on the record.
 
 ## If you knew GLaDOS v1

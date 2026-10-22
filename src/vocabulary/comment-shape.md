@@ -72,8 +72,8 @@ diff the pass read, not the process by which the verdict was reached.
 
 - Write to a senior engineer who is busy and skeptical and will not read past
   the first screen. Plain English, not model prose.
-- Lead with the verdict. No preamble, and no recap of what the change does —
-  the author wrote it.
+- Lead with the verdict, after `(GLaDOS <workflow>)`. No preamble, and no
+  recap of what the change does — the author wrote it.
 - Open each finding with the plain sentence you would say out loud. The rule
   or standard it rests on goes underneath as evidence, never in place of the
   sentence.

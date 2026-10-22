@@ -8,8 +8,11 @@ cleanup, determinism, drift detection and the runtime artifacts. A mode that
 stops shipping modules — v1's flagship bug — fails this build.
 """
 
+import argparse
+import contextlib
 import datetime
 import importlib.util
+import io
 import json
 import os
 import re
@@ -1811,17 +1814,25 @@ class TestReviewInputs(unittest.TestCase):
         "want: \"I think we need\") sets a default that evidence may "
         "override.",
         # a Hunch is a belief the code can test, and stands until it is
-        # contradicted (v3.1)
-        "*Hunch* (\"I think\", \"maybe\", \"probably\", \"I wonder\") is "
-        "a belief about what is true (a cause, what code does), which the "
-        "artifact tests against the code, reporting what it finds; it "
-        "stands unless contradicted.",
+        # contradicted (v3.1); an unhedged claim is one too, so a ticket's
+        # statement of what the code does gets tested rather than obeyed,
+        # and a problem the ticket or brief states still asks for its own
+        # absence (v3.2); a reviewer's stated problem does not, or every
+        # advisory a person wrote as a problem would bind (fix round 1)
+        "*Hunch* (\"I think\", \"maybe\", \"probably\", \"I wonder\", "
+        "or an unhedged claim, such as a stated problem) is a belief about "
+        "what is true (a cause, what code does), which the artifact tests "
+        "against the code, reporting what it finds; it stands unless "
+        "contradicted. A ticket's or brief's stated problem also asks for "
+        "its absence, as a Directive.",
         # a go-ahead approves only what was shown; an answer binds the
         # outcome its reading describes, never the option's wording, and
         # only named evidence the person never saw reopens it (v3, v3.1)
+        # an option's words are its writer's, so choosing one is Assent
+        # even when they read as an order (v3.2)
         "*Assent* (\"seems fine\", \"yes\", \"go with that\", choosing a "
-        "question's reading) approves only the direction of what they were "
-        "shown, which stays its writer's: a chosen reading's outcome, not "
+        "question's reading, however worded) approves only the direction of "
+        "what they were shown, which stays its writer's: a chosen reading's outcome, not "
         "its mechanism, scope words or phrasing. Material evidence they "
         "were not shown reopens it as a question naming that evidence.",
         # evidence against words is stated in one form, from outside the
@@ -1943,7 +1954,10 @@ class TestReviewInputs(unittest.TestCase):
                     f"{name} states the scope rule more than once")
 
     def test_the_fragment_adds_no_tier_and_no_verdict_word(self):
-        body = read(REPO / "src" / "vocabulary" / "review-inputs.md")
+        # the tags and the challenge live in their own fragment since v3.2,
+        # so address-review can carry them without the brief rules
+        body = (read(REPO / "src" / "vocabulary" / "review-inputs.md")
+                + read(REPO / "src" / "vocabulary" / "person-words.md"))
         for word in ("`blocking`", "`advisory`", "APPROVE", "REQUEST_CHANGES",
                      "ESCALATE", "PASS", "FAIL"):
             self.assertNotIn(word, body)
@@ -2001,8 +2015,13 @@ class TestReviewInputs(unittest.TestCase):
 
     def test_the_panel_reads_scope_as_an_absence(self):
         self.assertAllIn((
-            "**the merge-request description** without its step table or "
-            "the findings it lists",
+            # the panel's brief list is the one list of what the panel is
+            # given; review-mr gathers from it rather than keeping a second
+            # list that drifted from it (v3.2)
+            "the spec and the merge-request description (without its step "
+            "table or the findings it lists), labelled as the author's;",
+            "Gather what *Assemble the brief* lists, and the personas active "
+            "for this feature",
             "the rules in *Verdicts and finding severities* and *What a fresh "
             "reviewer is given*, copied verbatim",
             "3. Read the merge-request description before you raise "
@@ -2157,20 +2176,34 @@ class TestDesignLoop(unittest.TestCase):
         "Whoever finds an artifact resting on words whose readings differ "
         "materially, or on an `escalate` choice no one's words reach, "
         "raises a question: the author, a reviewer or a gate's audit.",
-        "**Materially**: one reading changes an outcome the ticket or a "
-        "person names, or needs a choice `decisions:` classes `escalate`.",
-        # narrow variants do not park: they take the project's own
-        # precedent before the plainest, and a test pins the assumption; a
-        # stored record is one, its class in `decisions:` deciding whether
-        # it is asked (v3, v3.1)
-        "Readings that differ otherwise (a unit, a stored record, a failure "
-        "path) are not: the artifact takes the one the project's standards "
-        "or nearest in-tree precedent follows, else the plainest, labelled "
-        "as an assumption for a test to pin.",
+        # material means the readings differ in whether a named outcome is
+        # met, judged in the people's own words at their fullest reading,
+        # so a rival meaning of an outcome's words is judged from the
+        # widest and an author's restatement never narrows it; what a
+        # person's words gave up is not counted; and a finder unsure
+        # whether readings differ asks rather than assumes (v3.2)
+        "**Materially**: the readings differ in whether an outcome the "
+        "ticket's or a person's own words name is met, or one needs a "
+        "choice `decisions:` classes `escalate`; when unsure, they do. Each "
+        "outcome counts as fully as any reading reads it, less what a "
+        "person's words let go.",
+        # narrow variants that meet the same outcomes do not park: they
+        # take the project's own precedent before the plainest, and a test
+        # pins the assumption; a stored record is one, its class in
+        # `decisions:` deciding whether it is asked (v3, v3.1). The list is
+        # of differences, not categories exempt whatever they leave unmet
+        # (v3.2)
+        "Readings that meet the same outcomes (differing in a unit, a "
+        "stored record, a failure path) are not: the artifact takes the one "
+        "the project's standards or nearest in-tree precedent follows, else "
+        "the plainest, labelled as an assumption for a test to pin.",
         "**Form**: numbered, under *Questions for a person* in its finder's "
         "file",
-        "the words it turns on, quoted with where said and their tag, or "
-        "the `escalate` class it needs",
+        # a tested Hunch and a reopened Assent carry their evidence where
+        # the person reads the words (v3.2)
+        "the words it turns on, quoted with where said and their tag (a "
+        "Hunch with what the code showed, a reopened Assent with what its "
+        "giver was not shown), or the `escalate` class it needs",
         "the readings, plainest first, each an outcome the person might "
         "want, never a mechanism",
         # a question is never a way around a finding
@@ -2196,7 +2229,7 @@ class TestDesignLoop(unittest.TestCase):
         "*Decision rights* sets out, never asked.",
         # only `escalate` makes a choice material (questions.md), so an
         # `agent` or `record` choice by itself asks nothing
-        "or needs a choice `decisions:` classes `escalate`",
+        "or one needs a choice `decisions:` classes `escalate`",
         # a body may defer its questions to a later step, which parks even
         # when it asks nothing, and never past code or the MR
         "**A one-way door parks the step** once its check is done (with no "
@@ -2204,8 +2237,7 @@ class TestDesignLoop(unittest.TestCase):
         "later step its body names, none up to it producing `change` or "
         "`mr`: one park for all of them, as at a `human` checkpoint, the "
         "questions standing where the approval would",
-        "Any other pipeline claims no branch, and its rows commit nothing, "
-        "until it parks and cuts one.",
+        "Any other pipeline claims no branch until it parks and cuts one.",
         "At a bound, the run stops instead, its escalation carrying the "
         "questions too",
         "**Answers.** Record each verbatim, with who gave it and where, "
@@ -2425,7 +2457,7 @@ class TestDesignLoop(unittest.TestCase):
             with self.subTest(core=name):
                 text = " ".join(read(self.dir / f"{name}.md").split())
                 for row in (
-                    "| review-mr ⇄ address-review cycles per MR | "
+                    "| review-mr ⇄ address-review cycles per MR round | "
                     "`params.review-panel.max-cycles` |",
                     "| evaluator verify/fix cycles per feature | "
                     "`params.evaluator.max-cycles` |",
@@ -2490,9 +2522,16 @@ class TestHealthierRun(unittest.TestCase):
             "this run, and each question a person answered, with its "
             "readings and answer, copied verbatim with where said: the "
             "criteria the work received |",), "run-pipeline")
+        # the panel gets the answers a person gave, as the design reviewer
+        # does, so it never blocks on a choice a person already made (C7,
+        # v3.2), and each instruction or answer people gave on the MR: an
+        # overturn posted there is an answer (fix round 1)
         self.assertAllIn((
-            "the ticket or a person's brief, the spec labelled as the "
-            "author's,",), "review-mr")
+            "the ticket or a person's brief, each question a person answered "
+            "in the run that opened the MR, with its readings and answer, and "
+            "each instruction or answer people gave on the MR, quoted with "
+            "where said;",
+        ), "review-mr")
         self.assertNotIn("the changed-file list, the spec or ticket",
                          self.core("review-mr"))
 
@@ -2551,13 +2590,18 @@ class TestHealthierRun(unittest.TestCase):
             "findings quoted as its words and recommendation, beside the "
             "author's reasons for declining.",
             # the author who declined it twice does not write the case it
-            # is asked on; its door routes it, so one that needs an
-            # `escalate` choice parks, and the work keeps the declined state
-            # meanwhile rather than taking the recommendation (v3.1)
-            "Routed by its door, the work unchanged until they answer, it is "
-            "neither declined again nor made blocking.",
+            # is asked on, and its door routes it like any question: the two
+            # findings are its recommendation, so *Doors* makes that its
+            # default unless a person's words take another reading, rather
+            # than keeping the state two independent checks found wanting
+            # (FID-9, v3.2); a second default rule here would override a
+            # person's answer (fix round 1)
+            "beside the author's reasons for declining. It is never made "
+            "blocking.",
         ), "run-pipeline")
         text = self.core("run-pipeline")
+        self.assertNotIn("the work unchanged until they answer", text)
+        self.assertNotIn("Its default is the findings' recommendation", text)
         self.assertNotIn("**An advisory two fresh agents", text)
         # it sits with the question routes, after the two it builds on
         self.assertLess(text.index("**A one-way door parks the step**"),
@@ -2608,8 +2652,9 @@ class TestHealthierRun(unittest.TestCase):
     def test_the_record_is_an_index_and_commits_go_by_row(self):
         """A reader reads the head and its rows, not the whole record; a
         revision's dispositions stay out of the artifact the next reviewer
-        reads; a run with no branch of its own makes no row commit on the one
-        it is on, and the epilogue still commits its record there."""
+        reads; a row's process files go to the ledger in one save when it
+        ends or parks, never onto the branch, which a run with no branch of
+        its own does not claim until it parks (v3.2)."""
         self.assertAllIn((
             "**The record is an index**: under its header, `## Now` (the "
             "step in progress, what it waits on, the next action), kept "
@@ -2617,20 +2662,20 @@ class TestHealthierRun(unittest.TestCase):
             "Findings stay in their check's files, and how the revision "
             "before check n answered them in `<record>.<id>.revision-<n>.md`, "
             "which no brief names.",
-            "**Commits.** A row's process files (artifact, briefs, check "
-            "results, record) go in one commit when the row ends or parks, "
-            "never file by file.",
-            "Any other pipeline claims no branch, and its rows commit "
-            "nothing, until it parks and cuts one.",
-            # the rule limits row commits only, so the mandatory epilogue's
-            # record commit, compiled into the same core, still holds
-            "**Commit the record** on the current working branch",
+            "**Commits.** When a row ends or parks, its process files "
+            "(artifact, briefs, check results, record) go to the ledger in "
+            "one save (*Before ending this run*, step 4).",
+            "Any other pipeline claims no branch until it parks and cuts one.",
+            # the mandatory epilogue's save, compiled into the same core,
+            # is the one that row saves point at
+            "**Save the record to the ledger.**",
         ), "run-pipeline")
         text = self.core("run-pipeline")
         self.assertNotIn("PASS with advisory issues records them in the "
                          "step's row", text)
         self.assertNotIn("none is committed alone", text)
         self.assertNotIn("claims no branch, and commits nothing", text)
+        self.assertNotIn("go in one commit when the row ends or parks", text)
 
     def test_each_rule_is_said_once_in_run_pipeline(self):
         """Text the v3 rules made redundant is gone, so run-pipeline did not
@@ -2655,10 +2700,12 @@ class TestHealthierRun(unittest.TestCase):
         # a design review's result is no verdict before the MR, and a step
         # after the MR posts one: said once, by run-pipeline's step 4
         self.assertNotIn("It never becomes a `verdict` outcome", text)
-        # the push after the record and the work left for a human: one
-        # rule, under Branch, which step 5 points at
-        self.assertEqual(text.count("once the epilogue has committed the "
-                                    "record"), 1)
+        # the work left for a human: one rule, under Branch, which step 5
+        # points at; the record it names is on the ledger, saved by the
+        # epilogue before any outcome is published, so no second push
+        # (v3.2)
+        self.assertEqual(text.count("leaves its work there for a human"), 1)
+        self.assertNotIn("once the epilogue has committed the record", text)
         self.assertIn("When no MR was opened, the artifacts in the record are "
                       "the deliverable (**Branch** in step 4).", text)
         # a re-open: Loop bounds names run-pipeline's park as its exception,
@@ -2804,20 +2851,33 @@ class TestInformedInput(unittest.TestCase):
         open and what favours it over the other readings, and what silence
         means; a part that says nothing about this question is missing. A
         stall's park names the parts that fit a choice among findings."""
+        # v3.2, from a worked demonstration on two real questions: the
+        # parts a person answers from come first and the words for checking
+        # last; the scenario is traced once, through today's code, and each
+        # reading says what users would see in it, so the two no longer
+        # repeat each other; reversibility is back; and the no-answer line,
+        # which the door already settles, gives way to what would change
+        # the recommendation
         self.assertAllIn((
             "**Form**: numbered, under *Questions for a person* in its "
             "finder's file, complete and specific to it before a person sees "
-            "it: the decision, in one line; the words it turns on, quoted "
-            "with where said and their tag, or the `escalate` class it "
-            "needs; a concrete scenario, today and under each reading; the "
-            "readings, plainest first, each an outcome the person might "
-            "want, never a mechanism, with what users would see, its cost "
-            "and risk; the door, naming what makes it one-way; the finder's "
-            "recommendation, with its confidence, evidence (a file and line, "
-            "test, data or quote) and what favours it over each other "
-            "reading; and what happens if no one answers.",
+            "it, in this order: the decision, in one line; a concrete "
+            "scenario through today's code; the readings, plainest first, "
+            "each an outcome the person might want, never a mechanism, with "
+            "what users would see in that scenario, its cost, risk and "
+            "reversibility; the finder's recommendation, with its "
+            "confidence, evidence (a file and line, test, data or quote), "
+            "what favours it over each other reading and what fact would "
+            "change it; the door and its default, naming what makes it "
+            "one-way; and the "
+            "words it turns on, quoted with where said and their tag (a "
+            "Hunch with what the code showed, a reopened Assent with what "
+            "its giver was not shown), or the `escalate` class it needs.",
         ), "run-pipeline")
         text = self.core("run-pipeline")
+        self.assertNotIn("and what happens if no one answers", text)
+        self.assertNotIn("a concrete scenario, today and under each reading",
+                         text)
         self.assertNotIn("in its finder's file: the question;", text)
         self.assertNotIn("never a mechanism; and what each changes", text)
         self.assertNotIn("in the form *Questions for a person* sets out",
@@ -2833,17 +2893,27 @@ class TestInformedInput(unittest.TestCase):
         except that a person's Directive or chosen reading stands, and is
         pooled with the run's other decisions and put to the person without
         waiting, standing if no one answers."""
+        # v3.2: three blind classifiers applying v3.1's test found every
+        # material question one-way (a reading that changes an outcome
+        # nearly always leaves it unmet somewhere), could not say from
+        # whose reading "unmet" was judged, fired on an outcome unmet under
+        # every reading, and left "users" undefined. The door is now judged
+        # from the one reading that would stand, the default: a person's
+        # words take it where they do, else the finder's recommendation.
+        # Only a person answers a question whose default gives up an
+        # outcome another reading meets, needs an `escalate` choice, or
+        # does not exist because people's words take two readings.
         self.assertAllIn((
-            "**Doors**: a question is a one-way door when one reading needs "
-            "an `escalate` choice or leaves such an outcome unmet, or the "
-            "readings differ in what users see of one; when unsure, one-way; "
-            "the author answering one assumes its answer. Others are two-way "
-            "doors.",
+            "**Doors**: a question's default is the reading a person's "
+            "Directive or chosen reading takes, else its finder's "
+            "recommendation. Only a person answers a one-way door: one with "
+            "no default (people's words take two readings), or whose default "
+            "needs an `escalate` choice or leaves unmet an outcome another "
+            "reading meets; when unsure, one-way. Others are two-way doors.",
             "**A two-way door parks nothing.** The author answers it by its "
-            "finder's recommendation, except that a person's Directive or "
-            "chosen reading stands until they answer. The question joins the "
-            "next park, else the MR, for the person to confirm or overturn; "
-            "unanswered, the answer stands.",
+            "default (*Doors*). The question joins the next park, else the "
+            "MR, for the person to confirm or overturn; unanswered, the "
+            "answer stands.",
             "emit one pooled `decision` outcome: every `record` checkpoint, "
             "every two-way door the author answered (**Questions**), every "
             "challenge the work followed and, when "
@@ -2854,10 +2924,14 @@ class TestInformedInput(unittest.TestCase):
         self.assertNotIn("**Every other question parks the step**", text)
         self.assertEqual(text.count("**Doors**"), 1)
         # one test, not a list and a gloss that disagree; no fixed list of
-        # mechanisms that would override a phase's `agent` or `record`
+        # mechanisms that would override a phase's `agent` or `record`; and
+        # no undefined "users" deciding the route, nor an outcome unmet
+        # under every reading (v3.2)
         for gone in ("a stored schema or format", "a public API, data no "
                      "change could take back", "no user to tell",
-                     "a named outcome users see"):
+                     "a named outcome users see", "differ in what users see",
+                     "leaves such an outcome unmet",
+                     "the author answering one assumes its answer"):
             self.assertNotIn(gone, text)
         # the route sits with the other question routes in step 4
         self.assertLess(text.index("- **Questions.**"),
@@ -2867,6 +2941,197 @@ class TestInformedInput(unittest.TestCase):
         # Doors builds on the outcomes materiality names
         self.assertLess(text.index("**Materially**"),
                         text.index("**Doors**"))
+
+
+class TestPeopleOnTheMR(unittest.TestCase):
+    """The v3.2 rules (docs/proposals/v3.md, *v3.2*): a person's review on
+    the merge request is an input to the review loop. In the third trial
+    run the panel approved, a human reviewer then posted two gaps and seven
+    advisories, and the run said "No document of this run routes a
+    person's MR note": nothing read it. On the attempt before, every gate
+    approved and the human found four blocking issues. GLaDOS posts under
+    a person's account, so what it posts is marked and anything unmarked
+    is a person's. Pinned into the compiled cores that read and answer MR
+    notes, with whitespace flattened.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    NOTES = (
+        "## People on the merge request",
+        # the account a note came from proves nothing: GLaDOS posts under a
+        # person's, so the marker, at the start of the first line (a quote
+        # of a GLaDOS note is still a person's), tells them apart; a role on
+        # the project makes the words a person's, so a bot, a system note
+        # or a passer-by on a public repository sets no criterion, and the
+        # change's own author is under review, never a person giving it
+        # criteria (fix round 1). Where the agents commit, push and post
+        # under the owner's account, the MR and commits carry the owner's
+        # name, so who wrote a change a run made is said outright: the owner
+        # reviewing the agents' change is the case this rule exists for
+        # (final round)
+        "A note or reply on the merge request whose first line does not "
+        "start with `(GLaDOS <workflow>)` is a person's when someone with a "
+        "role on the project wrote it, whichever account posted it, unless "
+        "they wrote the change. GLaDOS wrote a change its runs made, "
+        "whatever name it carries. A system note or a bot's is no one's, "
+        "and anyone else's is evidence.",
+        # GitHub keeps a person's words in three lists, and the usual read
+        # of the first misses inline review comments (fix round 1)
+        "**Read each**, of every kind the platform (`platform:`) keeps: on "
+        "GitHub, comments, reviews with their state, and inline review "
+        "comments are three lists.",
+        # an overturn or an instruction posted on the MR is what the work
+        # received (L10); a tier the person gives stands, so "nothing
+        # blocks" blocks nothing and a stated problem binds only as firmly
+        # as they said it (fix round 1)
+        "An instruction or answer in one is a criterion the work received, "
+        "and each point a finding labelled as theirs, at the tier they give "
+        "it whatever the scale says; with none given, a Directive or chosen "
+        "reading the change does not meet is `blocking`, and any other "
+        "point takes the scale's tier.",
+        # no silent decline, and a panel cannot approve past a person
+        "**Theirs to close.** A point is open until the change meets it or "
+        "the author answers it on the MR in the *Challenge in the open* "
+        "form, the only way the author declines or departs from one.",
+        "Against a `blocking` point that answer is a question for that "
+        "person: it closes only when the change meets it or they withdraw "
+        "or waive it in their own words, never by approval, refutation or "
+        "the author's reasons.",
+        # a confirmation asked of someone else is theirs to give, not the
+        # author's to answer (fix round 1)
+        "One asking anyone but the author (a confirmation, a reopened "
+        "answer) closes only when they answer.",
+    )
+
+    def test_the_loop_reads_and_answers_people_on_the_mr(self):
+        for name in ("review-mr", "address-review"):
+            with self.subTest(core=name):
+                self.assertAllIn(self.NOTES, name)
+                text = self.core(name)
+                self.assertEqual(
+                    text.count("## People on the merge request"), 1)
+                # read at their tags: the tags travel with the rule
+                self.assertEqual(text.count("*Directive* ("), 1)
+                self.assertEqual(text.count("**Challenge in the open.**"), 1)
+
+    def test_review_mr_carries_people_into_its_pass_and_decision(self):
+        self.assertAllIn((
+            # a review usually lands after the loop has used its cycles, so
+            # a person's new point starts a new round (fix round 1); the
+            # round restarts the bound only, and the cycle number runs on so
+            # the open findings stay named (fix round 2)
+            # the guard run quotes what it hands over, so the pass after
+            # the fix does not start a second round for the same note
+            # (final round)
+            "A person's point no run of this workflow has quoted starts a "
+            "new round of cycles: the record notes the cycle it follows. "
+            "`review.cycle` is not reset, so open findings stay named.",
+            # a point on an unchanged head is not ignored: it goes to the fix
+            # half, whatever the last pass decided; a note with no point
+            # (an approval, "LGTM") sends nothing (fix round 1)
+            "there is nothing new to review: this run produces a `progress` "
+            "outcome saying so and stops, handing any such point, quoted "
+            "with its id, to address-review, whatever that pass decided "
+            "(*People on the merge request*).",
+            # read by id, not by time, and again before deciding: the trial's
+            # human review landed while the pass ran (fix round 1)
+            "Every pass quotes, with its id, each person's note no earlier "
+            "pass quoted, listing them again before it decides, and names "
+            "each person's point still open, which closes only as *People "
+            "on the merge request* sets out.",
+            # a one-way door posted after the MR opened waits for a person
+            "a one-way question among them stays open, keeping the MR from "
+            "review-clean, until a person answers it on the MR.",
+            # the decision names everything step 4 says keeps the MR from
+            # review-clean, so step 8 read alone cannot call it clean while
+            # a one-way question waits on a person (final round)
+            "the MR is review-clean, unless a one-way question step 4 "
+            "carries is still open, which leaves it waiting on that person; "
+            "the loop ends, once address-review has answered any person's "
+            "point still open.",
+            # the Goal points at the two places that end the loop instead of
+            # restating an older, shorter condition (final round)
+            "A dirty pass hands off to the address-review workflow, forming "
+            "the loop review-mr ⇄ address-review; step 8 and "
+            "address-review's handoff say when it ends.",
+            # whether the loop runs again is said once, in address-review's
+            # handoff: a fix pass that committed nothing ends it
+            "never as its members; its handoff starts the next cycle.",
+        ), "review-mr")
+        self.assertNotIn("then re-enter this workflow for the next cycle",
+                         self.core("review-mr"))
+        self.assertNotIn("`review.cycle` to 0", self.core("review-mr"))
+        for gone in ("A clean pass ends the loop",
+                     "runs until every panelist approves",
+                     "A person's point no pass has quoted"):
+            self.assertNotIn(gone, self.core("review-mr"))
+
+    def test_address_review_takes_people_points_as_its_work(self):
+        self.assertAllIn((
+            "Read every person's point open on the MR too. If neither demands "
+            "changes or an answer, there is nothing to address",
+            # answering without a commit leaves nothing to re-review
+            "The loop continues until the MR is review-clean or the bound "
+            "escalates; a pass that committed nothing ends it.",
+            # a round is review-mr's to start; the bound check says where it
+            # finds one (final round)
+            "Check the cycle bound for the round review-mr's record notes, "
+            "then run the review-mr workflow against the new HEAD.",
+            # a human review has no synthesis, and that case stays stated
+            "**When `review.verdicts` carries no synthesis** (an older "
+            "record, a review a human wrote by hand)",
+        ), "address-review")
+        text = self.core("address-review")
+        self.assertNotIn("If no verdict demands changes, there is nothing "
+                         "to address", text)
+
+    def test_everything_glados_posts_is_marked(self):
+        """The reader rule is only as good as the writer rule: every core
+        can post on an MR, mid-run too (address-review's replies), so the
+        epilogue marks it, whatever a sink's config says, at the start, where
+        a quote of it cannot pass for it."""
+        for path in sorted(self.dir.glob("*.md")):
+            if path.stem not in glados.CORES:
+                continue
+            with self.subTest(core=path.stem):
+                text = self.core(path.stem)
+                self.assertIn(
+                    "Everything a run posts on a merge request, in any step, "
+                    "starts with `(GLaDOS <workflow>)`, whatever a sink's "
+                    "config says.", text)
+                # the verdict comment's "lead with the verdict, no preamble"
+                # makes room for the marker (final round)
+                if "## Publishing a verdict" in text:
+                    self.assertIn("Lead with the verdict, after `(GLaDOS "
+                                  "<workflow>)`. No preamble", text)
+
+    def test_commit_messages_meet_the_projects_checks_when_made(self):
+        """The third trial run's messages broke the project's 80-column
+        rule, enforced by a commit-msg hook its clones never installed, so
+        CI went red after the push, when fixing a message costs a rewrite.
+        Fresh clones are how agents usually run, and a clone carries no
+        hooks."""
+        for name in ("run-pipeline", "build-feature", "fix-bug",
+                     "address-review"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "a fresh evaluator's run of them on the same diff counts. "
+                    "Install any commit-msg hook the project declares before "
+                    "the first commit.",), name)
 
 
 class TestSinkConfig(unittest.TestCase):
@@ -3206,8 +3471,10 @@ class TestKernelRunRules(unittest.TestCase):
         self.assertIn("no MR exists for the work an item is about (run-epic's "
                       "backlog selection, a standalone plan)", text)
         self.assertIn("even if nested runs opened MRs for their own work", text)
-        self.assertIn("one more `chore(glados): record <workflow> run` commit "
+        self.assertIn("Save again for any record update made in this step, "
                       "before step 6", text)
+        self.assertNotIn("one more `chore(glados): record <workflow> run` "
+                         "commit", text)
         self.assertNotIn("Commit these record updates like any other", text)
 
     def test_absent_keys_default_from_the_preset_table(self):
@@ -4103,9 +4370,10 @@ class TestPipelines(unittest.TestCase):
             "| `required` | always |", "| `optional` | when the agent judges",
             "| `advisory` | always |", "`waived` by a named person",
             "`params.pipeline.max-cycles`",
-            # checkpoint: commit (code included) and push before waiting,
-            # park when unattended, and the park keeps MR items pending
-            "`human`: commit first (**Commits**), with any working diff a "
+            # checkpoint: save the process files, commit the code and push
+            # before waiting, park when unattended, and the park keeps MR
+            # items pending
+            "`human`: save first (**Commits**), commit any working diff a "
             "step left uncommitted, and push the branch",
             "A refusal, with the person's reasons, is a blocking finding",
             "mark the row `parked`",
@@ -4164,25 +4432,25 @@ class TestPipelines(unittest.TestCase):
             "the run there, running no step and copying no table",
             # an in-session wait is resumable too
             "If a person invoked the run, mark the row `parked` in that "
-            "commit",
+            "save",
             # post-MR findings: posted at once, then handed to review-mr
             "delivered to its bound sinks when the step ends, not at the end "
             "of the run",
-            "handing it the blocking findings of every verdict a step after "
-            "open-mr posted, each named, as findings still open",
+            # a one-way question a post-MR step posts has a reader, so the
+            # MR cannot go review-clean with the door unanswered (fix round 1)
+            "handing it the blocking findings and one-way questions of every "
+            "verdict a step after open-mr posted, each named, as still open",
             # the hand-off keys on an MR having been opened, not on the
             # sequence listing open-mr (an optional open-mr can be skipped)
             "When this run, or the parked run it resumed, opened an MR",
             "When no MR was opened, the artifacts in the record are the "
             "deliverable",
             # one rule for every end with no MR: the work stays on the
-            # branch, and the push after the record lets its paths resolve
+            # branch; the record and artifacts its escalation names are on
+            # the ledger, saved before any outcome is published (v3.2)
             "A run on its own branch that ends with no MR, a park included, "
             "leaves its work there for a human: it commits any working diff, "
-            "pushes, says so in the record, and pushes again once the "
-            "epilogue has committed the record, before publishing any "
-            "escalation, so the paths the record and escalation name "
-            "resolve",
+            "pushes, and says so in the record.",
             # a gate with no persona seated is still audited
             "With no persona seated, this agent does the audit itself "
             "against the body",
@@ -4757,7 +5025,8 @@ class TestCanon(unittest.TestCase):
     def test_consult_points_declare_their_reads_and_observations(self):
         """A core that consults canon reads manifest.canon, and one that
         files canon conflicts emits `observation` (and writes the pending
-        observations unless its record goes to glados/ledger)."""
+        observations unless it never commits to the branch it reviews, as
+        review-mr does)."""
         for core in self.CONSULT_CORES + ["steward"]:
             unit = self.source.cores[core]
             with self.subTest(core=core):
@@ -5435,7 +5704,8 @@ class TestPluginSkills(unittest.TestCase):
 
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their
-    three states: no marker / marker + uncommitted record / committed."""
+    three states: no marker / marker + unsaved record / record saved to the
+    glados/ledger branch (v3.2: records never go on a work branch)."""
 
     def _repo(self):
         t = tmpdir("glados-hooks-")
@@ -5488,28 +5758,92 @@ class TestHookGuards(unittest.TestCase):
         self.assertEqual(p.returncode, 2, "exit 2 retries the gemini turn")
         self.assertIn("run-1.md", p.stderr)
 
-    def test_marker_with_committed_record_allows(self):
+    def test_marker_with_saved_record_allows(self):
         repo, git = self._repo()
         write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
-        git("add", ".glados/runs/run-1.md")
-        git("commit", "-q", "-m", "chore(glados): record test run")
+        self._ledger_save(repo)
         write(repo / ".glados" / "runs" / "current", "run-1.md\n")
         p = self._run_claude(repo)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stdout.strip(), "",
-                         "committed record must not block")
+                         "saved record must not block")
         p = self._run_gemini(repo)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stderr.strip(), "",
-                         "committed record must not retry the turn")
+                         "saved record must not retry the turn")
+
+    def test_record_on_the_work_branch_is_not_saved(self):
+        """Committing the record to the branch, as before v3.2, is not the
+        save: the guard wants it on the ledger, and names the command."""
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        git("add", "-f", ".glados/runs/run-1.md")
+        git("commit", "-q", "-m", "chore(glados): record test run")
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        self._assert_blocks(repo, "run-1.md")
+        self.assertIn("ledger save", json.loads(
+            self._run_claude(repo).stdout)["reason"])
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push",
+                          ".glados/runs/run-1.md")
+        self.assertEqual(rc, 0, out)
+        self._assert_allows(repo)
+
+    def test_a_change_after_the_save_and_an_unsaved_artifact_block(self):
+        repo, _ = self._repo()
+        runs = repo / ".glados" / "runs"
+        write(runs / "run-1.md", "# run record\n")
+        self._ledger_save(repo)
+        write(runs / "current", "run-1.md\n")
+        self._assert_allows(repo)
+        write(runs / "run-1.md", "# run record\n\n## Now\nstep 2\n")
+        self._assert_blocks(repo, "run-1.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        # a step artifact is the run's too
+        write(runs / "run-1.shape.md", "# shape\n")
+        self._assert_blocks(repo, "run-1.shape.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        # another run's file is not this run's to save
+        write(runs / "other-run.md", "# another session's record\n")
+        self._assert_allows(repo)
+
+    def test_a_fetched_remote_ledger_counts(self):
+        """A record saved and pushed from another clone, then restored here,
+        is saved: the guard reads the remote-tracking copy too, and restore
+        neither creates nor moves this clone's own ledger branch."""
+        remote = tmpdir("glados-hooks-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        repo, git = self._repo()
+        git("remote", "add", "origin", str(remote))
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        self._ledger_save(repo, push=True)
+        other, ogit = self._repo()
+        ogit("remote", "add", "origin", str(remote))
+        rc, out = run_cli("ledger", "restore", "--target", other)
+        self.assertEqual(rc, 0, out)
+        local = subprocess.run(
+            ["git", "-C", str(other), "rev-parse", "--verify", "--quiet",
+             "refs/heads/glados/ledger"], capture_output=True, text=True)
+        self.assertNotEqual(local.returncode, 0,
+                            "restore never creates the local ledger branch")
+        write(other / ".glados" / "runs" / "current", "run-1.md\n")
+        self._assert_allows(other)
 
     # -- nested runs: .glados/runs/stack (F2) ---------------------------------
 
+    def _ledger_save(self, repo, push=False):
+        rc, out = run_cli("ledger", "save", "--target", repo,
+                          *(() if push else ("--no-push",)))
+        self.assertEqual(rc, 0, out)
+
     def _commit_records(self, repo, git, *names):
+        """Save each record to the ledger (the name is from when records
+        were committed to the branch)."""
         for name in names:
             write(repo / ".glados" / "runs" / name, f"# {name}\n")
-            git("add", f".glados/runs/{name}")
-        git("commit", "-q", "-m", "chore(glados): record test runs")
+        self._ledger_save(repo)
 
     def _assert_blocks(self, repo, name):
         p = self._run_claude(repo)
@@ -5664,6 +5998,682 @@ class TestHookGuards(unittest.TestCase):
         fm, _ = glados.split_frontmatter(
             read(t / "skills/intent/SKILL.md"), "SKILL.md")
         self.assertEqual(fm["description"], expected)
+
+
+class TestRunLedger(unittest.TestCase):
+    """v3.2 item 6: run records stay off the work branch.
+
+    The third trial run committed its record and 63 step artifacts to the
+    feature branch, so its MR showed 112 changed files, most of them process
+    records. Every run's record and step artifacts now live on the
+    glados/ledger branch (epilogue step 4, said once), moved there by
+    `glados.py ledger save`, which commits without touching the checked-out
+    branch, the index or tracked files, merges what another session pushed,
+    and pushes. These tests drive the helper against real repositories and
+    a bare remote, and pin the compiled rules that point at it."""
+
+    # -- repositories ----------------------------------------------------------
+
+    def _git(self, repo, *a, check=True):
+        p = subprocess.run(["git", "-C", str(repo), *a], capture_output=True,
+                           text=True)
+        if check:
+            self.assertEqual(p.returncode, 0, f"git {a}: {p.stderr}")
+        return p.stdout.strip()
+
+    def _remote(self):
+        remote = tmpdir("glados-ledger-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        return remote
+
+    def _clone(self, remote=None, seed=False):
+        """A work repository on `main` with one commit, its origin the bare
+        ``remote`` when given; ``seed`` pushes main there first."""
+        t = tmpdir("glados-ledger-repo-")
+        self._git(t, "init", "-q")
+        self._git(t, "config", "user.email", "t@example.com")
+        self._git(t, "config", "user.name", "t")
+        self._git(t, "config", "commit.gpgsign", "false")
+        self._git(t, "checkout", "-q", "-b", "main")
+        write(t / "app.py", "print('hi')\n")
+        self._git(t, "add", "-A")
+        self._git(t, "commit", "-q", "-m", "feat: initial")
+        if remote is not None:
+            self._git(t, "remote", "add", "origin", str(remote))
+            if seed:
+                self._git(t, "push", "-q", "origin", "main")
+        return t
+
+    def _save(self, repo, *extra, ok=True):
+        rc, out = run_cli("ledger", "save", "--target", repo, *extra)
+        if ok:
+            self.assertEqual(rc, 0, out)
+        return rc, out
+
+    def _ledger_files(self, repo, ref="glados/ledger"):
+        return set(self._git(repo, "ls-tree", "-r", "--name-only", ref)
+                   .split())
+
+    def _show(self, repo, ref, path):
+        return self._git(repo, "show", f"{ref}:{path}")
+
+    # -- the helper ------------------------------------------------------------
+
+    def test_save_leaves_the_work_branch_alone(self):
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        self._git(repo, "checkout", "-q", "-b", "feat/thing")
+        write(repo / "app.py", "print('changed')\n")      # unstaged work
+        write(repo / "lib.py", "x = 1\n")
+        self._git(repo, "add", "lib.py")                   # staged work
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-10-21-run-pipeline-x.md", "# record\n")
+        write(runs / "2026-10-21-run-pipeline-x.shape.md", "# shape\n")
+        write(runs / "2026-10-21-run-pipeline-x.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "2026-10-21-run-pipeline-x.md\n")
+        write(runs / "stack", "2026-10-21-run-pipeline-x.md\n")
+        head = self._git(repo, "rev-parse", "HEAD")
+        status = self._git(repo, "status", "--porcelain")
+        rc, out = self._save(repo)
+        self.assertIn("pushed glados/ledger to origin", out)
+        self.assertEqual(self._git(repo, "rev-parse", "HEAD"), head)
+        self.assertEqual(self._git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+                         "feat/thing")
+        # the index and the work are as they were, and nothing is new: the
+        # records are ignored through the clone's exclude file
+        self.assertEqual(self._git(repo, "diff", "--cached", "--name-only"),
+                         "lib.py")
+        self.assertIn("M app.py", self._git(repo, "status", "--porcelain"))
+        self.assertEqual(
+            set(self._git(repo, "status", "--porcelain", "-uall")
+                .splitlines()) - set(status.splitlines()), set())
+        self.assertFalse((runs / ".gitignore").exists())
+        # the ledger holds the run's files and nothing else: an orphan branch
+        # with no markers and none of the project's files
+        expected = {".glados/runs/2026-10-21-run-pipeline-x.md",
+                    ".glados/runs/2026-10-21-run-pipeline-x.shape.md",
+                    ".glados/runs/2026-10-21-run-pipeline-x.evidence/log.txt"}
+        self.assertEqual(self._ledger_files(repo), expected)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"),
+                         expected)
+        self.assertEqual(
+            self._git(repo, "rev-list", "--count", "glados/ledger"), "1")
+        # committing everything on the work branch takes no record
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "feat: the change")
+        changed = self._git(repo, "diff", "--name-only", "main", "HEAD")
+        self.assertNotIn("2026-10-21", changed)
+        self.assertEqual(set(changed.split()), {"app.py", "lib.py"})
+        # the link points at the ledger copy, never the work branch
+        self._git(repo, "remote", "set-url", "origin",
+                  "git@gitlab.example.com:group/project.git")
+        rc, out = run_cli("ledger", "link", "--target", repo,
+                          "2026-10-21-run-pipeline-x.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.strip(),
+                         "https://gitlab.example.com/group/project/-/blob/"
+                         "glados/ledger/.glados/runs/"
+                         "2026-10-21-run-pipeline-x.md")
+
+    def test_another_clone_restores_and_both_sides_survive(self):
+        """A run resumed on another machine reads the records back; saves
+        from two sessions that both moved the ledger keep both: new files
+        from each, and both sides' lines of a record they both edited."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nstep 1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"),
+                         "# r1\nstep 1\n")
+        self.assertEqual(self._git(b, "status", "--porcelain", "-uall"), "",
+                         "restored records are ignored in the new clone")
+        # both edit r1 and add a record of their own
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nstep 1\nfrom a\n")
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        write(b / ".glados" / "runs" / "r1.md", "# r1\nstep 1\nfrom b\n")
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        self._save(a)
+        rc, out = self._save(b)
+        self.assertIn("merged keeping both sides' lines", out)
+        files = self._ledger_files(b, "origin/glados/ledger")
+        self.assertEqual(files, {".glados/runs/r1.md", ".glados/runs/ra.md",
+                                 ".glados/runs/rb.md"})
+        merged = self._show(b, "origin/glados/ledger", ".glados/runs/r1.md")
+        self.assertIn("from a", merged)
+        self.assertIn("from b", merged)
+        # the merged copy is written back, so b's copy is the saved one
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md").strip(),
+                         merged)
+        # a: its own copy of r1 is an earlier version now; restore refreshes
+        # it, and a save would not write it back over the ledger's
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("from b", read(a / ".glados" / "runs" / "r1.md"))
+        self.assertTrue((a / ".glados" / "runs" / "rb.md").is_file())
+
+    def test_a_stale_copy_never_overwrites_the_ledger(self):
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\n")
+        self._save(a)
+        b = self._clone(remote)
+        run_cli("ledger", "restore", "--target", b)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\nv2\n")
+        self._save(a)
+        # b never touched r1; its save must not put v1 back
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        rc, out = self._save(b)
+        self.assertIn("earlier version", out)
+        self.assertEqual(
+            self._show(b, "origin/glados/ledger", ".glados/runs/r1.md"),
+            "# r1\nv1\nv2")
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"),
+                         "# r1\nv1\nv2\n", "the stale copy is refreshed")
+
+    def test_restore_keeps_unsaved_work_and_named_records(self):
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "2026-10-20-run-pipeline-p.md", "# parked\n")
+        write(runs / "2026-10-20-run-pipeline-p.plan.md", "# plan\n")
+        write(runs / "2026-10-19-review-mr-q.md", "# other\n")
+        self._save(a)
+        b = self._clone(remote)
+        write(b / ".glados" / "runs" / "2026-10-20-run-pipeline-p.md",
+              "# parked\nunsaved local work\n")
+        rc, out = run_cli("ledger", "restore", "--target", b,
+                          "2026-10-20-run-pipeline-p.md")
+        self.assertEqual(rc, 0, out)
+        bruns = b / ".glados" / "runs"
+        self.assertEqual(read(bruns / "2026-10-20-run-pipeline-p.md"),
+                         "# parked\nunsaved local work\n")
+        self.assertIn("kept this copy", out)
+        self.assertTrue((bruns / "2026-10-20-run-pipeline-p.plan.md").is_file(),
+                        "a named record comes back with its step artifacts")
+        self.assertFalse((bruns / "2026-10-19-review-mr-q.md").exists(),
+                         "only the named record and its artifacts")
+
+    def test_a_push_rejected_by_a_newer_remote_is_merged_and_retried(self):
+        """The remote moved between this save's fetch and its push: the push
+        is rejected, the save fetches, merges and pushes again, and neither
+        side's commit is lost (nothing is force-pushed)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        b = self._clone(remote)
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a)
+        a_tip = self._git(a, "rev-parse", "glados/ledger")
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        real_fetch = glados._ledger_fetch
+        calls = []
+
+        def stale_first(git, remote_name):
+            calls.append(remote_name)
+            if len(calls) == 1:
+                return None                 # pretend: nothing new out there
+            return real_fetch(git, remote_name)
+
+        args = argparse.Namespace(target=str(b), paths=[], remote="origin",
+                                  message=None, no_push=False)
+        buf = io.StringIO()
+        glados._ledger_fetch = stale_first
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = glados.cmd_ledger_save(args)
+        finally:
+            glados._ledger_fetch = real_fetch
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertGreaterEqual(len(calls), 2, "the rejection fetched again")
+        tip = self._git(b, "rev-parse", "origin/glados/ledger")
+        kept = subprocess.run(["git", "-C", str(b), "merge-base",
+                               "--is-ancestor", a_tip, tip])
+        self.assertEqual(kept.returncode, 0, "the other session's save is "
+                                             "an ancestor of the new tip")
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/ra.md", ".glados/runs/rb.md"})
+
+    def test_a_failed_push_keeps_the_commit_for_the_next_save(self):
+        repo = self._clone()
+        self._git(repo, "remote", "add", "origin",
+                  str(tmpdir("glados-ledger-gone-") / "missing.git"))
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        rc, out = self._save(repo, ok=False)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT pushed", out)
+        self.assertIn("the next `ledger save` pushes it", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+        remote = self._remote()
+        self._git(repo, "remote", "set-url", "origin", str(remote))
+        rc, out = self._save(repo)
+        self.assertIn("pushed glados/ledger to origin", out)
+        # it pushed a save from before, so it does not say nothing happened
+        self.assertIn("no new or changed file to save", out)
+        self.assertNotIn("nothing new", out)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"),
+                         {".glados/runs/r1.md"})
+
+    def test_a_save_that_only_merges_does_not_say_nothing_happened(self):
+        """A clone whose unpushed saves diverged from the remote's merges
+        and pushes them with no file of its own to add. The hand smoke test
+        of the final check saw this print "nothing new to save" above
+        "pushed" (final round)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a)
+        b = self._clone(remote)
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        self._save(b, "--no-push")
+        rc, out = self._save(b)
+        self.assertIn("no new or changed file to save", out)
+        self.assertIn("this clone's earlier saves were merged", out)
+        self.assertIn("pushed glados/ledger to origin", out)
+        self.assertNotIn("nothing new", out)
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/ra.md", ".glados/runs/rb.md"})
+
+    def test_a_named_path_that_is_gone_leaves_the_ledger(self):
+        """steward's compaction: a deleted record, named, is removed from the
+        ledger, and the digest that replaces it is saved with it."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "old.md", "# settled\n")
+        write(runs / "old.review-1.md", "# review\n")
+        self._save(repo, "--no-push")
+        (runs / "old.md").unlink()
+        (runs / "old.review-1.md").unlink()
+        write(runs / "DIGEST.md", "| 2026-10-01 | run-pipeline | done |\n")
+        rc, out = self._save(repo, "--no-push", ".glados/runs/old.md",
+                             "old.review-1.md", ".glados/runs/DIGEST.md")
+        self.assertIn("removed 2", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/DIGEST.md"})
+        # history keeps what compaction removed
+        self.assertIn("# settled", self._show(repo, "glados/ledger~1",
+                                              ".glados/runs/old.md"))
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push",
+                          repo / "app.py")
+        self.assertEqual(rc, 1)
+        self.assertIn("not under .glados/runs/", out)
+
+    def test_records_a_branch_already_carries_are_left_alone(self):
+        """Migration: records committed to a branch before v3.2 stay there,
+        untouched; a save does not copy them and a restore does not
+        overwrite them, and no history is rewritten."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-06-01-build-feature-old.md", "# old record\n")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "chore(glados): record run")
+        before = self._git(repo, "rev-parse", "HEAD")
+        write(runs / "2026-10-21-build-feature-new.md", "# new record\n")
+        self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo),
+                         {".glados/runs/2026-10-21-build-feature-new.md"})
+        self.assertEqual(self._git(repo, "rev-parse", "HEAD"), before)
+        self.assertEqual(self._git(repo, "status", "--porcelain",
+                                   "--", ".glados/runs/2026-06-01-"
+                                   "build-feature-old.md"), "")
+
+    def test_refuses_to_move_a_ledger_checked_out_in_a_worktree(self):
+        repo = self._clone()
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        self._save(repo, "--no-push")
+        wt = tmpdir("glados-ledger-wt-") / "ledger"
+        self._git(repo, "worktree", "add", "-q", str(wt), "glados/ledger")
+        write(repo / ".glados" / "runs" / "r2.md", "# r2\n")
+        rc, out = self._save(repo, "--no-push", ok=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("is checked out at", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+
+    def test_links_by_platform(self):
+        base = glados._remote_web_base
+        self.assertEqual(base("git@gitlab.com:inc/research.git"),
+                         "https://gitlab.com/inc/research")
+        self.assertEqual(base("https://user:tok@gitlab.com/inc/research.git"),
+                         "https://gitlab.com/inc/research")
+        self.assertEqual(base("ssh://git@gitlab.example.com:2222/a/b/c.git"),
+                         "https://gitlab.example.com/a/b/c")
+        self.assertEqual(base("https://github.com/o/r"), "https://github.com/o/r")
+        self.assertIsNone(base("C:/Users/x/remote.git"))
+        self.assertIsNone(base("/srv/git/remote.git"))
+        self.assertIsNone(base("file:///srv/git/remote.git"))
+        repo = self._clone()
+        self._git(repo, "remote", "add", "origin",
+                  "https://github.com/o/r.git")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a b.md")
+        self.assertEqual(out.strip(), "https://github.com/o/r/blob/glados/"
+                                      "ledger/.glados/runs/a%20b.md")
+        # a manifest's platform wins over the host name
+        write(repo / "glados.yaml", "platform: gitlab\n")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a.md")
+        self.assertEqual(out.strip(), "https://github.com/o/r/-/blob/glados/"
+                                      "ledger/.glados/runs/a.md")
+        # no web address: the git revision that reads it
+        self._git(repo, "remote", "set-url", "origin", "/srv/git/r.git")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a.md")
+        self.assertEqual(out.strip(), "glados/ledger:.glados/runs/a.md")
+
+    # -- install, CI and verify-ledger ----------------------------------------
+
+    def test_records_stay_out_of_every_branch_across_checkouts(self):
+        """An ignore file inside `.glados/runs/` is tracked on some branches
+        and not others, so a checkout either aborted over an untracked copy
+        or deleted it and left every record open to `git add -A`. The
+        clone's exclude file holds on every branch and in every worktree,
+        and install vendors nothing to commit (fix round 1)."""
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertFalse((t / ".glados" / "runs" / ".gitignore").exists(),
+                         "install vendors no ignore file")
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        self._git(repo, "checkout", "-q", "-b", "feat/old")
+        write(repo / "old.py", "x = 0\n")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "feat: old work")
+        self._git(repo, "checkout", "-q", "main")
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        exclude = Path(self._git(repo, "rev-parse", "--git-path",
+                                 "info/exclude"))
+        exclude = exclude if exclude.is_absolute() else repo / exclude
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-10-21-run-pipeline-x.md", "# record\n")
+        write(runs / "2026-10-21-run-pipeline-x.plan.md", "# plan\n")
+        self._save(repo)
+        for n, branch in enumerate(("feat/old", "main", "feat/old")):
+            self._git(repo, "checkout", "-q", branch)
+            self._git(repo, "checkout", "-q", "-b", f"feat/new-{n}")
+            self._git(repo, "add", "-A")
+            self.assertEqual(self._git(repo, "diff", "--cached",
+                                       "--name-only"), "",
+                             f"git add -A from {branch} stages no record")
+        self.assertTrue((runs / "2026-10-21-run-pipeline-x.md").is_file())
+        # the line is written once, however often a command runs
+        self._save(repo)
+        self.assertEqual(read(exclude).splitlines().count(glados.RUNS_EXCLUDE),
+                         1)
+        # a worktree shares it
+        wt = tmpdir("glados-ledger-wt-") / "wt"
+        self._git(repo, "worktree", "add", "-q", "-b", "feat/wt", str(wt),
+                  "main")
+        write(wt / ".glados" / "runs" / "r.md", "# r\n")
+        self.assertEqual(self._git(wt, "status", "--porcelain", "-uall"), "")
+
+    def test_install_excludes_records_at_a_repository_top_level(self):
+        """Committing `.glados/` follows an install, before any `ledger`
+        command, and an upgraded clone may hold records no save has seen:
+        install adds the exclude line, but only at a repository's top
+        level, the one place it covers, and never for the plugin build,
+        whose target is GLaDOS itself (fix round 3)."""
+        repo = self._clone()
+        shutil.copyfile(EXAMPLE, repo / "glados.yaml")
+        write(repo / ".glados" / "runs" / "2026-10-01-fix-bug-x.md", "# r\n")
+        exclude = repo / self._git(repo, "rev-parse", "--git-path",
+                                   "info/exclude")
+        rc, out = install("direct", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"added {glados.RUNS_EXCLUDE}", out)
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        self._git(repo, "add", ".glados")
+        staged = self._git(repo, "diff", "--cached", "--name-only").split()
+        self.assertIn(".glados/glados.py", staged)
+        self.assertNotIn(".glados/runs/2026-10-01-fix-bug-x.md", staged)
+        rc, out = install("direct", repo)
+        self.assertNotIn(f"added {glados.RUNS_EXCLUDE}", out)
+        self.assertEqual(read(exclude).splitlines().count(glados.RUNS_EXCLUDE),
+                         1)
+        for sub, mode in (("sub", "direct"), ("plugin", "claude-plugin")):
+            other = self._clone()
+            target = other / sub if sub == "sub" else other
+            name = "glados.yaml" if mode == "direct" else "glados.yaml.example"
+            target.mkdir(exist_ok=True)
+            shutil.copyfile(EXAMPLE, target / name)
+            rc, out = install(mode, target)
+            self.assertEqual(rc, 0, out)
+            path = other / self._git(other, "rev-parse", "--git-path",
+                                     "info/exclude")
+            self.assertNotIn(glados.RUNS_EXCLUDE,
+                             read(path) if path.is_file() else "", mode)
+
+    def test_a_reverted_copy_is_an_edit(self):
+        """A copy put back to text the ledger held before is an edit once
+        this tree has synced the path: saved, never replaced by the version
+        it reverted (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        f = a / ".glados" / "runs" / "2026-10-22-verify-feature-z.verdict.md"
+        for text in ("PASS\n", "FAIL: test gap\n", "PASS\n"):
+            write(f, text)
+            rc, out = self._save(a)
+            self.assertNotIn("earlier version", out)
+        self.assertEqual(read(f), "PASS\n")
+        self.assertEqual(self._show(a, "origin/glados/ledger",
+                                    ".glados/runs/2026-10-22-verify-feature-"
+                                    "z.verdict.md"), "PASS")
+        # restore keeps a revert not yet saved
+        write(f, "FAIL: test gap\n")
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(f), "FAIL: test gap\n")
+        self.assertIn("kept this copy", out)
+
+    def test_restore_drops_what_the_ledger_compacted(self):
+        """steward in one clone compacts a record; another clone that had
+        restored it loses its copy at the next restore, so it is neither
+        read as a prior record nor compacted twice. A copy edited since is
+        kept (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "old.md", "# settled\n")
+        write(runs / "old.review-1.md", "# review\n")
+        write(runs / "edited.md", "# settled too\n")
+        self._save(a)
+        c = self._clone(remote)
+        run_cli("ledger", "restore", "--target", c)
+        cruns = c / ".glados" / "runs"
+        self.assertTrue((cruns / "old.md").is_file())
+        write(cruns / "edited.md", "# settled too\nlocal note\n")
+        for name in ("old.md", "old.review-1.md", "edited.md"):
+            (runs / name).unlink()
+        write(runs / "DIGEST.md", "| old | edited |\n")
+        self._save(a, "old.md", "old.review-1.md", "edited.md", "DIGEST.md")
+        rc, out = run_cli("ledger", "restore", "--target", c)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("removed 2 the ledger no longer has", out)
+        self.assertFalse((cruns / "old.md").exists())
+        self.assertFalse((cruns / "old.review-1.md").exists())
+        self.assertTrue((cruns / "DIGEST.md").is_file())
+        self.assertEqual(read(cruns / "edited.md"),
+                         "# settled too\nlocal note\n")
+
+    def test_a_push_that_lost_the_ref_lock_is_retried(self):
+        """Another push landed after the remote advertised its refs, so the
+        remote could not lock the ledger ref ("[remote rejected] ... failed
+        to update ref"): the save fetches, merges and pushes again rather
+        than stopping as if a hook had refused it (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r0.md", "# r0\n")
+        self._save(a)
+        b = self._clone(remote)
+        run_cli("ledger", "restore", "--target", b)
+        # a's next save, pushed from b's pre-push hook: after the remote
+        # advertised its refs to b, before b's update lands
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a, "--no-push")
+        a_tip = self._git(a, "rev-parse", "glados/ledger")
+        hooks = tmpdir("glados-ledger-hooks-")
+        flag = hooks / "moved-once"
+        hook = hooks / "pre-push"
+        self._git(b, "config", "core.hooksPath", hooks.as_posix())
+        hook.write_text(
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"
+            f"if [ ! -f '{flag.as_posix()}' ]; then\n"
+            f"  touch '{flag.as_posix()}'\n"
+            "  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n"
+            f"  git -C '{a.as_posix()}' push -q origin "
+            f"{a_tip}:refs/heads/glados/ledger\n"
+            "fi\n"
+            "exit 0\n", encoding="utf-8", newline="\n")
+        os.chmod(hook, 0o755)
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        rc, out = self._save(b)
+        self.assertTrue(flag.exists(), "the hook moved the ledger")
+        self.assertIn("pushed glados/ledger to origin", out)
+        tip = self._git(b, "rev-parse", "origin/glados/ledger")
+        kept = subprocess.run(["git", "-C", str(b), "merge-base",
+                               "--is-ancestor", a_tip, tip])
+        self.assertEqual(kept.returncode, 0)
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/r0.md", ".glados/runs/ra.md",
+                          ".glados/runs/rb.md"})
+
+    def test_ci_fetches_the_ledger_before_scanning(self):
+        gitlab = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        job = gitlab.split("glados-verify-ledger:")[1]
+        fetch = job.index("+refs/heads/glados/ledger:refs/remotes/origin/"
+                          "glados/ledger")
+        self.assertLess(job.index("before_script:"), fetch)
+        self.assertLess(fetch, job.index("  script:\n"))
+        github = read(REPO / "ci" / "glados-check.github-actions.yml")
+        self.assertIn("fetch-depth: 0", github)
+        self.assertIn("GITHUB_BASE_REF", github)
+
+    def test_verify_ledger_lists_records_a_branch_commits(self):
+        repo = self._clone()
+        write(repo / ".glados" / "runs" / "kept.md", "# history\n")
+        self._git(repo, "add", "-f", ".glados/runs/kept.md")
+        self._git(repo, "commit", "-q", "-m", "chore(glados): record run")
+        self._git(repo, "checkout", "-q", "-b", "feat/x")
+        write(repo / "lib.py", "x = 1\n")
+        write(repo / ".glados" / "runs" / "new.md", "# new\n")
+        self._git(repo, "add", "-f", "lib.py", ".glados/runs/new.md")
+        self._git(repo, "commit", "-q", "-m", "feat: x")
+        rc, out = run_cli("verify-ledger", "--target", repo, "--base", "main")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("run records this branch commits (since main): 1", out)
+        self.assertIn(".glados/runs/new.md", out)
+        self.assertNotIn("kept.md", out, "history before the base is left")
+        self.assertIn("run records belong on glados/ledger", out)
+        self.assertIn("glados/ledger is not in this clone", out)
+        write(repo / ".glados" / "runs" / "r.md", "# r\n")
+        self._save(repo, "--no-push", ".glados/runs/r.md")
+        rc, out = run_cli("verify-ledger", "--target", repo)
+        self.assertIn("ledger branch: refs/heads/glados/ledger", out)
+        self.assertIn("not checked (no base", out)
+
+    # -- the compiled rules ----------------------------------------------------
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def test_every_core_saves_its_record_to_the_ledger(self):
+        """Said once, in the epilogue every core carries, with the restore
+        that brings records back in the preamble: review-mr's and
+        address-review's ledger rule became the general one."""
+        for name in glados.CORES:
+            with self.subTest(core=name):
+                text = self.core(name)
+                for rule in (
+                        "after `.glados/glados.py ledger restore` copies in "
+                        "the ledger's records",
+                        "A run without a saved run record and a published "
+                        "outcome is an incomplete run",
+                        "4. **Save the record to the ledger.** Every run's "
+                        "record and step artifacts live on the "
+                        "`glados/ledger` branch, never on a work branch: the "
+                        "MR carries the change and the comment, and the "
+                        "ledger carries the trail.",
+                        # a failed push is the helper's to say, when it
+                        # happens (fix round 1)
+                        "`.glados/glados.py ledger save` commits every new or "
+                        "changed file under `.glados/runs/` there and pushes "
+                        "it. Link",
+                        "Link a record or artifact by its ledger copy (`ledger "
+                        "link <path>`), never by a work-branch path.",
+                        # the project's own rows ride the work, where SDA
+                        # reads them, and land only when the change does,
+                        # so the commit is pushed (fix round 1)
+                        "Commit and push step 3's row and claim, and any "
+                        "pending observations, on the working branch: "
+                        "`chore(glados): log <workflow> run`.",
+                        # a run on an MR someone else opened works on that
+                        # MR's unit: the opener's row is already on the
+                        # branch, so a fix pass leaves it only its change
+                        # (final round)
+                        "clears its entry in `claims.md`; review-mr and "
+                        "address-review, on another's MR, do neither.",
+                        "The epilogue clears the entry. review-mr and "
+                        "address-review claim nothing.",
+                        "Save again for any record update made in this step, "
+                        "before step 6."):
+                    self.assertIn(rule, text)
+                for gone in ("**Commit the record**",
+                             "commit their record to the `glados/ledger` "
+                             "branch instead",
+                             "ride the record commit below",
+                             "ride the step 4 commit",
+                             "if the push fails, say so in the record",
+                             "both committed with the work (step 4)",
+                             "review-mr, which never commits to the branch "
+                             "it reviews, appends none"):
+                    self.assertNotIn(gone, text)
+                self.assertEqual(text.count("Every run's record and step "
+                                            "artifacts live on"), 1)
+
+    def test_the_workflows_that_assumed_a_branch_copy(self):
+        rp = self.core("run-pipeline")
+        for rule in (
+                "A parked run leaves its work on its own branch and its "
+                "record on the ledger, which the park's `escalation` and "
+                "run-epic's ticket row name.",
+                "**Commits.** When a row ends or parks, its process files "
+                "(artifact, briefs, check results, record) go to the ledger "
+                "in one save",
+                "`human`: save first (**Commits**), commit any working diff "
+                "a step left uncommitted, and push the branch.",
+                # open-mr: the links the description carries resolve on the
+                # ledger
+                "Commit the work on the branch and push it, and save this "
+                "run's record and step artifacts so far to the ledger, so "
+                "every link the description carries resolves"):
+            self.assertIn(rule, rp)
+        for gone in ("A parked run's record is committed on its own branch",
+                     "pushes again once the epilogue has committed the record",
+                     "together with this run's record and step artifacts"):
+            self.assertNotIn(gone, rp)
+        self.assertIn("review-mr, which never commits to the branch it "
+                      "reviews, carries it in the outcome only", rp)
+        steward = self.core("steward")
+        self.assertIn("Save the digest and every deleted path to the ledger "
+                      "(`.glados/glados.py ledger save <paths>`).", steward)
+        self.assertIn("recent records alone, and any this branch tracks.",
+                      steward)
+        # the clone's exclude file keeps records out; nothing in the tree
+        # needs committing (fix round 1)
+        self.assertNotIn(".glados/runs/.gitignore",
+                         self.core("adopt-codebase"))
+        self.assertIn("update the ticket's row in `epic.progress` and save it "
+                      "to the ledger before starting the next ticket",
+                      self.core("run-epic"))
+        self.assertIn("its artifacts live beside this run's record, on the run "
+                      "ledger", self.core("spec-feature"))
 
 
 class TestInstallRobustness(unittest.TestCase):
@@ -5999,6 +7009,47 @@ class TestMigrate(unittest.TestCase):
         self.assertIn("kept", out)
         self.assertIn("2026-05-01-migrated-login-timeout.md",
                       read(t2 / "product-knowledge" / "SPEC_LOG.md"))
+
+    def test_migrated_records_stay_out_of_the_commit_and_reach_the_ledger(self):
+        """migrate writes records before any `ledger` command runs, and
+        MIGRATION step 3 then commits `.glados/`. migrate adds the clone's
+        exclude line first, so that commit takes no record, and the
+        `ledger save` after it, which skips files HEAD tracks, finds them
+        all (fix round 3)."""
+        t, git = self._v1_repo()
+
+        def out(*a):
+            return subprocess.run(["git", "-C", str(t), *a],
+                                  capture_output=True, text=True).stdout
+
+        exclude = t / out("rev-parse", "--git-path", "info/exclude").strip()
+        rc, dry = self._migrate(t, "--dry-run")
+        self.assertIn(f"would add {glados.RUNS_EXCLUDE}", dry)
+        self.assertNotIn(glados.RUNS_EXCLUDE,
+                         read(exclude) if exclude.is_file() else "")
+        rc, mout = self._migrate(t)
+        self.assertEqual(rc, 0, mout)
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        self.assertIn("ledger save --target", mout)
+        gy = read(t / "glados.yaml")
+        write(t / "glados.yaml",
+              gy.replace(glados.MIGRATE_PHASE_LINE, "phase: evolving"))
+        self.assertEqual(install("direct", t)[0], 0)
+        git("add", "glados.yaml", ".glados", "product-knowledge")
+        staged = out("diff", "--cached", "--name-only").split()
+        self.assertIn(".glados/glados.py", staged)
+        self.assertEqual([p for p in staged if p.startswith(".glados/runs/")],
+                         [], "the migration commit takes no record")
+        git("commit", "-q", "-m", "chore: migrate to glados v2")
+        remote = tmpdir("glados-migrate-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        git("remote", "set-url", "origin", str(remote))
+        rc, sout = run_cli("ledger", "save", "--target", t)
+        self.assertEqual(rc, 0, sout)
+        self.assertEqual(
+            set(out("ls-tree", "-r", "--name-only", "glados/ledger").split()),
+            {self.REC1, self.REC2})
 
 
 

@@ -18,7 +18,7 @@ checks against.
 | File | Role |
 |---|---|
 | `preamble.md` | Prepended to every core: create the run record and set the in-flight markers (`.glados/runs/current` and `.glados/runs/stack`, which nested runs push onto) first, record `work.base-sha` before mutating, resolve decision rights. Carries the `{{OPTIMIZE_FOR}}` slot the phase preset fills. |
-| `epilogue.md` | Appended to every core: finalize the run record, yield check, commit, publish outcomes to bound channels, release holds and pop this run off the in-flight markers. A core defining its own ending fails lint. |
+| `epilogue.md` | Appended to every core: finalize the run record, yield check, save it to the `glados/ledger` branch, publish outcomes to bound channels, release holds and pop this run off the in-flight markers. A core defining its own ending fails lint. |
 | `state-registry.yaml` | The flat state-key registry — every legal `reads:`/`writes:` token with its declared home, plus the outcome-type list. Install fails if an enabled read has no enabled writer. |
 | `presets/phases.yaml` | The vendored phase preset table (`nascent`/`evolving`/`production`/`sunset`), the precedence rules, and the phase-untouchable invariants. |
 

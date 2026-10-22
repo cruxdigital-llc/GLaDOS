@@ -25,9 +25,13 @@ What changed, in one line each:
   (section 3).
 - A `run-pipeline` record reports its phase from its step table (section 4).
 - One unit of work gets one claim and one work-unit row, owned by its
-  outermost run; nested runs add neither (section 5).
+  outermost run; nested runs add neither, nor do review-mr and
+  address-review on another's merge request (section 5).
 - A run parked at a checkpoint keeps its claim and appends no row until the
   work resumes and ends (section 5).
+- From GLaDOS 2.5's run ledger, work units are saved to the `glados/ledger`
+  branch, not committed to a work branch, and the work-unit row is committed
+  with the work (section 5).
 
 ## 2. Workflow names (amends v2.0 section 4.2)
 
@@ -111,7 +115,7 @@ verifying → done. A pipeline may skip phases (a refactor with no planning
 step) or end early (a design pipeline with no code), and a board shows it in
 whatever column its current row reports.
 
-## 5. Units of work: claims and the work-unit log (amends v2.0 sections 2, 6, 7 and 8)
+## 5. Units of work: claims and the work-unit log (amends v2.0 sections 2, 4, 6, 7 and 8)
 
 v2.0 said every mutating run claims and every run appends a row. From this
 profile on,
@@ -127,6 +131,11 @@ run**:
 - **Nested runs claim nothing.** Only the outermost run records and clears a
   `claims.md` claim. A nested run works under it and never treats a claim of
   a run enclosing it as contention.
+- **Runs on another's merge request claim nothing and append no row.**
+  `review-mr` and `address-review` act on a merge request someone else
+  opened, whose unit is its opener's: a GLaDOS run that opened it appended
+  the unit's row, and a person's merge request is not a GLaDOS unit of
+  work. A fix pass commits only its change to that branch.
 - **run-epic tickets are units of their own.** Each ticket's build inside
   `run-epic` (build-feature, or `run-pipeline` with the ticket's pipeline)
   has its own branch and MR, so it claims and appends its own row as an
@@ -152,6 +161,13 @@ outermost run"; section 8's claiming and clearing are done by the outermost
 run. Section 8's "Direction (v2.1, not shipped)" paragraph about a lease
 module is a GLaDOS roadmap note, not part of this profile: profile v2.1 adds
 no leases.
+
+From GLaDOS 2.5's run ledger, v2.0 section 4's work units are saved to the
+`glados/ledger` branch (`glados.py ledger save`) and never committed to a
+work branch, so a tool that reads them reads that branch, and section 7's
+"before the record commit" reads "before the record is saved to the ledger;
+the row is committed with the work, on its branch" (see the
+[SDA guide](../guides/sda.md)).
 
 ## 6. Repository layout (amends v2.0 section 3)
 
@@ -181,6 +197,6 @@ newest first" with:
 
 | Version | Date | Notes |
 |---|---|---|
-| 2.1 | 2026-10-17 | Additive to v2.0: `run-pipeline` joins the workflow names; step artifacts and spec-feature's and the evaluator's sibling files named and excluded from record-name parsing; phase of a `run-pipeline` record from its step table (a passing nested verification does not mark it done); one claim and one work-unit row per unit of work, owned by the outermost run (nested runs add neither; run-epic tickets are units of their own; parked runs keep their claim) |
+| 2.1 | 2026-10-17 | Additive to v2.0: `run-pipeline` joins the workflow names; step artifacts and spec-feature's and the evaluator's sibling files named and excluded from record-name parsing; phase of a `run-pipeline` record from its step table (a passing nested verification does not mark it done); one claim and one work-unit row per unit of work, owned by the outermost run (nested runs add neither, nor do review-mr and address-review on another's merge request; run-epic tickets are units of their own; parked runs keep their claim); work units saved to the `glados/ledger` branch, from GLaDOS 2.5's run ledger |
 | 2.0 | 2026-07-03 | See [sda-profile-glados-v2.md](sda-profile-glados-v2.md), unchanged |
 | 1.0 | 2026-04-01 | See [sda-profile-glados-v1.md](sda-profile-glados-v1.md), unchanged and historical |

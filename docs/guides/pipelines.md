@@ -292,8 +292,9 @@ persona pass. `implement-feature`, `verify-feature`, `open-mr` and
 - `none`: continue.
 - `record`: continue, and publish the step's result in the run's `decision`
   outcome.
-- `human`: the run commits its record, its artifacts and any uncommitted
-  code on its branch, and pushes the branch. It then asks in the session when
+- `human`: the run saves its record and artifacts to the `glados/ledger`
+  branch, commits any uncommitted code on its branch, and pushes the
+  branch. It then asks in the session when
   a person started it, with the step marked `parked` until they answer, so
   a session that ends first leaves work a later run can resume; a "no" is a
   blocking finding, so the artifact is revised and the question asked
@@ -473,10 +474,10 @@ Warnings, which never fail:
   reads that and the rows its step needs. What a check found stays in that
   check's files, and how a revision answered it in
   `<record>.<id>.revision-<n>.md`, which no reviewer's brief names. A row's
-  process files are committed together when the row ends or parks, never
-  one by one; a pipeline with no branch of its own makes no row commit until
-  it parks and cuts one, and if it ends without parking, the epilogue's
-  record commit on the current branch is its only commit.
+  process files are saved to the `glados/ledger` branch together when the
+  row ends or parks; none of them is committed to the work's branch, so the
+  MR's diff is the change. A pipeline with no branch of its own claims none
+  until it parks and cuts one.
 - **The step table is the index.** A step's own file sits beside the record
   as `<record>.<id>.md` (shape writes `<record>.shape.md`). Each check of a
   step writes files of its own, numbered by its row in the step's cycle

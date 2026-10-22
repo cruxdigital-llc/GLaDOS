@@ -20,6 +20,8 @@ Subcommands (see ``--help``):
     doctor          staleness + wiring report (never fails)
     migrate         guided v1 -> v2 migration: detect, generate, convert, clean
     verify-ledger   scan git history for silent-loss candidates (report-only)
+    ledger          save run records to the glados/ledger branch, restore
+                    them into .glados/runs/, or print a record's ledger link
     compile-plugin  shorthand: install --mode claude-plugin --target <repo>
 
 Sections, in order:
@@ -33,6 +35,7 @@ Sections, in order:
     8.  ADAPTERS          — six emitters over the SAME compiled artifacts
     9.  VENDOR + SCAFFOLD
     10. COMMANDS          — install / check / doctor / migrate / verify-ledger
+                            / ledger
     11. CLI
 """
 
@@ -42,9 +45,12 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import urllib.parse
 from pathlib import Path
 
 
@@ -105,7 +111,8 @@ PREAMBLE_OWNED_WRITES = ["work.base-sha", "run.record"]
 # team-visible by default (it names an external destination people see), opt out
 # with `team-visible: false`. The sink *name* set is therefore OPEN; only the
 # built-ins are fixed. ``ledger`` is the one built-in that is NOT team-visible:
-# it is the committed run record, valid alone only for progress/decision/observation.
+# it is the run record on the glados/ledger branch, valid alone only for
+# progress/decision/observation.
 BUILTIN_SINKS = {
     "mr-comment": True,
     "issue": True,
@@ -3074,7 +3081,8 @@ Interactions API runner for unattended read-mostly routines.
    current `glados.yaml` and `.glados/presets.yaml`, the relevant files, the
    issue text — as your first user message.
 4. Run. The model emits `=== WRITE FILE: ... ===` and `=== RUN: ... ===`
-   blocks; you (the operator) apply them to the repo and commit the run record.
+   blocks; you (the operator) apply them to the repo and save the run record
+   to the ledger (`python .glados/glados.py ledger save`).
 
 ## Saved-prompt setup
 
@@ -3304,8 +3312,9 @@ OWNED_DIRS = {
 
 # Vendored subtrees EVERY mode owns. Cleaned like OWNED_DIRS so a renamed
 # source/persona/hook does not linger and skew the self-contained vendored
-# checker. Deliberately excludes .glados/runs/ (run records are user history)
-# and the .glados/ root files (always re-planned).
+# checker. Deliberately excludes .glados/runs/ (run records are user history,
+# and no install plans a file there) and the .glados/ root files (always
+# re-planned).
 VENDOR_OWNED_DIRS = [".glados/src", ".glados/ci", ".glados/hooks",
                      ".glados/personas"]
 
@@ -3761,8 +3770,15 @@ def cmd_install(args) -> int:
     if mode == "antigravity":
         _emit_agy_hooks(target, source)
 
+    # The plugin build's target is GLaDOS itself, not a project.
+    runs_excluded = mode != "claude-plugin" and _exclude_runs_at(target)
+
     print(f"glados: installed mode '{mode}' into {target}")
     print(f"glados: {len(comp.enabled)} cores, manifest {manifest_hash[:12]}…")
+    if runs_excluded:
+        print(f"glados: added {RUNS_EXCLUDE} to the clone's git exclude file — "
+              f"run records go to the {LEDGER_BRANCH} branch, never in a "
+              f"commit")
     if removed:
         print(f"glados: cleaned {len(removed)} stale file(s): {', '.join(removed)}")
     if scaffolded:
@@ -4531,18 +4547,857 @@ def cmd_verify_ledger(args) -> int:
             verdict_commits.append(f"{sha[:10]} {subject}")
 
     branches = git("branch", "--format=%(refname:short)").strip().split("\n")
-    feature_branches = [b for b in branches if b and b not in ("main", "master")]
+    feature_branches = [b for b in branches
+                        if b and b not in ("main", "master", LEDGER_BRANCH)]
 
+    # Records live on the ledger branch, so a clone without it has none to
+    # count: say so rather than report a silent loss. GitHub's checkout with
+    # fetch-depth 0 brings every branch; the GitLab job fetches it first.
+    ledger_refs = [r for r in git("for-each-ref", "--format=%(refname)",
+                                  "refs/heads", "refs/remotes").split()
+                   if r == LEDGER_REF or r.endswith("/" + LEDGER_BRANCH)]
+    if ledger_refs:
+        print(f"  ledger branch: {', '.join(ledger_refs)}")
+    else:
+        print(f"  ledger branch: {LEDGER_BRANCH} is not in this clone — fetch "
+              f"it to count the run records that live there")
     print(f"  run-record commits (chore(glados): record …): {record_commits}")
     print(f"  feature/other branches: {len(feature_branches)}")
     print(f"  MR-less verdict/review commits (silent-loss candidates): "
           f"{len(verdict_commits)}")
     for v in verdict_commits[:20]:
         print(f"    - {v}")
-    if record_commits == 0 and feature_branches:
+    if record_commits == 0 and feature_branches and ledger_refs:
         print("  WARNING: agent-authored branches exist with zero run records — "
               "this is the class-B silent loss verify-ledger exists to surface")
-    print("glados verify-ledger: report-only in v2.0.0")
+
+    # A work branch carries the change, never the run's records (epilogue
+    # step 4). Compared with the merge-base of the branch it targets: an
+    # explicit --base, else the merge request's diff base in GitLab CI, else
+    # the pull request's base branch in GitHub Actions. Records committed
+    # before they moved to the ledger are history and are not listed: only
+    # the commits this branch adds count.
+    base = getattr(args, "base", None) \
+        or os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") \
+        or (f"origin/{os.environ['GITHUB_BASE_REF']}"
+            if os.environ.get("GITHUB_BASE_REF") else None)
+    if not base:
+        print("  run records on this branch: not checked (no base to compare "
+              "with — pass --base <target branch>)")
+    else:
+        mb = git("merge-base", base, "HEAD").strip()
+        if not mb:
+            print(f"  run records on this branch: not checked ({base} is not "
+                  f"in this clone)")
+        else:
+            added = [p for p in git("diff", "--name-only", "--diff-filter=AM",
+                                    mb, "HEAD", "--", RUNS_DIR).split("\n")
+                     if p and p != RUNS_IGNORE_FILE]
+            print(f"  run records this branch commits (since {base}): "
+                  f"{len(added)}")
+            for p in added[:20]:
+                print(f"    - {p}")
+            if len(added) > 20:
+                print(f"    … and {len(added) - 20} more")
+            if added:
+                print(f"  WARNING: run records belong on {LEDGER_BRANCH}, not "
+                      f"in a merge request's diff — save them with `glados.py "
+                      f"ledger save` and leave them out of the branch")
+    print("glados verify-ledger: report-only")
+    return 0
+
+
+# ---- ledger -----------------------------------------------------------------
+#
+# `glados.py ledger save | restore | link` moves run records between the
+# working tree and the `glados/ledger` branch. Every run's record and step
+# artifacts live on that branch and never on a work branch, so a merge
+# request's diff is the change (epilogue step 4). Agents still read and
+# write them under `.glados/runs/`, which the clone's exclude file keeps out
+# of every branch's commits (_ensure_runs_ignored). Records an older GLaDOS
+# committed to a branch stay there: nothing here rewrites history.
+#
+# save builds its commit in a temporary index, so the checked-out branch,
+# the real index and the working tree's tracked files are never touched,
+# moves refs/heads/glados/ledger with a compare-and-swap, and pushes it. It
+# never force-pushes. When another session pushed meanwhile, its commit
+# becomes a parent of ours: a file one side changed takes that side, and a
+# file both changed is merged keeping both sides' lines (`git merge-file
+# --union`), with a warning naming it. A local copy that is an earlier
+# version of the ledger's is refreshed, never written back over it. The
+# version of each file this working tree last synced with the ledger is
+# kept in the git dir (LEDGER_SYNC_FILE): it is the base those merges
+# compare against, and how a stale copy is told from an edited one.
+
+LEDGER_BRANCH = "glados/ledger"
+LEDGER_REF = "refs/heads/" + LEDGER_BRANCH
+RUNS_DIR = ".glados/runs"
+RUNS_IGNORE_FILE = RUNS_DIR + "/.gitignore"
+# Files directly under RUNS_DIR that never leave the working tree: the
+# in-flight markers, and an ignore file a project may keep there.
+RUNS_LOCAL_ONLY = frozenset({"current", "stack", ".gitignore"})
+# The line every ledger command puts in the clone's exclude file.
+RUNS_EXCLUDE = "/" + RUNS_DIR + "/*"
+LEDGER_SYNC_FILE = "glados-ledger.json"
+LEDGER_PUSH_ATTEMPTS = 5
+LEDGER_DEFAULT_MESSAGE = "chore(glados): record runs"
+# Network commands never wait on a credential prompt nobody will answer.
+_LEDGER_NET_ENV = {"GIT_TERMINAL_PROMPT": "0"}
+
+
+def _first_line(data) -> str:
+    text = data.decode("utf-8", "replace") if isinstance(data, bytes) else data
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[0] if lines else "no output"
+
+
+class _LedgerGit:
+    """git, run in one repository's top level; bytes in and out."""
+
+    def __init__(self, root: Path):
+        self.root = root
+
+    def run(self, *args, input=None, env=None, check=True):
+        full_env = None
+        if env:
+            full_env = dict(os.environ)
+            full_env.update(env)
+        if isinstance(input, str):
+            input = input.encode("utf-8")
+        try:
+            proc = subprocess.run(["git", "-C", str(self.root), *args],
+                                  input=input, capture_output=True,
+                                  env=full_env, timeout=300)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise Fatal(f"git {args[0]} could not run ({exc}) — the run ledger "
+                        f"needs git on PATH")
+        if check and proc.returncode != 0:
+            raise Fatal(f"git {' '.join(args[:2])} failed: "
+                        f"{_first_line(proc.stderr)}")
+        return proc
+
+    def out(self, *args, **kw) -> str:
+        return self.run(*args, **kw).stdout.decode("utf-8", "replace").strip()
+
+    def rev(self, ref):
+        proc = self.run("rev-parse", "--verify", "--quiet", ref + "^{commit}",
+                        check=False)
+        sha = proc.stdout.decode("ascii", "replace").strip()
+        return sha if proc.returncode == 0 and sha else None
+
+    def is_ancestor(self, a: str, b: str) -> bool:
+        return self.run("merge-base", "--is-ancestor", a, b,
+                        check=False).returncode == 0
+
+
+def _ledger_open(target) -> _LedgerGit:
+    probe = _LedgerGit(Path(target))
+    proc = probe.run("rev-parse", "--show-toplevel", check=False)
+    top = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode != 0 or not top:
+        raise Fatal(f"{Path(target).resolve()} is not inside a git repository "
+                    f"— the run ledger is the {LEDGER_BRANCH} branch of the "
+                    f"project's repository")
+    return _LedgerGit(Path(top))
+
+
+def _ensure_runs_ignored(git: _LedgerGit, write: bool = True) -> bool:
+    """Add RUNS_EXCLUDE to the clone's exclude file (`info/exclude` in the
+    common git dir), so nothing a run writes under `.glados/runs/` reaches a
+    commit. That file holds on every branch and in every worktree. An ignore
+    file inside `.glados/runs/` would not: with a branch that tracks it and
+    one that lacks it, a checkout either aborts over an untracked copy or
+    deletes the tracked one, leaving every record open to `git add -A`.
+    Every run starts with `ledger restore` (preamble step 1), and install
+    and migrate write it too (_exclude_runs_at), so a clone has the line
+    before it has a record. Returns whether the line was missing; ``write``
+    false only checks."""
+    rel = Path(git.out("rev-parse", "--git-path", "info/exclude"))
+    path = rel if rel.is_absolute() else git.root / rel
+    try:
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        text = ""
+    if RUNS_EXCLUDE in (ln.strip() for ln in text.splitlines()):
+        return False
+    if not write:
+        return True
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(("" if text.endswith("\n") or not text else "\n")
+                 + "# glados: run records live on the glados/ledger branch\n"
+                 + RUNS_EXCLUDE + "\n")
+    return True
+
+
+def _exclude_runs_at(target: Path, write: bool = True) -> bool:
+    """_ensure_runs_ignored for install and migrate, which run before any
+    `ledger` command and are followed by committing `.glados/`: migrate
+    converts history into records there, and a clone upgraded from a
+    GLaDOS that kept records on the branch may hold untracked ones. Only
+    when ``target`` is a repository's top level, the one place the line
+    covers; anywhere else (no git, a subdirectory) it does nothing."""
+    try:
+        probe = _LedgerGit(target)
+        proc = probe.run("rev-parse", "--show-toplevel", check=False)
+        top = proc.stdout.decode("utf-8", "replace").strip()
+        if proc.returncode != 0 or not top or not Path(top).samefile(target):
+            return False
+        return _ensure_runs_ignored(probe, write)
+    except (Fatal, OSError):
+        return False
+
+
+def _ledger_held_by(git: _LedgerGit):
+    """The worktree that has the ledger branch checked out, if any: moving
+    the branch under it would leave that checkout showing the save as an
+    undone change."""
+    path = None
+    for line in git.out("worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line.strip() == "branch " + LEDGER_REF:
+            return path or "a worktree"
+    return None
+
+
+def _ledger_remote(git: _LedgerGit, name: str):
+    return name if name in git.out("remote").split() else None
+
+
+def _ledger_tracking(remote: str) -> str:
+    return f"refs/remotes/{remote}/{LEDGER_BRANCH}"
+
+
+def _ledger_fetch(git: _LedgerGit, remote: str):
+    """Fetch the remote's ledger into its remote-tracking ref. None when that
+    worked or the remote has no ledger yet; otherwise why it failed."""
+    proc = git.run("fetch", "--quiet", "--no-tags", remote,
+                   f"+{LEDGER_REF}:{_ledger_tracking(remote)}",
+                   env=_LEDGER_NET_ENV, check=False)
+    if proc.returncode == 0:
+        return None
+    err = proc.stderr.decode("utf-8", "replace")
+    if "couldn't find remote ref" in err.lower():
+        return None
+    return _first_line(err)
+
+
+def _ledger_tree(git: _LedgerGit, commit, prefix=None) -> dict:
+    """path -> (mode, blob sha) for every file in ``commit`` (under
+    ``prefix`` when given); {} for no commit."""
+    if not commit:
+        return {}
+    args = ["ls-tree", "-r", "-z", "--full-tree", commit]
+    if prefix:
+        args += ["--", prefix]
+    tree: dict = {}
+    for rec in git.run(*args).stdout.split(b"\0"):
+        if not rec:
+            continue
+        meta, _, path = rec.partition(b"\t")
+        mode, kind, sha = meta.decode("ascii").split()
+        if kind == "blob":
+            tree[path.decode("utf-8", "surrogateescape")] = (mode, sha)
+    return tree
+
+
+def _runs_relative(path: str) -> str:
+    return path[len(RUNS_DIR) + 1:] if path.startswith(RUNS_DIR + "/") else path
+
+
+def _runs_local_only(path: str) -> bool:
+    return "/" not in _runs_relative(path) and \
+        _runs_relative(path) in RUNS_LOCAL_ONLY
+
+
+def _runs_files(root: Path, sub: str = RUNS_DIR) -> list[str]:
+    """Repo-relative paths of the files under ``sub`` (a path under
+    RUNS_DIR), the local-only ones left out."""
+    start = root / sub
+    if start.is_file():
+        found = [start]
+    elif start.is_dir():
+        found = sorted(f for f in start.rglob("*") if f.is_file())
+    else:
+        found = []
+    out = []
+    for f in found:
+        if f.is_symlink():
+            continue
+        rel = f.relative_to(root).as_posix()
+        if not _runs_local_only(rel):
+            out.append(rel)
+    return out
+
+
+def _hash_files(git: _LedgerGit, paths, write=False) -> dict:
+    """path -> the blob sha `git add` would give it (the path's filters and
+    line-ending rules applied)."""
+    paths = list(paths)
+    if not paths:
+        return {}
+    args = ["hash-object"] + (["-w"] if write else []) + ["--stdin-paths"]
+    shas = git.out(*args, input="".join(p + "\n" for p in paths)).split()
+    if len(shas) != len(paths):
+        raise Fatal("git hash-object returned a different number of hashes "
+                    "than paths — a path under .glados/runs/ has a newline in "
+                    "its name; rename it")
+    return dict(zip(paths, shas))
+
+
+def _path_history(git: _LedgerGit, commits, path: str) -> set:
+    """Every blob the ledger has held at ``path`` in the history of
+    ``commits``."""
+    commits = [c for c in dict.fromkeys(commits) if c]
+    if not commits:
+        return set()
+    out = git.run("log", "-m", "--format=", "--raw", "--no-abbrev",
+                  "--no-renames", *commits, "--", path,
+                  check=False).stdout.decode("utf-8", "replace")
+    blobs = set()
+    for line in out.splitlines():
+        if line.startswith(":"):
+            for sha in line.split("\t", 1)[0].split()[2:4]:
+                if sha.strip("0"):
+                    blobs.add(sha)
+    return blobs
+
+
+def _ledger_sync_path(git: _LedgerGit) -> Path:
+    p = Path(git.out("rev-parse", "--git-path", LEDGER_SYNC_FILE))
+    return p if p.is_absolute() else git.root / p
+
+
+def _ledger_sync_load(git: _LedgerGit) -> dict:
+    try:
+        data = json.loads(_ledger_sync_path(git).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _ledger_sync_store(git: _LedgerGit, data: dict) -> None:
+    path = _ledger_sync_path(git)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(data, indent=0, sort_keys=True),
+                       encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass  # the sync file only sharpens merges; losing it loses nothing
+
+
+def _blob_bytes(git: _LedgerGit, sha: str) -> bytes:
+    return git.run("cat-file", "blob", sha).stdout
+
+
+def _union_merge(git: _LedgerGit, base, ours: str, theirs: str):
+    """The blob of a line merge of ``ours`` and ``theirs`` from ``base``
+    (None: no common version) that keeps both sides' lines where they
+    conflict; None for binary content, which cannot be merged by line."""
+    blobs = [_blob_bytes(git, ours), _blob_bytes(git, base) if base else b"",
+             _blob_bytes(git, theirs)]
+    if any(b"\0" in b for b in blobs):
+        return None
+    with tempfile.TemporaryDirectory(prefix="glados-ledger-") as td:
+        names = []
+        for label, data in zip(("ours", "base", "theirs"), blobs):
+            f = Path(td) / label
+            f.write_bytes(data)
+            names.append(str(f))
+        proc = git.run("merge-file", "-p", "--union", *names, check=False)
+        if proc.returncode != 0:
+            return None
+        merged = proc.stdout
+    return git.out("hash-object", "-w", "--stdin", input=merged)
+
+
+def _ledger_integrate(git: _LedgerGit, local, remote_tip, notes: list):
+    """(parents, tree) of the ledger a save builds on: this clone's ledger
+    and the remote's, merged when they diverged, so that neither side's
+    saves are lost."""
+    if local and remote_tip and local != remote_tip \
+            and not git.is_ancestor(local, remote_tip):
+        if git.is_ancestor(remote_tip, local):
+            return [local], _ledger_tree(git, local)
+        mb = git.run("merge-base", local, remote_tip,
+                     check=False).stdout.decode("ascii").strip() or None
+        base_t = _ledger_tree(git, mb)
+        ours_t = _ledger_tree(git, local)
+        theirs_t = _ledger_tree(git, remote_tip)
+        merged = dict(theirs_t)
+        for p in sorted(set(base_t) | set(ours_t)):
+            b, o, t = base_t.get(p), ours_t.get(p), theirs_t.get(p)
+            if o == b or o == t:
+                continue                    # ours left it alone, or agrees
+            if t == b:                      # only this clone changed it
+                if o is None:
+                    merged.pop(p, None)
+                else:
+                    merged[p] = o
+                continue
+            if o is None:                   # removed here, edited there
+                continue
+            if t is None:                   # edited here, removed there
+                merged[p] = o
+                continue
+            sha = _union_merge(git, b[1] if b else None, o[1], t[1])
+            merged[p] = (o[0], sha or o[1])
+            notes.append(f"{p}: changed here and by another session; "
+                         + ("merged keeping both sides' lines — check it "
+                            "reads right" if sha else
+                            "binary, so this clone's copy is kept and the "
+                            "other is in the ledger's history"))
+        notes.append("this clone's earlier saves were merged with saves "
+                     "another session pushed")
+        return [remote_tip, local], merged
+    tip = remote_tip if remote_tip and (not local or local == remote_tip
+                                        or git.is_ancestor(local, remote_tip)) \
+        else local
+    return ([tip] if tip else []), _ledger_tree(git, tip)
+
+
+def _ledger_arg_paths(root: Path, args_paths) -> list[str]:
+    """Each argument as a repo-relative path under RUNS_DIR: as given from
+    the current directory, from the repo root, or as a name inside
+    RUNS_DIR."""
+    out = []
+    top = root.resolve()
+    for arg in args_paths:
+        cand = Path(arg)
+        options = [cand] if cand.is_absolute() else \
+            [Path.cwd() / cand, root / cand, root / RUNS_DIR / cand]
+        chosen = None
+        for opt in options:
+            try:
+                rel = opt.resolve().relative_to(top).as_posix()
+            except ValueError:
+                continue
+            if rel != RUNS_DIR and not rel.startswith(RUNS_DIR + "/"):
+                continue
+            if opt.exists():
+                chosen = rel
+                break
+            chosen = chosen or rel
+        if chosen is None:
+            raise Fatal(f"{arg}: not under {RUNS_DIR}/ — the ledger holds run "
+                        f"records and step artifacts only")
+        out.append(chosen)
+    return out
+
+
+def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
+    """What the working tree's files change on the ledger tree ``entries``.
+
+    Returns (updates, refresh, synced): ``updates`` maps a path to its new
+    (mode, sha), or None to remove it; ``refresh`` maps a path to the blob to
+    write back over the local copy; ``synced`` is the version each path now
+    shares with the ledger.
+
+    With no explicit paths, every file under RUNS_DIR is considered except
+    those this branch tracks unchanged (records committed before they moved
+    to the ledger stay the branch's own). An explicit path that no longer
+    exists removes it, and everything under it, from the ledger."""
+    head = _ledger_tree(git, git.rev("HEAD"), RUNS_DIR)
+    updates: dict = {}
+    refresh: dict = {}
+    synced: dict = {}
+    if explicit is None:
+        files = _runs_files(root)
+    else:
+        files = []
+        for rel in explicit:
+            if _runs_local_only(rel):
+                continue
+            if (root / rel).exists():
+                files += _runs_files(root, rel)
+                continue
+            gone = [p for p in entries
+                    if p == rel or p.startswith(rel.rstrip("/") + "/")]
+            for p in gone:
+                updates[p] = None
+                synced[p] = None
+            if not gone:
+                notes.append(f"{rel}: neither here nor on the ledger")
+    hashes = _hash_files(git, files)
+    changed = []
+    for p in files:
+        w = hashes[p]
+        if explicit is None and head.get(p, (None, None))[1] == w:
+            continue
+        t = entries.get(p, (None, None))[1]
+        if w == t:
+            synced[p] = t
+            continue
+        changed.append(p)
+    _hash_files(git, changed, write=True)    # a merge reads them as blobs
+    for p in changed:
+        w = hashes[p]
+        t = entries.get(p, (None, None))[1]
+        known = sync.get(p)
+        # An earlier version: the ledger moved on and this copy did not.
+        # Once this tree has synced the path, only that version is stale:
+        # any other content, an earlier text put back included, is an edit.
+        if w == known or (known is None
+                          and w in _path_history(git, history, p)):
+            if t:
+                refresh[p] = t
+                synced[p] = t
+                notes.append(f"{p}: this copy was an earlier version of the "
+                             f"ledger's; refreshed from the ledger")
+            else:
+                notes.append(f"{p}: the ledger removed it, and this copy is an "
+                             f"earlier version; left off the ledger")
+            continue
+        if t is None:
+            updates[p] = ("100644", w)
+            synced[p] = w
+            continue
+        base = known or head.get(p, (None, None))[1]
+        if base == t:                      # only this copy changed
+            updates[p] = (entries[p][0], w)
+            synced[p] = w
+            continue
+        # Both changed since this copy's base (or, with no base, two files
+        # that took the same name): keep both sides' lines.
+        merged = _union_merge(git, base, w, t)
+        if merged:
+            updates[p] = (entries[p][0], merged)
+            refresh[p] = merged
+            synced[p] = merged
+            notes.append(f"{p}: changed here and on the ledger; merged keeping "
+                         f"both sides' lines — check it reads right")
+        else:
+            updates[p] = (entries[p][0], w)
+            synced[p] = w
+            notes.append(f"{p}: changed here and on the ledger, and cannot be "
+                         f"merged by line; this copy is saved, the other is in "
+                         f"the ledger's history")
+    return updates, refresh, synced
+
+
+def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
+    """Write ``tree`` (path -> (mode, sha)) as a git tree through a temporary
+    index, leaving the repository's own index alone."""
+    with tempfile.TemporaryDirectory(prefix="glados-ledger-") as td:
+        env = {"GIT_INDEX_FILE": str(Path(td) / "index")}
+        git.run("read-tree", "--empty", env=env)
+        if tree:
+            info = b"".join(f"{mode} {sha}\t".encode("ascii")
+                            + path.encode("utf-8", "surrogateescape") + b"\0"
+                            for path, (mode, sha) in sorted(tree.items()))
+            git.run("update-index", "-z", "--index-info", input=info, env=env)
+        return git.out("write-tree", env=env)
+
+
+def _ledger_apply_refresh(git: _LedgerGit, refresh: dict) -> None:
+    for p, sha in refresh.items():
+        f = git.root / p
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(_blob_bytes(git, sha))
+
+
+def _remote_web_base(url: str):
+    """https://host/group/project for an http(s), ssh or scp-style remote
+    URL; None for a local path or anything else."""
+    url = url.strip()
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https", "ssh", "git", "git+ssh",
+                                "ssh+git"):
+            return None
+        host, path = parts.hostname, parts.path
+        scheme = "http" if parts.scheme == "http" else "https"
+    else:
+        m = re.match(r"^(?:[^@/]+@)?([^:/]+):(.+)$", url)
+        if not m or len(m.group(1)) == 1:      # C:/... is a Windows path
+            return None
+        host, path, scheme = m.group(1), m.group(2), "https"
+    path = path.strip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not host or not path:
+        return None
+    return f"{scheme}://{host}/{path}"
+
+
+def _ledger_link_base(git: _LedgerGit, remote):
+    """The web prefix a ledger file's path is appended to, or None when the
+    remote has no web address this can derive. GitHub (glados.yaml
+    `platform: github`, or a github host) puts blobs under /blob/, GitLab
+    under /-/blob/."""
+    if not remote:
+        return None
+    url = git.run("remote", "get-url", remote, check=False).stdout.decode(
+        "utf-8", "replace")
+    base = _remote_web_base(url)
+    if not base:
+        return None
+    platform = None
+    manifest = git.root / "glados.yaml"
+    if manifest.is_file():
+        try:
+            platform = load_manifest(manifest).get("platform")
+        except Fatal:
+            platform = None
+    if platform not in ("github", "gitlab"):
+        platform = "github" if "github" in base.split("/")[2] else "gitlab"
+    blob = "blob" if platform == "github" else "-/blob"
+    return f"{base}/{blob}/{LEDGER_BRANCH}/"
+
+
+def _ledger_link(prefix, path: str) -> str:
+    if prefix:
+        return prefix + urllib.parse.quote(path, safe="/")
+    return f"{LEDGER_BRANCH}:{path}"
+
+
+def cmd_ledger_save(args) -> int:
+    git = _ledger_open(args.target)
+    _ensure_runs_ignored(git)
+    held = _ledger_held_by(git)
+    if held:
+        raise Fatal(f"{LEDGER_BRANCH} is checked out at {held}, and saving "
+                    f"would move it under that checkout — commit there, or "
+                    f"remove that worktree (`git worktree remove`), then save "
+                    f"again")
+    remote = None
+    if not args.no_push:
+        remote = _ledger_remote(git, args.remote)
+        if remote is None and args.remote != "origin":
+            raise Fatal(f"no git remote named '{args.remote}' — pass --remote "
+                        f"<name>, or --no-push to save locally only")
+    explicit = _ledger_arg_paths(git.root, args.paths) if args.paths else None
+    sync = _ledger_sync_load(git)
+    notes: list = []
+    fetch_error = _ledger_fetch(git, remote) if remote else None
+    saved: set = set()
+    removed: set = set()
+    committed = pushed = False
+    push_error = None
+    new = None
+    for _attempt in range(LEDGER_PUSH_ATTEMPTS):
+        local = git.rev(LEDGER_REF)
+        remote_tip = git.rev(_ledger_tracking(remote)) if remote else None
+        parents, entries = _ledger_integrate(git, local, remote_tip, notes)
+        history = [c for c in (*parents, local) if c]
+        updates, refresh, synced = _ledger_plan_local(
+            git, git.root, entries, sync, explicit, history, notes)
+        tree = dict(entries)
+        for p, val in updates.items():
+            if val is None:
+                tree.pop(p, None)
+            else:
+                tree[p] = val
+        tip = parents[0] if parents else None
+        if not parents and not tree:
+            new = None                        # no ledger, nothing to save
+        else:
+            tree_sha = _ledger_write_tree(git, tree)
+            if len(parents) == 1 and \
+                    git.out("rev-parse", tip + "^{tree}") == tree_sha:
+                new = tip                     # nothing new to commit
+            else:
+                parent_args = []
+                for p in parents:
+                    parent_args += ["-p", p]
+                new = git.out("commit-tree", tree_sha, *parent_args,
+                              "-m", args.message or LEDGER_DEFAULT_MESSAGE)
+                moved = git.run("update-ref", "-m", "glados ledger save",
+                                LEDGER_REF, new, local or "", check=False)
+                if moved.returncode != 0:
+                    continue                  # another save moved it: redo
+        committed = True
+        saved |= {p for p, v in updates.items() if v is not None}
+        removed |= {p for p, v in updates.items() if v is None}
+        _ledger_apply_refresh(git, refresh)
+        for p, sha in synced.items():
+            if sha is None:
+                sync.pop(p, None)
+            else:
+                sync[p] = sha
+        _ledger_sync_store(git, sync)
+        if not remote or not new or new == remote_tip:
+            break
+        proc = git.run("push", "--quiet", remote, f"{new}:{LEDGER_REF}",
+                       env=_LEDGER_NET_ENV, check=False)
+        if proc.returncode == 0:
+            git.run("update-ref", _ledger_tracking(remote), new, check=False)
+            pushed = True
+            break
+        err = proc.stderr.decode("utf-8", "replace")
+        # "[remote rejected]" is a hook or a protected branch saying no,
+        # which another fetch does not change, unless the remote lost the
+        # ref's lock to a push that landed after it advertised its refs.
+        # That, and the rest, mean the remote moved on since the fetch.
+        lost_race = any(m in err for m in ("cannot lock ref", "but expected",
+                                           "failed to update ref"))
+        if lost_race or ("[remote rejected]" not in err and (
+                "[rejected]" in err or "fetch first" in err
+                or "non-fast-forward" in err)):
+            # Another session pushed first: take its saves and merge again.
+            fetch_error = _ledger_fetch(git, remote)
+            if fetch_error is None:
+                continue
+        push_error = fetch_error or _first_line(err)
+        break
+    else:
+        if not committed:
+            raise Fatal(f"{LEDGER_REF} kept moving under this save through "
+                        f"{LEDGER_PUSH_ATTEMPTS} attempts — another process is "
+                        f"saving in this clone; save again once it is done")
+        push_error = (f"the remote {LEDGER_BRANCH} kept moving through "
+                      f"{LEDGER_PUSH_ATTEMPTS} attempts")
+
+    prefix = _ledger_link_base(git, remote or _ledger_remote(git, "origin"))
+    saved, removed = sorted(saved), sorted(removed)
+    if saved or removed:
+        print(f"glados ledger: saved {len(saved)} file(s)"
+              + (f", removed {len(removed)}" if removed else "")
+              + f" to {LEDGER_BRANCH} at {new[:12]}")
+        for p in saved[:20]:
+            print(f"  {p} -> {_ledger_link(prefix, p)}")
+        if len(saved) > 20:
+            print(f"  … and {len(saved) - 20} more")
+        for p in removed[:20]:
+            print(f"  removed {p}")
+    else:
+        # A save with no file of its own may still commit a merge of this
+        # clone's ledger with the remote's, or push earlier saves: the lines
+        # below say so, so this one speaks only of files.
+        print("glados ledger: no new or changed file to save"
+              + (f"; {LEDGER_BRANCH} is at {new[:12]}" if new else ""))
+    for note in dict.fromkeys(notes):    # a retry repeats a note
+        print(f"glados ledger: {note}")
+    if pushed:
+        print(f"glados ledger: pushed {LEDGER_BRANCH} to {remote}")
+    elif remote and push_error:
+        print(f"glados ledger: saved locally, NOT pushed to {remote}: "
+              f"{push_error}. Record this in the run record; the next "
+              f"`ledger save` pushes it.", file=sys.stderr)
+        return 1
+    elif not remote and not args.no_push:
+        print("glados ledger: no 'origin' remote — saved locally only")
+    return 0
+
+
+def _ledger_select(tree: dict, names) -> tuple[dict, list]:
+    """The ledger files a name picks: the record itself and its step
+    artifacts, `<record-stem>.*`."""
+    keep: dict = {}
+    unmatched = []
+    for name in names:
+        rel = _runs_relative(name.replace("\\", "/").removeprefix("./"))
+        stem = rel[:-3] if rel.endswith(".md") else rel
+        hits = {p: v for p, v in tree.items()
+                if _runs_relative(p) == rel
+                or _runs_relative(p).startswith(stem + ".")
+                or _runs_relative(p).startswith(stem + "/")}
+        if not hits:
+            unmatched.append(name)
+        keep.update(hits)
+    return keep, unmatched
+
+
+def cmd_ledger_restore(args) -> int:
+    git = _ledger_open(args.target)
+    _ensure_runs_ignored(git)
+    remote = _ledger_remote(git, args.remote)
+    fetch_error = _ledger_fetch(git, remote) if remote else None
+    if fetch_error:
+        print(f"glados ledger: could not fetch {LEDGER_BRANCH} from {remote} "
+              f"({fetch_error}); restoring from this clone's copy",
+              file=sys.stderr)
+    local = git.rev(LEDGER_REF)
+    remote_tip = git.rev(_ledger_tracking(remote)) if remote else None
+    if not local and not remote_tip:
+        print(f"glados ledger: no {LEDGER_BRANCH} branch yet — nothing to "
+              f"restore")
+        return 0
+    notes: list = []
+    if local and remote_tip and local != remote_tip \
+            and not git.is_ancestor(local, remote_tip) \
+            and not git.is_ancestor(remote_tip, local):
+        tree = {**_ledger_tree(git, remote_tip, RUNS_DIR),
+                **_ledger_tree(git, local, RUNS_DIR)}
+        notes.append("this clone's ledger has saves the remote lacks; the "
+                     "next `ledger save` merges and pushes them")
+    else:
+        src = remote_tip if remote_tip and (
+            not local or git.is_ancestor(local, remote_tip)) else local
+        tree = _ledger_tree(git, src, RUNS_DIR)
+    tree = {p: v for p, v in tree.items() if not _runs_local_only(p)}
+    sync = _ledger_sync_load(git)
+    # A file this tree synced that the ledger no longer has (steward
+    # compacted it elsewhere): the local copy goes too when it is the synced
+    # version, so a compacted record is not read, or compacted, again.
+    gone = {p: None for p in sync
+            if p not in tree and p.startswith(RUNS_DIR + "/")}
+    if args.names:
+        tree, unmatched = _ledger_select(tree, args.names)
+        gone, _ = _ledger_select(gone, args.names)
+        for name in unmatched:
+            notes.append(f"{name}: no file on the ledger matches it")
+    head = _ledger_tree(git, git.rev("HEAD"), RUNS_DIR)
+    present = [p for p in tree if (git.root / p).is_file()]
+    hashes = _hash_files(git, present)
+    on_disk = [p for p in gone if p not in head and (git.root / p).is_file()]
+    removed = []
+    for p, w in _hash_files(git, on_disk).items():
+        if w == sync.get(p):
+            (git.root / p).unlink()
+            removed.append(p)
+    for p in gone:
+        if p in removed or not (git.root / p).exists():
+            sync.pop(p, None)
+    history = [c for c in (local, remote_tip) if c]
+    written, refreshed, kept, tracked = [], [], [], 0
+    for p, (_mode, sha) in sorted(tree.items()):
+        w = hashes.get(p)
+        if w == sha:
+            sync[p] = sha
+            continue
+        if p in head:
+            # The branch's own copy, committed before records moved to the
+            # ledger: never overwritten, so the branch shows no change.
+            tracked += 1
+            continue
+        if w is None:
+            written.append(p)
+        elif w == sync.get(p) or (p not in sync and
+                                  w in _path_history(git, history, p)):
+            refreshed.append(p)
+        else:
+            kept.append(p)
+            continue
+        f = git.root / p
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(_blob_bytes(git, sha))
+        sync[p] = sha
+    _ledger_sync_store(git, sync)
+    print(f"glados ledger: restored {len(written)} file(s) from "
+          f"{LEDGER_BRANCH}"
+          + (f", refreshed {len(refreshed)} older copies" if refreshed else "")
+          + (f", removed {len(removed)} the ledger no longer has"
+             if removed else ""))
+    for p in kept:
+        notes.append(f"{p}: kept this copy, which has changes the ledger "
+                     f"lacks; `ledger save` merges them")
+    if tracked:
+        notes.append(f"{tracked} file(s) this branch tracks differ from the "
+                     f"ledger's copy and were left as the branch has them "
+                     f"(`git show {LEDGER_BRANCH}:<path>` reads the ledger's)")
+    for note in notes:
+        print(f"glados ledger: {note}")
+    return 0
+
+
+def cmd_ledger_link(args) -> int:
+    git = _ledger_open(args.target)
+    prefix = _ledger_link_base(git, _ledger_remote(git, args.remote))
+    for rel in _ledger_arg_paths(git.root, args.paths):
+        print(_ledger_link(prefix, rel))
     return 0
 
 
@@ -4552,12 +5407,13 @@ def cmd_verify_ledger(args) -> int:
 # DETECT (v1 layouts, specs/ dirs, SDA artifacts; suggest the install mode),
 # GENERATE (glados.yaml from the example — platform auto-detected, sda from
 # the artifacts, phase left as a REQUIRED human edit), CONVERT (each specs/
-# dir becomes a create-only .glados/runs/ digest record; SPEC_LOG rows when
-# sda), REPORT (next steps + counts). Non-destructive by default and
-# idempotent; --dry-run prints the full plan and writes nothing; --clean
-# removes the converted specs/ dirs and the detected v1 layouts. Touches
-# nothing outside specs/, the v1 GLaDOS-owned layouts, glados.yaml, .glados/,
-# and product-knowledge/SPEC_LOG.md.
+# dir becomes a create-only .glados/runs/ digest record, kept out of commits
+# by the clone's exclude file; SPEC_LOG rows when sda), REPORT (next steps +
+# counts). Non-destructive by default and idempotent; --dry-run prints the
+# full plan and writes nothing; --clean removes the converted specs/ dirs and
+# the detected v1 layouts. Touches nothing outside specs/, the v1
+# GLaDOS-owned layouts, glados.yaml, .glados/, product-knowledge/SPEC_LOG.md
+# and the exclude file's one line.
 
 
 def _is_v2_artifact(path: Path) -> bool:
@@ -5016,6 +5872,11 @@ def cmd_migrate(args) -> int:
 
     # -- 3. CONVERT specs/ ------------------------------------------------------
     print("\n== convert specs/ ==")
+    # Before any record exists, so committing the migrated tree takes none
+    # and `ledger save` finds them all.
+    if _exclude_runs_at(target, write=not dry):
+        print(f"  .git/info/exclude: {act(f'add {RUNS_EXCLUDE}')} (run "
+              f"records go to the {LEDGER_BRANCH} branch, never in a commit)")
     conversions: list[dict] = []
     for d in spec_dirs:
         date, date_src, slug = _spec_identity(target, d)
@@ -5106,6 +5967,9 @@ def cmd_migrate(args) -> int:
     steps.append(f"python glados.py install --mode {suggested or '<mode>'} "
                  f"--target {target}")
     steps.append("commit the migrated tree")
+    if conversions:
+        steps.append(f"save the converted records to the {LEDGER_BRANCH} "
+                     f"branch: python glados.py ledger save --target {target}")
     if not args.clean:
         steps.append(f"re-run: python glados.py migrate --target {target} "
                      f"--clean (removes the converted specs/ dirs and v1 "
@@ -5188,7 +6052,54 @@ def build_parser() -> argparse.ArgumentParser:
     pv = sub.add_parser("verify-ledger", help="scan git for silent-loss candidates")
     pv.add_argument("--target", required=True)
     pv.add_argument("--report-only", action="store_true")
+    pv.add_argument("--base",
+                    help="the branch this one targets: list the run records "
+                         "this branch commits since their merge-base (CI "
+                         "supplies it on merge requests and pull requests)")
     pv.set_defaults(func=cmd_verify_ledger)
+
+    pl = sub.add_parser(
+        "ledger",
+        help="move run records between .glados/runs/ and the glados/ledger "
+             "branch, which holds every run's record and step artifacts "
+             "so no work branch does")
+    lsub = pl.add_subparsers(dest="ledger_command", required=True)
+    ls_ = lsub.add_parser(
+        "save",
+        help="commit records onto glados/ledger without touching the "
+             "checked-out branch, the index or tracked files, merging what "
+             "another session pushed, then push it. With no paths: every "
+             "file under .glados/runs/ the ledger lacks or holds older, "
+             "except files this branch tracks unchanged. A path that no "
+             "longer exists is removed from the ledger. Exits 1 when the "
+             "push fails; the commit is kept and the next save pushes it")
+    ls_.add_argument("paths", nargs="*")
+    ls_.add_argument("--target", default=".")
+    ls_.add_argument("--remote", default="origin")
+    ls_.add_argument("-m", "--message",
+                     help=f"commit message (default: "
+                          f"'{LEDGER_DEFAULT_MESSAGE}')")
+    ls_.add_argument("--no-push", action="store_true",
+                     help="commit locally only; a later save pushes it")
+    ls_.set_defaults(func=cmd_ledger_save)
+    lr = lsub.add_parser(
+        "restore",
+        help="fetch glados/ledger and copy its records into .glados/runs/: "
+             "every one, or the named records with their step artifacts. "
+             "Never overwrites a copy with changes the ledger lacks, or a "
+             "file this branch tracks")
+    lr.add_argument("names", nargs="*")
+    lr.add_argument("--target", default=".")
+    lr.add_argument("--remote", default="origin")
+    lr.set_defaults(func=cmd_ledger_restore)
+    lk = lsub.add_parser(
+        "link",
+        help="print the web link of each path's copy on glados/ledger, for "
+             "a merge request description or an outcome")
+    lk.add_argument("paths", nargs="+")
+    lk.add_argument("--target", default=".")
+    lk.add_argument("--remote", default="origin")
+    lk.set_defaults(func=cmd_ledger_link)
 
     pp = sub.add_parser("compile-plugin",
                         help="shorthand: install --mode claude-plugin --target <repo>")

@@ -35,7 +35,8 @@ a review verdict, a discovered bug, an escalation) to one or more **sinks**
 - `issue` — a new ticket in the project's issue tracker
 - `issue-comment` — a comment on an existing ticket
 - `label` — a label applied to the MR/PR or ticket
-- `ledger` — a committed file under `.glados/runs/` in the repo
+- `ledger` — a file under `.glados/runs/`, saved to the repo's
+  `glados/ledger` branch
 
 Notice what `issue` does *not* say: it does not say "GitHub issue" or "GitLab
 issue". GLaDOS never wires a platform API itself — the **agent brings its own

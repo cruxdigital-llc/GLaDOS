@@ -1,8 +1,10 @@
 # GLaDOS run-record hooks
 
-The compiled epilogue asks each run to finalize and commit a run record before
-it ends. That is a promise an LLM keeps at 90% context — these host-agent hooks
-are the mechanical backstop for the three runtimes that have one. All three are
+The compiled epilogue asks each run to finalize its run record and save it,
+with its step artifacts, to the `glados/ledger` branch before it ends (records
+never go on a work branch, so a merge request's diff is the change). That is a
+promise an LLM keeps at 90% context — these host-agent hooks are the
+mechanical backstop for the three runtimes that have one. All three are
 **conditional on the in-flight markers** (written by the compiled preamble at
 run start, popped by the compiled epilogue, never committed): they stay silent
 unless a run is actually in flight, so ordinary sessions are never disturbed.
@@ -15,18 +17,20 @@ unless a run is actually in flight, so ordinary sessions are never disturbed.
   record onto the stack and its epilogue pops it, putting the enclosing run
   back into `current`.
 
-The guards check every record the stack lists: any listed record that is
-uncommitted or untracked blocks the session end, and the message names it.
-Without a `stack` file (an install compiled before it existed), they check
-`current` alone, exactly as before. Either marker on its own means a run is
+The guards check every record the stack lists, with its step artifacts
+(`<record-stem>.*`): any such file that is not on the ledger as it is on disk
+(compared with the local `glados/ledger` branch and every fetched remote copy
+of it) blocks the session end, and the message names it and the command that
+saves it, `python .glados/glados.py ledger save`. Without a `stack` file (an
+install compiled before it existed), they check `current` alone. Either marker on its own means a run is
 in flight, so to release a run you have abandoned, delete both
 `.glados/runs/current` and `.glados/runs/stack`.
 
 The guards read the markers whatever encoding the agent's shell wrote them
 in: a UTF-8 byte-order mark is ignored, UTF-16 (Windows PowerShell 5.1
 redirection) is decoded, and a marker they cannot read at all still counts
-as a run in flight, so the uncommitted-record check runs instead of the
-guard failing open.
+as a run in flight, so every unsaved file under `.glados/runs/` is checked
+instead of the guard failing open.
 
 `glados.py install` vendors the guard scripts into `.glados/hooks/` in your
 repo, so the wiring snippets below reference stable, repo-local paths. The
@@ -58,7 +62,7 @@ where a blocking surface exists.
 ```
 
 Blocks the stop with a reason (`{"decision":"block"}`) when a run is in flight
-without a committed record.
+without a saved record.
 
 ## Gemini CLI — AfterAgent guard (retries the turn)
 

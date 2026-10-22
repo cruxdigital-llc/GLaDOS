@@ -26,14 +26,14 @@ team can see, and no step that was not declared.
   nothing is actionable, this run produces an `escalation` outcome and
   stops. A defect report goes to fix-bug: run the fix-bug workflow with it
   as a nested run, then end this run with no step table.
-- **Resuming parked work.** A parked run's record is committed on its own
-  branch, which the park's `escalation` and run-epic's ticket row name.
-  When the caller, the brief or a prior record (preamble step 4) points at
-  a park of this work, fetch that branch and check it out first, whatever
-  branch this run started on, and read the record with the `parked` row
-  there. This run resumes it: take that record's pipeline, record
-  `pipeline: <name> (selected by: resume)`, and check the approval or
-  answer as **Resume** in step 4 sets out before step 2.
+- **Resuming parked work.** A parked run leaves its work on its own branch
+  and its record on the ledger, which the park's `escalation` and
+  run-epic's ticket row name. When the caller, the brief or a prior record
+  (preamble step 4) points at a park of this work, fetch that branch and
+  check it out first, whatever branch this run started on, and read the
+  record with the `parked` row. This run resumes it: take that record's
+  pipeline, record `pipeline: <name> (selected by: resume)`, and check the
+  approval or answer as **Resume** in step 4 sets out before step 2.
 - Otherwise the first rule that applies picks the pipeline:
 
 | # | Rule | Selected by |
@@ -152,14 +152,12 @@ the sequence does not list.
   `glados.yaml` and create one per its `feature` pattern, cut from
   `epic.integration-branch` inside an epic, else from
   `branching.default-target`. Never work on the default target. Any other
-  pipeline claims no branch, and its rows commit nothing, until it parks
-  and cuts one. A run on its own branch that ends with no MR, a park
-  included, leaves its work there for a human: it commits any working diff,
-  pushes, says so in the record, and pushes again once the epilogue has
-  committed the record, before publishing any escalation, so the paths the
-  record and escalation name resolve.
-- **Commits.** A row's process files (artifact, briefs, check results,
-  record) go in one commit when the row ends or parks, never file by file.
+  pipeline claims no branch until it parks and cuts one. A run on its own
+  branch that ends with no MR, a park included, leaves its work there for
+  a human: it commits any working diff, pushes, and says so in the record.
+- **Commits.** When a row ends or parks, its process files (artifact,
+  briefs, check results, record) go to the ledger in one save (*Before
+  ending this run*, step 4).
 - **Nested workflows** run as build-feature runs them ("run the spec-feature
   workflow"). Pass the artifacts that meet their needs, by path from the
   step table, and the run's answers and the tags of *What a fresh reviewer
@@ -224,9 +222,9 @@ the sequence does not list.
   `fresh-agent`: a *Fresh-agent design review*.
 - **Checkpoint** (`checkpoint:`, default `none`), once the step is done.
   `record`: add the step's result to the pooled `decision` outcome and go
-  on. `human`: commit first (**Commits**), with any working diff a step
+  on. `human`: save first (**Commits**), commit any working diff a step
   left uncommitted, and push the branch. If a person invoked the run, mark
-  the row `parked` in that commit, ask them in the session, record who
+  the row `parked` in that save, ask them in the session, record who
   answered what, and set the row as the answer decides; a session that ends
   before the answer leaves a park that a later run resumes. A refusal, with
   the person's reasons, is a blocking finding the ask raises: revise the
@@ -259,19 +257,15 @@ the sequence does not list.
     where the approval would. At a bound, the run stops instead, its
     escalation carrying the questions too.
   - **A two-way door parks nothing.** The author answers it by its
-    finder's recommendation, except that a person's Directive or chosen
-    reading stands until they answer. The question joins the next park,
-    else the MR, for the person to confirm or overturn; unanswered, the
-    answer stands.
+    default (*Doors*). The question joins the next park, else the MR, for
+    the person to confirm or overturn; unanswered, the answer stands.
   - **A declined advisory** (a fresh agent's, left undone when its row
     ends) is noted in that row by file and number. Once two fresh reviewers
     or evaluators in this run have raised it (the same defect at the same
     unit), it is a question for the person, asked once whatever
     *Materially* says: whether they want it, readings "wanted" and "not
     wanted", the two findings quoted as its words and recommendation,
-    beside the author's reasons for declining. Routed by its door, the
-    work unchanged until they answer, it is neither declined again nor
-    made blocking.
+    beside the author's reasons for declining. It is never made blocking.
   - **Answers.** Record each verbatim, with who gave it and where, noting
     when that is not the person whose words the question turns on; the
     question and its readings stay their finder's. The author then revises
@@ -309,8 +303,8 @@ the sequence does not list.
   park, and at a stop on an `escalation`, each listing the acts made so far.
 - When this run, or the parked run it resumed, opened an MR, hand it to
   review after the last step: run the review-mr workflow, handing it the
-  blocking findings of every verdict a step after open-mr posted, each
-  named, as findings still open.
+  blocking findings and one-way questions of every verdict a step after
+  open-mr posted, each named, as still open.
 - When no MR was opened, the artifacts in the record are the deliverable
   (**Branch** in step 4).
 - This run produces a `progress` outcome carrying the pipeline, the step

@@ -41,7 +41,7 @@ Canon is the reference works the project declares under `canon:` in
   higher one governs, and the disagreement is an observation, not a
   finding: add an entry to the pending observations (`observations.pending`)
   naming the canon id and what overrides it, and emit an `observation`
-  outcome. A run that commits its record to `glados/ledger` carries it in
-  the outcome only. A fresh agent lists each conflict under **Canon
-  conflicts** in its output instead, and the workflow that spawned it
-  files it.
+  outcome. review-mr, which never commits to the branch it reviews,
+  carries it in the outcome only. A fresh agent lists each conflict under
+  **Canon conflicts** in its output instead, and the workflow that spawned
+  it files it.

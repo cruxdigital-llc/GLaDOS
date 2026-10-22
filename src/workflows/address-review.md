@@ -2,7 +2,7 @@
 name: address-review
 kind: core
 description: Resolve every open review finding in one coherent fix pass, then hand back for re-review
-reads: [review.verdicts]
+reads: [review.verdicts, manifest.platform]
 writes: [work.base-sha]
 emits: [progress, escalation]
 mutates: branch
@@ -12,20 +12,23 @@ requires: []
 # (GLaDOS) Address Review
 
 **Goal**: resolve every open finding from a review-mr pass in one coherent fix
-pass — fixing from the main agent, gating on the full test suite, and mapping
-each finding to its resolution — then hand back to review-mr for the next
-pass. This is the fix half of the review loop
-(build-feature → review-mr ⇄ address-review).
+pass, then hand back to review-mr for the next pass. This is the fix half of
+the review loop (build-feature → review-mr ⇄ address-review).
 
 ## Process
 
 ### 1. Load the verdicts
 - Read `review.verdicts` from the run record: the tallied per-persona verdict
-  objects for the latest cycle, with their findings. If no verdict demands
-  changes, there is nothing to address — this run produces an `escalation`
-  outcome (a mis-sequenced loop is worth a human glance) and stops.
+  objects for the latest cycle, with their findings. Read every person's
+  point open on the MR too. If neither demands changes or an answer, there
+  is nothing to address — this run produces an `escalation` outcome (a
+  mis-sequenced loop is worth a human glance) and stops.
 - The MR HEAD you fix from is this run's base (`work.base-sha`, already
   recorded at run start).
+
+<!-- glados:include vocabulary/person-words.md -->
+
+<!-- glados:include vocabulary/mr-notes.md -->
 
 ### 2. Consolidate the findings
 
@@ -36,17 +39,15 @@ pass. This is the fix half of the review loop
 - Start from the cycle's **consolidated** finding list, which rides with
   `review.verdicts`. The root-cause synthesis has already clustered the
   panel's findings, and a cluster arrives as the single consolidated finding
-  it produced — never re-expand one into its members in order to re-dedupe
-  it. **Dedupe** only the findings the synthesis left standalone, from the
-  verdict objects and their published copies: several personas often flag the
-  same root cause; merge those into one finding that credits each lens.
-- **When `review.verdicts` carries no synthesis**, consolidate here instead of
-  guessing: collect every open finding across all panelists and dedupe them
-  yourself, then say in the run record that you did so and why. This is the
-  normal shape for a review that predates the synthesis step, for a review a
-  human wrote by hand, and for records written by an older install. An absent
-  synthesis is a stated condition with a stated response — never a reason to
-  stop, and never a silent fallback to a different behavior.
+  it produced — never re-expand one into its members to re-dedupe it.
+  **Dedupe** only the findings the synthesis left standalone, from the
+  verdict objects and their published copies: several personas often flag
+  the same root cause; merge those into one finding that credits each lens.
+- **When `review.verdicts` carries no synthesis** (an older record, a
+  review a human wrote by hand), consolidate here instead of guessing:
+  collect every open finding across all panelists and dedupe them yourself,
+  saying so in the run record. It is a stated condition with a stated
+  response, never a reason to stop.
 - **Rank** the consolidated list by the severity tiers above, `blocking`
   first.
 - For each finding decide: **fix now**, or **reasoned exception** — a finding
@@ -59,16 +60,15 @@ pass. This is the fix half of the review loop
 - Fix the **root cause**, not the symptom. Prefer making the bad state
   impossible (a constraint, a type) over defensively tolerating it. A review
   finding is a real defect until proven otherwise.
-- **Honor the cycle's root-cause synthesis**, which rides with
-  `review.verdicts`. Where the panel consolidated a cluster of findings into
-  one, the unit of work is the single design change it names — make that
-  change, then check each member off against the result. Do not reopen the
-  cluster into one patch per member. If the design change leaves a member
-  standing, that member is a separate finding again — say so, and fix it on
-  its own.
+- **Honor the cycle's root-cause synthesis.** Where the panel consolidated
+  a cluster of findings into one, the unit of work is the single design
+  change it names — make that change, then check each member off against
+  the result. Do not reopen the cluster into one patch per member. If the
+  design change leaves a member standing, that member is a separate finding
+  again — say so, and fix it on its own.
 - Where the synthesis read the change as a **symptom patch**, patching the
   listed symptoms does not resolve it: remove the cause it named, or record
-  the disagreement and escalate. Do not spend a cycle re-fixing symptoms.
+  the disagreement and escalate.
 
 ### 3. Fix from the main agent
 - Apply the fixes yourself, as one coherent edit set — do **not** fan out to
@@ -100,5 +100,7 @@ pass. This is the fix half of the review loop
 
 <!-- glados:include vocabulary/loop-bounds.md -->
 
-- Check the cycle bound, then run the review-mr workflow against the new
-  HEAD. The loop continues until the panel approves or the bound escalates.
+- Check the cycle bound for the round review-mr's record notes, then run
+  the review-mr workflow against the new HEAD. The loop continues until the
+  MR is review-clean or the bound escalates; a pass that committed nothing
+  ends it.

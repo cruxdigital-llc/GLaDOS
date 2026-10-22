@@ -21,7 +21,7 @@ Five ship declared, usable with no `sinks:` block at all:
 | `issue` | yes | escalations, bug reports a human will see |
 | `issue-comment` | yes | follow-ups on an existing issue |
 | `label` | yes | machine-readable state on the MR/issue |
-| `ledger` | no | the committed run record only (the quiet sink) |
+| `ledger` | no | the run record on the `glados/ledger` branch only (the quiet sink) |
 
 ## Declaring your own
 

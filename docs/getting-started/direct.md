@@ -14,7 +14,7 @@ dedicated modes instead — see the [chooser](README.md).
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 - An agent that can read repo files and act on them.
 
 ## Install
@@ -66,8 +66,9 @@ Read and follow product-knowledge/glados/review-codebase.md
 ```
 
 That workflow audits the codebase read-only and, like every GLaDOS run,
-finishes by committing a run record — a short Markdown note under
-`.glados/runs/` saying what was attempted and how it ended. Many teams add
+finishes by saving a run record — a short Markdown note written under
+`.glados/runs/` and saved to the `glados/ledger` branch — saying what was
+attempted and how it ended. Many teams add
 one line per common workflow to their agent's standing instruction file
 (CLAUDE.md, AGENTS.md, or equivalent) so "build the next feature" resolves to
 the right compiled file.

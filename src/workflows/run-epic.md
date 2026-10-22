@@ -97,9 +97,9 @@ For each ticket, on a working branch off the integration branch (named per
    permits for a child→integration merge. Poll the pipeline and merge the
    moment it passes rather than blocking; verify the MR state actually
    flipped to merged.
-5. **Record** — update the ticket's row in `epic.progress` and commit the
-   update before starting the next ticket: resume durability is per ticket,
-   not per run. Each landed ticket produces a `progress` outcome.
+5. **Record** — update the ticket's row in `epic.progress` and save it to
+   the ledger before starting the next ticket: resume durability is per
+   ticket, not per run. Each landed ticket produces a `progress` outcome.
 
 ### 3. Close the epic
 - Queue exhausted (epic mode): no row may still be `awaiting-approval`; the

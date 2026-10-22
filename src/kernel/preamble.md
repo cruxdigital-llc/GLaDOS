@@ -10,7 +10,8 @@
 ## Before doing anything else (mandatory)
 
 1. **Create the run record now** at
-   `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work.
+   `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work,
+   after `.glados/glados.py ledger restore` copies in the ledger's records.
    Note the workflow, start time, and goal. Then set the in-flight markers
    the run-record guard hooks key on. `.glados/runs/current` holds the
    filename of the innermost run in flight; `.glados/runs/stack` lists every
@@ -46,9 +47,10 @@
    root before the first mutation — workflow, scope, holder, timestamp. An
    existing uncleared claim on the same scope is contention: coordinate with
    its holder — build on their run or wait — do not clobber. The epilogue
-   clears the entry. A nested run (step 1) adds no claim of its own and does
-   not treat the claim of a run enclosing it (any record on `stack`) as
-   contention: it works under that claim, which the outermost run clears.
+   clears the entry. review-mr and address-review claim nothing. A nested
+   run (step 1) adds no claim of its own and does not treat the claim of a
+   run enclosing it (any record on `stack`) as contention: it works under
+   that claim, which the outermost run clears.
    One exception: a ticket's build inside run-epic is a unit of work of its
    own (its own branch and MR), so it records and clears its own claim as
    an outermost run would; the epic's claim is still not contention, and

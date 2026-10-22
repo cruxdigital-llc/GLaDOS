@@ -9,7 +9,7 @@ Not sure which runtime you have? See the [chooser](README.md).
 
 - Python 3.10 or newer on your PATH.
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 - pi installed (`pi` on your PATH; Node 22.19+).
 
 ## Install

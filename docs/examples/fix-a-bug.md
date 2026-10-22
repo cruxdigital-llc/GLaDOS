@@ -109,8 +109,9 @@ names; the workflow never merges.
 
 ## What the run ledger shows
 
-Like every workflow run, this one leaves a single committed record in
-`.glados/runs/` (the run ledger — the project's durable memory).
+Like every workflow run, this one leaves a single record, saved from
+`.glados/runs/` to the `glados/ledger` branch (the run ledger — the project's
+durable memory).
 Illustrative but shape-accurate:
 
 ```bash

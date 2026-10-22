@@ -5,9 +5,9 @@ for it. It never merges.
 
 ### Commit
 
-Commit the work on the branch together with this run's record and step
-artifacts so far, then push the branch, so every link the description
-carries resolves for whoever reviews the MR.
+Commit the work on the branch and push it, and save this run's record and
+step artifacts so far to the ledger, so every link the description carries
+resolves for whoever reviews the MR.
 
 <!-- glados:include vocabulary/git-conventions.md -->
 

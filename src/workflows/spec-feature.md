@@ -15,8 +15,8 @@ requires: [standards-gate]
 implement without further product decisions: finalized requirements plus a
 technical specification. plan-feature decided *what* and *why*; this core
 decides the contract; implement-feature writes the code. It touches no branch,
-and its artifacts live in the run-record directory, beside this run's record
-— never in a standalone spec directory.
+and its artifacts live beside this run's record, on the run ledger — never in
+a standalone spec directory.
 
 ## Process
 

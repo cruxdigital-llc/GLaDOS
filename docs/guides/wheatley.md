@@ -59,8 +59,9 @@ One input is a v1 artifact that v2 deliberately retired, and one setting is
 still required:
 
 - **`specs/` is gone.** v1 wrote a per-feature trace directory under
-  `specs/`; v2 replaced that with the **run ledger** — exactly one committed
-  record per workflow run under `.glados/runs/`. The v2 `migrate` command
+  `specs/`; v2 replaced that with the **run ledger** — exactly one record
+  per workflow run, written under `.glados/runs/` and saved to the
+  `glados/ledger` branch. The v2 `migrate` command
   ([MIGRATION.md](../../MIGRATION.md)) converts live `specs/` dirs into
   ledger entries, and its `--clean` flag deletes the tree. Wheatley reads
   `specs/`, so its *in-flight* columns (Planning through Verifying) are empty
@@ -85,8 +86,9 @@ The intended reconciliation pairs Wheatley's v2 support with a later GLaDOS
   When `sda: true`, the lockfile backend will write `claims.md`-compatible
   entries — the claims file becomes a view over enforced leases instead of a
   kernel-prose convention.
-- `.glados/runs/` becomes the in-flight data source: the run ledger already
-  records which workflow (plan, spec, implement, verify) each run executed,
+- The run ledger (`.glados/runs/` on the `glados/ledger` branch) becomes
+  the in-flight data source: it already records which workflow (plan, spec,
+  implement, verify) each run executed,
   which is the phase information Wheatley used to infer from `specs/`
   directory contents.
 

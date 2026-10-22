@@ -78,7 +78,10 @@ only the scaffolding is install-time):
   scope is treated as contention: coordinate, do not clobber.
 - **Before ending** (epilogue): the run appends the work-unit row to
   `product-knowledge/SPEC_LOG.md` — date, workflow, scope, outcome, links —
-  and clears its `claims.md` entry, both riding the run-record commit.
+  and clears its `claims.md` entry, both committed with the work on the
+  working branch (the record itself goes to the `glados/ledger` branch). The
+  row says the unit is done, so it lands on the target branch when, and
+  only when, the change does, where SDA tooling reads it.
 - **Nested runs** (plan-feature, spec-feature and the other stages that
   build-feature or a pipeline's `run-pipeline` run starts inside itself) do
   neither. One unit of work gets one claim and one row, both owned by the
@@ -87,6 +90,11 @@ only the scaffolding is install-time):
   never contention for the runs inside it. The one exception is a ticket's
   build inside `run-epic`: each ticket has its own branch and MR, so its
   build claims and logs as a unit of work of its own.
+- **Runs on another's merge request** (review-mr and address-review) claim
+  nothing and append no row. The MR's unit is its opener's: a GLaDOS run
+  that opened it committed the one row with the work, and a person's MR is
+  not a GLaDOS unit to log. So a fix pass leaves the MR's branch only its
+  change, and its record goes to the ledger like any other.
 - **Parked runs** (a pipeline waiting at a `human` checkpoint with nobody in
   the session to ask) keep their claim and append no row: the work is not
   finished. The run that resumes it after the approval clears the claim and
@@ -111,7 +119,10 @@ in [src/kernel/state-registry.yaml](../../src/kernel/state-registry.yaml).
   one file. See the profile's
   [declared divergence](../standards/sda-profile-glados-v2.md) for the honest
   fine print, and the [v2.1 amendments](../standards/sda-profile-glados-v2.1.md)
-  for pipeline records, step artifacts and units of work.
+  for pipeline records, step artifacts and units of work. From 2.5 those
+  records live on the `glados/ledger` branch rather than on work branches or
+  the target (a merge request's diff is the change), so a tool that reads
+  them reads that branch; records committed before stay where they are.
 - **`SPEC_LOG.md` complements the ledger rather than duplicating it by
   hand.** The ledger is one file per run; the work-unit log is the one-line
   audit trail across runs — and because the epilogue writes it, it stays

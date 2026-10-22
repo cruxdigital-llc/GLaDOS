@@ -17,7 +17,8 @@ scripts; the update flow is simply re-running install.
 | `validate` | Type-check the target's `glados.yaml` in memory, its `pipelines:`, `steps:` and `canon:` included (step bodies in `product-knowledge/steps/` too, and whether each canon digest exists): every check `install` runs, with errors and warnings printed. Writes nothing, needs no install (a plugin-only repo runs it from the plugin's own `bin/glados.py`), exits 1 on any error. `run-pipeline` runs it before its first step. |
 | `doctor` | Staleness + wiring report (never fails). |
 | `migrate` | Guided v1 to v2 migration: detect v1 layouts, generate `glados.yaml` (phase left for a human), convert `specs/` history to run records. Non-destructive by default; `--dry-run` writes nothing, `--clean` removes the converted `specs/` dirs and the detected v1 command layouts. |
-| `verify-ledger` | Scan git history for silent-loss candidates (report-only). |
+| `verify-ledger` | Scan git history for silent-loss candidates, and list any run record a branch commits since `--base` (report-only). |
+| `ledger` | `save` commits run records from `.glados/runs/` onto the `glados/ledger` branch without touching the checked-out branch or the index, merges what another session pushed, and pushes; `restore` copies them back into `.glados/runs/`; `link` prints a record's web link on the ledger. |
 | `compile-plugin` | Shorthand for `install --mode claude-plugin --target <repo>`. |
 
 **Usage**:

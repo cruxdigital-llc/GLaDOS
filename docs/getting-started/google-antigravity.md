@@ -10,7 +10,7 @@ Not sure which runtime you have? See the [chooser](README.md).
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 - Google Antigravity (IDE and/or `agy` CLI) set up for the project.
 
 ## Install
@@ -70,8 +70,8 @@ run:
 ```
 
 This audits the codebase and reports structure and health without changing
-code — and, like every GLaDOS run, finishes by committing a run record under
-`.glados/runs/`.
+code — and, like every GLaDOS run, finishes by saving a run record to the
+`glados/ledger` branch.
 
 ## Verify
 
@@ -88,7 +88,7 @@ installer prints the one-paste enable stanza for GitLab or GitHub.
 ## Guard hook
 
 `agy` supports a Stop hook that surfaces a warning when a session ends while
-a run is in flight without its committed run record. The installer already
+a run is in flight without its saved run record. The installer already
 wrote the wiring to `.agents/hooks.json` (if that file existed, it printed
 the block to add manually). Details, including the IDE's lack of a hook
 surface, in [hooks/README.md](../../hooks/README.md); the CI check remains

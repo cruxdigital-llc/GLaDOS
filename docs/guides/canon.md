@@ -283,8 +283,8 @@ when the digest it cites was drafted from recall.
 When canon disagrees with a higher source, the higher one wins and the
 disagreement is not raised as a finding. It is an observation: an entry in
 `product-knowledge/observations/` naming the canon id and what overrides it,
-plus an `observation` outcome. review-mr commits its record to the
-`glados/ledger` branch, never to the work's branch, so a conflict its panel
+plus an `observation` outcome. review-mr never commits to the branch it
+reviews, so a conflict its panel
 reports travels in the outcome only. A fresh agent lists conflicts under
 **Canon conflicts** in its output (a panelist, as `canon-conflicts` in its
 verdict object; an evaluator or a design reviewer, as a section of its

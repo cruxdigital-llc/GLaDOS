@@ -25,7 +25,8 @@ Optimize for doing no harm; when the consequences of a choice are unclear, stop 
 ## Before doing anything else (mandatory)
 
 1. **Create the run record now** at
-   `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work.
+   `.glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.md` — before any other work,
+   after `.glados/glados.py ledger restore` copies in the ledger's records.
    Note the workflow, start time, and goal. Then set the in-flight markers
    the run-record guard hooks key on. `.glados/runs/current` holds the
    filename of the innermost run in flight; `.glados/runs/stack` lists every
@@ -61,9 +62,10 @@ Optimize for doing no harm; when the consequences of a choice are unclear, stop 
    root before the first mutation — workflow, scope, holder, timestamp. An
    existing uncleared claim on the same scope is contention: coordinate with
    its holder — build on their run or wait — do not clobber. The epilogue
-   clears the entry. A nested run (step 1) adds no claim of its own and does
-   not treat the claim of a run enclosing it (any record on `stack`) as
-   contention: it works under that claim, which the outermost run clears.
+   clears the entry. review-mr and address-review claim nothing. A nested
+   run (step 1) adds no claim of its own and does not treat the claim of a
+   run enclosing it (any record on `stack`) as contention: it works under
+   that claim, which the outermost run clears.
    One exception: a ticket's build inside run-epic is a unit of work of its
    own (its own branch and MR), so it records and clears its own claim as
    an outermost run would; the epic's claim is still not contention, and
@@ -211,10 +213,10 @@ Canon is the reference works the project declares under `canon:` in
   higher one governs, and the disagreement is an observation, not a
   finding: add an entry to the pending observations (`observations.pending`)
   naming the canon id and what overrides it, and emit an `observation`
-  outcome. A run that commits its record to `glados/ledger` carries it in
-  the outcome only. A fresh agent lists each conflict under **Canon
-  conflicts** in its output instead, and the workflow that spawned it
-  files it.
+  outcome. review-mr, which never commits to the branch it reviews,
+  carries it in the outcome only. A fresh agent lists each conflict under
+  **Canon conflicts** in its output instead, and the workflow that spawned
+  it files it.
 
 
 ## Verdicts and finding severities
@@ -415,7 +417,8 @@ Defaults, where the project states nothing:
   result is visible on its own.
 - Run the project's full test suite before committing code, and its exact
   CI checks locally before pushing it; a fresh evaluator's run of them on
-  the same diff counts.
+  the same diff counts. Install any commit-msg hook the project declares
+  before the first commit.
 - Never force-push over work you did not write.
 
 
@@ -486,12 +489,15 @@ verdict composition rules, never by silently dropping the seat.
 ### Assemble the brief
 
 Panelists cannot ask questions, so the brief must be self-contained. It
-carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
-ticket or a person's brief, the spec labelled as the author's, the commands
-to run tests and linters, each panelist's seated mandate, and the rules in
-*Verdicts and finding severities* and *What a fresh reviewer is given*,
-copied verbatim. If anything is missing, assemble it before spawning — a
-panelist that has to guess reviews the wrong change.
+carries: the MR id, the diff (`<base>...<head>`), the changed-file list; the
+ticket or a person's brief, each question a person answered in the run that
+opened the MR, with its readings and answer, and each instruction or answer
+people gave on the MR, quoted with where said; the spec and the merge-request
+description (without its step table or the findings it lists), labelled as
+the author's; the commands to run tests and linters; each panelist's seated
+mandate; and the rules in *Verdicts and finding severities* and *What a
+fresh reviewer is given*, copied verbatim. If anything is missing, assemble
+it before spawning — a panelist that has to guess reviews the wrong change.
 
 ## What a fresh reviewer is given
 
@@ -511,6 +517,17 @@ conclusions about them.
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
   and labelled as theirs, untagged.
+- **A scope statement excuses an absence, never a presence.** "Deferred to
+  <item>" or "not in this MR" means the reviewer does not report that thing
+  as missing, except a criterion the work received: only a person's quoted
+  words naming it and letting it go waive one, never a go-ahead on an
+  artifact that lists it unmet. No scope statement, the author's or a
+  person's, makes what the change does add correct: what it adds is
+  reviewed on its merits. Deferring a unit's consumer does not excuse the
+  unit: that nothing calls it is still a finding.
+
+### A person's words
+
 - **A person set only what their quoted words name, as firmly as they
   said it.** Each clause takes the tag its words give until the person
   corrects it:
@@ -518,15 +535,16 @@ conclusions about them.
     of what is wanted) binds.
   - *Preference* ("should", "I'd like", "prefer", or a hedged want: "I
     think we need") sets a default that evidence may override.
-  - *Hunch* ("I think", "maybe", "probably", "I wonder") is a belief about
-    what is true (a cause, what code does), which the artifact tests
-    against the code, reporting what it finds; it stands unless
-    contradicted.
+  - *Hunch* ("I think", "maybe", "probably", "I wonder", or an unhedged
+    claim, such as a stated problem) is a belief about what is true (a
+    cause, what code does), which the artifact tests against the code,
+    reporting what it finds; it stands unless contradicted. A ticket's or
+    brief's stated problem also asks for its absence, as a Directive.
   - *Assent* ("seems fine", "yes", "go with that", choosing a question's
-    reading) approves only the direction of what they were shown, which
-    stays its writer's: a chosen reading's outcome, not its mechanism,
-    scope words or phrasing. Material evidence they were not shown reopens
-    it as a question naming that evidence.
+    reading, however worded) approves only the direction of what they were
+    shown, which stays its writer's: a chosen reading's outcome, not its
+    mechanism, scope words or phrasing. Material evidence they were not
+    shown reopens it as a question naming that evidence.
 - **Challenge in the open.** Where evidence outside the change suggests
   a person's words miss what they want, the artifact says "your words say
   X (tag); the code shows Y; I propose Z", naming where. Against a
@@ -536,14 +554,7 @@ conclusions about them.
   blocks: where the workflow takes no questions, a challenge is an
   advisory written as one. Any other departure from a person's words,
   under too soft a tag included, breaks a criterion the work received.
-- **A scope statement excuses an absence, never a presence.** "Deferred to
-  <item>" or "not in this MR" means the reviewer does not report that thing
-  as missing, except a criterion the work received: only a person's quoted
-  words naming it and letting it go waive one, never a go-ahead on an
-  artifact that lists it unmet. No scope statement, the author's or a
-  person's, makes what the change does add correct: what it adds is
-  reviewed on its merits. Deferring a unit's consumer does not excuse the
-  unit: that nothing calls it is still a finding.
+
 
 
 ### Spawn the panel (parallel)
@@ -739,8 +750,8 @@ diff the pass read, not the process by which the verdict was reached.
 
 - Write to a senior engineer who is busy and skeptical and will not read past
   the first screen. Plain English, not model prose.
-- Lead with the verdict. No preamble, and no recap of what the change does —
-  the author wrote it.
+- Lead with the verdict, after `(GLaDOS <workflow>)`. No preamble, and no
+  recap of what the change does — the author wrote it.
 - Open each finding with the plain sentence you would say out loud. The rule
   or standard it rests on goes underneath as evidence, never in place of the
   sentence.
@@ -780,7 +791,7 @@ diff the pass read, not the process by which the verdict was reached.
 
 ## Before ending this run (mandatory)
 
-A run without a committed run record and a published outcome is an incomplete
+A run without a saved run record and a published outcome is an incomplete
 run — finish these steps even if the work above was cut short, and say so in
 the record rather than omitting it.
 
@@ -797,11 +808,12 @@ the record rather than omitting it.
 3. **SDA work-unit log (when `glados.yaml` sets `sda: true`)**: a run that is
    not nested (preamble step 1) appends the single work-unit row for the
    whole unit of work to `product-knowledge/SPEC_LOG.md` — date, workflow,
-   scope, outcome, links — and clears its entry in `claims.md`, so both ride
-   the record commit below. A nested run does neither: it holds no claim of
-   its own, and a work-unit row marks its subject done, so a nested plan's
-   row would mark the whole feature done early. Its record path is already
-   listed in the parent's record, and the outermost run's row covers it.
+   scope, outcome, links — and clears its entry in `claims.md`; review-mr
+   and address-review, on another's MR, do neither. A nested run
+   does neither: it holds no claim of its own, and a work-unit row marks its
+   subject done, so a nested plan's row would mark the whole feature done
+   early. Its record path is already listed in the parent's record, and the
+   outermost run's row covers it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
@@ -810,11 +822,14 @@ the record rather than omitting it.
    has no approval or answer yet, and run-epic stopping with only parked
    tickets left. It keeps its claim and appends no row, and the
    run that resumes the work does both when the unit ends.
-4. **Commit the record** on the current working branch:
-   `chore(glados): record <workflow> run`. Runs that act on a merge request
-   under review — review-mr, address-review — commit their record to the
-   `glados/ledger` branch instead, never to the author's branch: the MR
-   carries the change and the comment, and the ledger carries the trail.
+4. **Save the record to the ledger.** Every run's record and step
+   artifacts live on the `glados/ledger` branch, never on a work branch:
+   the MR carries the change and the comment, and the ledger carries the
+   trail. `.glados/glados.py ledger save` commits every new or changed file
+   under `.glados/runs/` there and pushes it. Link a record or artifact by
+   its ledger copy (`ledger link <path>`), never by a work-branch path.
+   Commit and push step 3's row and claim, and any pending observations, on
+   the working branch: `chore(glados): log <workflow> run`.
 5. **Publish outcomes**: read `glados.yaml` → `channels:` (which sinks each
    outcome type goes to) and `sinks:` (how each sink behaves). For every
    outcome type this run emitted, deliver it to each bound sink using the
@@ -825,6 +840,8 @@ the record rather than omitting it.
    in the record instead of as silence. Built-in sinks are `mr-comment`,
    `issue`, `issue-comment`, `label`, and `ledger`; a project may declare
    others (e.g. `slack`). `progress` always lands in the ledger at minimum.
+   Everything a run posts on a merge request, in any step, starts with
+   `(GLaDOS <workflow>)`, whatever a sink's config says.
    - **`grouping:`** decides how many comments one outcome becomes:
      `aggregate` — one comment carrying the whole outcome, and the reading to
      take when the key is absent; `per-persona` — one per seated persona;
@@ -862,11 +879,8 @@ the record rather than omitting it.
      that ends with its unit still waiting on a person (step 3) has not
      ended it: its items stay pending for the run that resumes the work and
      opens the MR. Once
-     the MR exists, a post that fails is a failed delivery as above. These
-     record updates (this run's record, and any nested record you marked
-     delivered) ride the step 4 commit when made before it; any made in
-     this step go in one more `chore(glados): record <workflow> run` commit
-     before step 6.
+     the MR exists, a post that fails is a failed delivery as above. Save
+     again for any record update made in this step, before step 6.
    - Reaching only the ledger is not itself a failure. `progress`, `decision`,
      and `observation` may be bound ledger-only by design, as may any outcome
      type in a project whose manifest confesses `visibility-acknowledged:

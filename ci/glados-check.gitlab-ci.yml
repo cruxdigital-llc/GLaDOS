@@ -22,15 +22,21 @@ glados-check:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
-# Universal run-record backstop: scans git history for silent-loss candidates.
-# Report-only in v2.0.0 and kept a separate, non-blocking job so its output is
-# visible without ever gating a merge.
+# Universal run-record backstop: scans git history for silent-loss candidates,
+# and on a merge request lists any run record the branch commits (records live
+# on the glados/ledger branch, never in a merge request's diff; it compares
+# with the merge request's diff base, CI_MERGE_REQUEST_DIFF_BASE_SHA).
+# Report-only, and kept a separate, non-blocking job so its output is visible
+# without ever gating a merge.
 #
 # python:3.12-slim ships no git binary. Without one, verify-ledger sees no
 # history and reports "nothing to scan", so the job passed without scanning
 # anything. Install git first, and mark the checkout safe: the runner may
 # clone it as a different user, and git then refuses to read the repo. The
-# glados-check job above reads only files, so it needs no git.
+# glados-check job above reads only files, so it needs no git. The pipeline
+# clones only the branch under test, so the job fetches the ledger branch,
+# where the run records are, before scanning; a project with no ledger yet
+# fetches nothing.
 glados-verify-ledger:
   stage: test
   image: python:3.12-slim
@@ -40,6 +46,7 @@ glados-verify-ledger:
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends git
     - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - git fetch --no-tags origin "+refs/heads/glados/ledger:refs/remotes/origin/glados/ledger" || true
   script:
     - python .glados/glados.py verify-ledger --target . --report-only
   rules:

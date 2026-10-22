@@ -94,10 +94,15 @@ a human-merged change to `glados.yaml` can change it. Full design:
 ## The run ledger
 
 Every workflow run writes one markdown **run record** — what was attempted,
-what was decided, how it ended — into `.glados/runs/` and commits it. Example:
-`.glados/runs/2026-07-03-fix-bug-login-timeout.md`. That is the run ledger: a
-fresh session, a teammate, or a CI job resumes an epic or audits a decision
-from `git pull` alone, with no access to anyone's chat transcript.
+what was decided, how it ended — into `.glados/runs/`, beside its step
+artifacts. Example: `.glados/runs/2026-07-03-fix-bug-login-timeout.md`. The
+run saves them to the repo's `glados/ledger` branch (`glados.py ledger save`),
+never to the work's branch: a merge request's diff is the change, and the
+ledger carries the trail. Install, migrate and every `ledger` command add
+`/.glados/runs/*` to the clone's git exclude file, which keeps them out of
+every other branch's commits. That branch is the run ledger: a fresh session, a
+teammate, or a CI job resumes an epic or audits a decision from it alone
+(`glados.py ledger restore`), with no access to anyone's chat transcript.
 
 On enforcement: at run start the workflow writes in-flight marker files
 (never committed). `.glados/runs/current` names the run in flight and
@@ -105,7 +110,7 @@ On enforcement: at run start the workflow writes in-flight marker files
 build-feature runs plan-feature inside itself, and the inner run must not
 erase the outer run's marker. The epilogue pops its own entry when the record
 is finalized. Small guard scripts vendored into `.glados/hooks/` block the
-agent session from ending while any listed run lacks a committed record, and
+agent session from ending while any listed run's record is not saved, and
 a CI check (`glados.py verify-ledger`) is the backstop on runtimes without
 hooks — wiring recipes in [hooks/README.md](../hooks/README.md).
 
@@ -189,7 +194,7 @@ Workflows end by emitting typed results — six **outcome types**: `progress`,
 `verdict`, `escalation`, `bug`, `decision`, `observation` — and never name a
 destination themselves. The manifest's `channels:` block binds each type to
 **sinks**. Five sinks are built in — `mr-comment`, `issue`, `issue-comment`,
-`label`, and `ledger` (the run record only) — and a project can **declare its
+`label`, and `ledger` (the run record on the ledger branch only) — and a project can **declare its
 own** under a `sinks:` block (e.g. `slack`). Example: with `escalation:
 [issue]`, a workflow that hits its retry limit files an issue a human will
 actually see.

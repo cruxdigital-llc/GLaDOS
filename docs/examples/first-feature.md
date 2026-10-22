@@ -155,15 +155,17 @@ A dirty pass hands off to `/glados:address-review`, which fixes every open
 finding in one coherent pass, runs the full test suite, pushes, and maps each
 finding to its resolution (fixed, with the commit — or declined, with a
 one-line reason). Then `/glados:review-mr` runs again against the new commit.
-The loop repeats until every panelist approves or the cycle bound
-(`params.review-panel.max-cycles: 5`) stops it with an escalation. *Why the
+The loop repeats until the MR is review-clean, a fix pass commits nothing,
+or the cycle bound (`params.review-panel.max-cycles: 5`) stops it with an
+escalation. *Why the
 bound: an infinite argue-with-the-panel loop burns budget and hides a
 disagreement a human should settle.* On approval, you merge.
 
 ## 6. What the run ledger shows
 
-Every run leaves exactly one committed markdown record in `.glados/runs/` —
-the **run ledger**, the project's durable memory of what ran and why.
+Every run leaves exactly one markdown record, saved from `.glados/runs/` to
+the `glados/ledger` branch — the **run ledger**, the project's durable memory
+of what ran and why.
 Illustrative but shape-accurate:
 
 ```bash
@@ -177,7 +179,7 @@ $ cat .glados/runs/2026-07-03-build-feature-rate-limit.md
 - outcomes: progress→ledger, verdict→!47 comment, decision→ledger
 ```
 
-Because the record is committed, a teammate or a fresh agent session resumes from `git pull`, not from someone's chat transcript.
+Because the record is saved to the `glados/ledger` branch, a teammate or a fresh agent session resumes from it (`glados.py ledger restore`), not from someone's chat transcript.
 
 ## Where next
 

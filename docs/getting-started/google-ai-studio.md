@@ -21,7 +21,7 @@ is a planning/review/spec surface, not a hands-on-keyboard one.
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is a git repository (run records are committed to its `glados/ledger` branch).
 - A Google account for AI Studio; a Gemini API key only if you use the
   bundled script runner.
 
@@ -104,8 +104,9 @@ context in [hooks/README.md](../../hooks/README.md).
 Every bundle opens with a runtime contract: the model must emit a fenced
 block headed `=== WRITE FILE: <repo-relative-path> ===` for any file it wants
 written, and `=== RUN: ===` for any git or platform command. **Nothing has
-happened until you apply those blocks yourself** — including committing the
-run record to `.glados/runs/`. Don't read a transcript as work done. Two
+happened until you apply those blocks yourself** — including saving the
+run record to the `glados/ledger` branch (`python .glados/glados.py ledger
+save`). Don't read a transcript as work done. Two
 related cautions: bundles are compiled from your `glados.yaml`, so re-run the
 install whenever a structural key changes (`phase`, `optimize-for`,
 `default-modules`, `workflows`, `disabled-workflows`, `sda`, and pipeline
