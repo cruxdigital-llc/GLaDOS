@@ -50,6 +50,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import urllib.parse
 from pathlib import Path
 
@@ -483,11 +484,28 @@ class CheckFailed(Fatal):
 #   * block maps and block lists, 2-space indentation
 #   * lists of maps: `- key: value` opens a mapping item whose later keys
 #     align with `key` (as in standard YAML); bare `-` + an indented map too
-#   * inline flow lists: [a, b], []
-#   * scalars: plain, single/double quoted, integers, true/false/null
-#   * block scalars: > >- | |- (folded / literal, clip / strip chomping)
-#   * comments ('# ...'), respecting quotes; '#' only starts a comment at line
-#     start or after whitespace
+#   * one-line flow lists: [a, b], [], a trailing comma
+#   * scalars: plain, one-line single/double quoted (every YAML escape),
+#     integers, true/false/null
+#   * block scalars: > >- | |- (folded / literal, clip / strip chomping), as
+#     a mapping value or a list item
+#   * comments: '#' at line start or after a space, outside quotes
+#
+# What the parser accepts, it reads as a YAML reader does, or it refuses it.
+# The agent reads glados.yaml and the preset table as YAML at run time, so a
+# document the two read differently passes every check here while the run
+# obeys something else. YAML syntax kept as text did exactly that:
+# `&a max-cycles: true` (an anchor), `!!str max-cycles` (a tag),
+# `"max\x2Dcycles"` (an escape) and a `<<:` merge key were keys no check
+# reads, and YAML reads each as max-cycles. So the parser decodes every YAML
+# escape and refuses anchors, aliases, tags, merge keys, explicit keys,
+# reserved indicators, block-scalar indentation numbers, text after a closing
+# quote, `k:v` (one plain scalar to YAML), ': ' inside an unquoted value (an
+# error to YAML), a key YAML reads as a null, bool, number or date, an
+# integer with a leading zero (octal to YAML 1.1), a tab outside quotes,
+# lines left of the first line (it used to drop them), and characters YAML
+# does not allow. A value YAML would type (yes, 1.5, 2026-10-22) stays the
+# text it is written as; every check that wants a number or bool refuses it.
 # Anything outside the subset raises YamlError('<file>:<line>: <reason>').
 
 
@@ -495,103 +513,351 @@ class YamlError(Fatal):
     pass
 
 
-# A block-list item that opens a mapping: an unquoted plain key whose FIRST
-# colon is followed by whitespace or the end of the item (`- name: x`,
-# `- name:`). A quoted item (`- "a: b"`) stays a string, and so does a colon
-# with no space after it (`- http://host`), as in standard YAML.
-_MAP_ITEM_RE = re.compile(r"""^[^\s'"\[\]{}#][^:]*:(?:\s|$)""")
+# What YAML reads a scalar's first character as when it is one of these: it
+# is syntax, never text. A key may start with none of them; a value reaches
+# this check only after quotes, `[`, `{`, `#` and block headers are handled.
+_INDICATOR_WHAT = {
+    "&": "an anchor", "!": "a tag", "*": "an alias", "%": "a directive",
+    "@": "a reserved indicator", "`": "a reserved indicator",
+    "?": "an explicit key", ":": "a mapping value", "-": "a list item",
+    ",": "flow syntax", "[": "a flow list", "]": "flow syntax",
+    "{": "a flow mapping", "}": "flow syntax", "|": "a block scalar",
+    ">": "a block scalar", "#": "a comment",
+}
 
+# YAML's escapes in a double-quoted scalar (YAML 1.2 section 5.7, the set
+# PyYAML reads too). Any other backslash is an error to YAML, and here.
+_DQ_ESCAPES = {
+    "0": "\x00", "a": "\x07", "b": "\x08", "t": "\t", "\t": "\t", "n": "\n",
+    "v": "\x0b", "f": "\x0c", "r": "\r", "e": "\x1b", " ": " ", '"': '"',
+    "/": "/", "\\": "\\", "N": "\x85", "_": "\xa0", "L": "\u2028",
+    "P": "\u2029",
+}
+_DQ_HEX = {"x": 2, "u": 4, "U": 8}
 
-def _strip_inline_comment(line: str) -> str:
-    """Drop a trailing '# comment', honoring quotes and the space-before rule."""
-    in_s = in_d = False
-    for i, ch in enumerate(line):
-        if ch == "'" and not in_d:
-            in_s = not in_s
-        elif ch == '"' and not in_s:
-            in_d = not in_d
-        elif ch == "#" and not in_s and not in_d:
-            if i == 0 or line[i - 1] in " \t":
-                return line[:i]
-    return line
+# Characters YAML does not allow in a document (a reader refuses the whole
+# file), plus the three that YAML 1.1 reads as line breaks and YAML 1.2 as
+# text: a reader and this parser would not agree on either.
+_YAML_UNREADABLE = re.compile(
+    "[^\t\n\x20-\x7e\xa0-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]"
+    "|[\u2028\u2029]")
+
+# A plain scalar YAML 1.1 or 1.2 reads as something other than text: null, a
+# bool (yes/no/on/off and y/n too, in 1.1), a number in any base or with
+# underscores, a float, a date. The parser reads every key as text, so
+# `null:` and `~:` were two keys here and one to YAML, and `1:` and `01:`
+# likewise; a key like these is refused. (A value like these stays the text
+# it is written as: every check that wants a number or a bool refuses it.)
+_YAML_NON_TEXT = re.compile(r"""
+      ~ | null | Null | NULL
+    | y | Y | yes | Yes | YES | n | N | no | No | NO
+    | true | True | TRUE | false | False | FALSE | on | On | ON | off | Off | OFF
+    | [-+]? [0-9][0-9_]* (?: :[0-5]?[0-9] )*
+    | [-+]? 0b[01_]+ | [-+]? 0o[0-7_]+ | [-+]? 0x[0-9a-fA-F_]+
+    | [-+]? (?: [0-9][0-9_]* )? \. [0-9_]* (?: [eE][-+]?[0-9]+ )?
+    | [-+]? [0-9][0-9_]* [eE][-+]?[0-9]+
+    | [-+]? \. (?: inf | Inf | INF ) | \. (?: nan | NaN | NAN )
+    | [0-9]{4}-[0-9]{1,2}-[0-9]{1,2} (?: [Tt ].* )?
+""", re.X)
 
 
 def _indent_of(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
 
-def _unescape_double(s: str) -> str:
-    """Minimal double-quoted-scalar escapes: \\\\ \\\" \\n \\t \\r; anything
-    else keeps its backslash (lenient — the subset never emits more)."""
+def _is_list_line(line: str) -> bool:
+    s = line.strip(" ")
+    return s == "-" or s.startswith("- ")
+
+
+def _comment_at(s: str, j: int) -> bool:
+    """s[j] starts a comment: a '#' at the line start or after a space.
+    Only a space separates tokens here: YAML readers disagree about a tab
+    outside quotes (PyYAML refuses one anywhere there), so a tab stays in
+    the text around it and _plain_problem refuses that text."""
+    return s[j] == "#" and (j == 0 or s[j - 1] == " ")
+
+
+def _strip_comment(s: str) -> str:
+    """A plain scalar's text: up to a comment, trailing spaces off."""
+    for j in range(len(s)):
+        if _comment_at(s, j):
+            return s[:j].rstrip(" ")
+    return s.rstrip(" ")
+
+
+def _expect_end(s: str, j: int, after: str, filename: str,
+                lineno: int) -> None:
+    """Only spaces, or spaces and a comment, may follow s[:j]."""
+    rest = s[j:]
+    tail = rest.lstrip(" ")
+    if tail and not (tail[0] == "#" and len(tail) < len(rest)):
+        raise YamlError(f"{filename}:{lineno}: '{tail}' after {after} — "
+                        f"quote the whole value, or start a comment with a "
+                        f"space and '#'")
+
+
+def _scan_quoted(s: str, i: int, filename: str, lineno: int) -> int:
+    """The index just past the quoted scalar that opens at s[i]: a
+    backslash escapes the next character inside double quotes, and '' is
+    a quote inside single quotes."""
+    q = s[i]
+    j = i + 1
+    while j < len(s):
+        if s[j] == "\\" and q == '"':
+            j += 2
+        elif s[j] == q:
+            if q == "'" and s[j + 1:j + 2] == "'":
+                j += 2
+            else:
+                return j + 1
+        else:
+            j += 1
+    raise YamlError(f"{filename}:{lineno}: unterminated quote in '{s[i:]}' "
+                    f"— close it on the same line (the parser reads one-line "
+                    f"quoted scalars only)")
+
+
+def _unescape_double(s: str, filename: str, lineno: int) -> str:
+    """A double-quoted scalar's body as YAML reads it."""
     out: list[str] = []
     i = 0
-    escapes = {"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r"}
     while i < len(s):
         ch = s[i]
-        if ch == "\\" and i + 1 < len(s) and s[i + 1] in escapes:
-            out.append(escapes[s[i + 1]])
-            i += 2
-        else:
+        if ch != "\\":
             out.append(ch)
             i += 1
+            continue
+        esc = s[i + 1:i + 2]
+        if esc and esc in _DQ_ESCAPES:
+            out.append(_DQ_ESCAPES[esc])
+            i += 2
+            continue
+        if esc and esc in _DQ_HEX:
+            width = _DQ_HEX[esc]
+            digits = s[i + 2:i + 2 + width]
+            if len(digits) < width or any(
+                    c not in "0123456789abcdefABCDEF" for c in digits):
+                raise YamlError(f"{filename}:{lineno}: '\\{esc}{digits}': "
+                                f"'\\{esc}' needs {width} hex digits (as in "
+                                f"'\\{esc}{'2D'.rjust(width, '0')}')")
+            code = int(digits, 16)
+            if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+                raise YamlError(f"{filename}:{lineno}: '\\{esc}{digits}' is "
+                                f"not a character — write the character "
+                                f"itself")
+            out.append(chr(code))
+            i += 2 + width
+            continue
+        raise YamlError(f"{filename}:{lineno}: '\\{esc}' is not a YAML escape "
+                        f"— write a backslash as '\\\\', or use one of YAML's "
+                        f"escapes ('\\n', '\\t', '\\\"', '\\xHH', '\\uHHHH')")
     return "".join(out)
 
 
-def _parse_scalar(tok: str, filename: str, lineno: int):
-    tok = tok.strip()
-    if tok == "" or tok == "~" or tok == "null":
+def _quoted_scalar(tok: str, filename: str, lineno: int) -> str:
+    if tok[0] == '"':
+        return _unescape_double(tok[1:-1], filename, lineno)
+    return tok[1:-1].replace("''", "'")
+
+
+def _plain_problem(text: str, role: str):
+    """Why YAML would not read plain ``text`` as that text, or None."""
+    if "\t" in text:
+        return (f"'{text.strip()}' has a tab outside quotes, which YAML "
+                f"readers do not agree on — use spaces, or quote the {role}")
+    if text == "<<":
+        return ("'<<' is a YAML merge key, which copies another mapping's "
+                "keys in — not supported here; write each key out")
+    if text == "=":
+        return f"'=' is a YAML 1.1 value key, not text — quote the {role}"
+    c = text[0]
+    if c in _INDICATOR_WHAT and (c != "-" or text[1:2] in ("", " ", "\t")):
+        return (f"'{text}' starts with '{c}', which YAML reads as "
+                f"{_INDICATOR_WHAT[c]}, not text — not supported here; "
+                f"write the {role} itself, quoted if the '{c}' belongs to it")
+    if re.search(r":(?:[ \t]|$)", text):
+        return (f"'{text}' holds ': ', which YAML reads as a mapping, not "
+                f"text — quote the {role}")
+    return None
+
+
+def _plain_scalar(text: str, filename: str, lineno: int, role: str,
+                  flow: bool = False):
+    problem = _plain_problem(text, role)
+    if problem is None and flow and "?" in text:
+        problem = (f"'{text}' holds '?', which YAML reads as a key inside a "
+                   f"flow list — quote the item")
+    if problem is not None:
+        raise YamlError(f"{filename}:{lineno}: {problem}")
+    if text in ("~", "null"):
         return None
-    if tok == "true":
+    if text == "true":
         return True
-    if tok == "false":
+    if text == "false":
         return False
-    if len(tok) >= 2 and tok[0] == '"' and tok[-1] == '"':
-        return _unescape_double(tok[1:-1])
-    if len(tok) >= 2 and tok[0] == "'" and tok[-1] == "'":
-        return tok[1:-1].replace("''", "'")
-    if re.fullmatch(r"-?\d+", tok):
-        return int(tok)
-    return tok
+    # [0-9], not \d: \d and int() take other scripts' digits too (U+0663,
+    # ARABIC-INDIC DIGIT THREE, reads as 3), which YAML reads as text.
+    if re.fullmatch(r"-?[0-9]+", text):
+        if re.fullmatch(r"-?0[0-9]+", text):
+            raise YamlError(f"{filename}:{lineno}: '{text[:12]}' has a leading "
+                            f"zero, which YAML 1.1 reads as an octal number — "
+                            f"write it without the zero, or quote it if it "
+                            f"is text")
+        try:
+            return int(text)
+        except ValueError:
+            # Python reads at most 4300 digits; the ValueError used to
+            # escape as a traceback from every command, doctor included.
+            raise YamlError(f"{filename}:{lineno}: the number "
+                            f"'{text[:12]}...' has {len(text)} digits, more "
+                            f"than can be read — write a smaller number")
+    return text
 
 
-def _split_flow_items(inner: str, filename: str, lineno: int) -> list[str]:
-    """Split a flow-list body on commas, honoring quotes; reject nesting."""
-    items: list[str] = []
-    buf = ""
-    in_s = in_d = False
-    for ch in inner:
-        if ch == "'" and not in_d:
-            in_s = not in_s
-            buf += ch
-        elif ch == '"' and not in_s:
-            in_d = not in_d
-            buf += ch
-        elif ch == "," and not in_s and not in_d:
-            items.append(buf)
-            buf = ""
-        elif ch in "[{" and not in_s and not in_d:
-            raise YamlError(f"{filename}:{lineno}: nested flow collections are "
-                            f"not supported inside [...] — use a block list "
-                            f"(one '- item' per line)")
+def _check_key(key: str, filename: str, lineno: int, plain: bool) -> str:
+    """``key`` when every reader takes it as the same text, else YamlError.
+    A key holding an invisible control or format character (`\\0`, a
+    zero-width space) is another key to YAML, and to every check here, but
+    reads as the visible one to an agent looking at the text."""
+    if key == "<<":
+        raise YamlError(f"{filename}:{lineno}: '<<' is a YAML merge key, which "
+                        f"copies another mapping's keys in — not supported "
+                        f"here; write each key out")
+    if plain:
+        if key == "":
+            raise YamlError(f"{filename}:{lineno}: a mapping key is empty — "
+                            f"write 'key: value'")
+        problem = _plain_problem(key, "key")
+        if problem is None and _YAML_NON_TEXT.fullmatch(key):
+            problem = (f"the key '{key}' is a null, a bool, a number or a "
+                       f"date to YAML, not text — quote it (\"{key}\") if "
+                       f"it is a name")
+        if problem is not None:
+            raise YamlError(f"{filename}:{lineno}: {problem}")
+    hidden = next((c for c in key
+                   if unicodedata.category(c) in ("Cc", "Cf")), None)
+    if hidden is not None:
+        raise YamlError(f"{filename}:{lineno}: the key {key!r} holds "
+                        f"U+{ord(hidden):04X}, a character that does not "
+                        f"show — write the key as plain text")
+    return key
+
+
+def _split_entry(s: str, filename: str, lineno: int):
+    """(key, rest) when the line content ``s`` is a mapping entry as YAML
+    reads it, else None (a lone scalar). The key ends at the first ':'
+    followed by whitespace or the line end, outside quotes and before any
+    comment: `"max-cycles": 3` is the key max-cycles, `a:b: c` the key
+    a:b, and `k:v` one plain scalar. ``rest`` follows that ':'."""
+    if s[:1] in ("'", '"'):
+        end = _scan_quoted(s, 0, filename, lineno)
+        k = end
+        while k < len(s) and s[k] in " ":
+            k += 1
+        if s[k:k + 1] == ":" and s[k + 1:k + 2] in ("", " "):
+            key = _quoted_scalar(s[:end], filename, lineno)
+            return _check_key(key, filename, lineno, plain=False), s[k + 1:]
+        _expect_end(s, end, "the closing quote", filename, lineno)
+        return None
+    for j, c in enumerate(s):
+        if _comment_at(s, j):
+            return None
+        if c == ":" and s[j + 1:j + 2] in ("", " "):
+            key = s[:j].rstrip(" ")
+            return _check_key(key, filename, lineno, plain=True), s[j + 1:]
+    return None
+
+
+def _parse_flow_list(s: str, filename: str, lineno: int) -> list:
+    """A one-line flow list opening at s[0]; only a comment may follow its
+    closing ']'."""
+    n = len(s)
+
+    def blank(j: int) -> int:
+        while j < n and s[j] in " ":
+            j += 1
+        return j
+
+    def unterminated():
+        return YamlError(f"{filename}:{lineno}: unterminated inline list "
+                         f"'{s}' (the parser supports single-line flow lists "
+                         f"only)")
+
+    def nested():
+        return YamlError(f"{filename}:{lineno}: nested flow collections are "
+                         f"not supported inside [...] — use a block list "
+                         f"(one '- item' per line)")
+
+    items: list = []
+    j = blank(1)
+    if s[j:j + 1] == "]":
+        _expect_end(s, j + 1, "']'", filename, lineno)
+        return items
+    while True:
+        if j >= n or _comment_at(s, j):
+            raise unterminated()
+        if s[j] in "[{":
+            raise nested()
+        if s[j] in "\"'":
+            end = _scan_quoted(s, j, filename, lineno)
+            items.append(_quoted_scalar(s[j:end], filename, lineno))
+            after = "the closing quote"
         else:
-            buf += ch
-    if in_s or in_d:
-        raise YamlError(f"{filename}:{lineno}: unterminated quote inside [...]")
-    items.append(buf)
-    return items
+            end = j
+            while end < n and s[end] not in ",]" and not _comment_at(s, end):
+                if s[end] in "[{}":
+                    raise nested()
+                end += 1
+            text = s[j:end].rstrip(" ")
+            if not text:
+                raise YamlError(f"{filename}:{lineno}: an empty item in '{s}' "
+                                f"— remove the extra ','")
+            items.append(_plain_scalar(text, filename, lineno, "item",
+                                       flow=True))
+            after = f"'{text}'"
+        j = blank(end)
+        if j >= n or _comment_at(s, j):
+            raise unterminated()
+        if s[j] == "]":
+            _expect_end(s, j + 1, "']'", filename, lineno)
+            return items
+        if s[j] != ",":
+            raise YamlError(f"{filename}:{lineno}: '{s[j:]}' after {after} "
+                            f"in a flow list — quote the whole item")
+        j = blank(j + 1)
+        if s[j:j + 1] == "]":  # a trailing comma, as YAML allows
+            _expect_end(s, j + 1, "']'", filename, lineno)
+            return items
 
 
-def _parse_flow_list(tok: str, filename: str, lineno: int):
-    tok = tok.strip()
-    if not tok.endswith("]"):
-        raise YamlError(f"{filename}:{lineno}: unterminated inline list '{tok}' "
-                        f"(the parser supports single-line flow lists only)")
-    inner = tok[1:-1].strip()
-    if inner == "":
-        return []
-    return [_parse_scalar(p, filename, lineno)
-            for p in _split_flow_items(inner, filename, lineno)
-            if p.strip() != ""]
+def _read_node(s: str, filename: str, lineno: int):
+    """What follows `key:` or `- ` on a line, as YAML reads it: ("none",
+    None) when nothing does (an indented block may follow), ("block",
+    header) for a block scalar, or ("value", the value)."""
+    s = s.strip(" ")
+    if s == "" or s[0] == "#":
+        return "none", None
+    c = s[0]
+    if c in "\"'":
+        end = _scan_quoted(s, 0, filename, lineno)
+        _expect_end(s, end, "the closing quote", filename, lineno)
+        return "value", _quoted_scalar(s[:end], filename, lineno)
+    if c == "[":
+        return "value", _parse_flow_list(s, filename, lineno)
+    if c == "{":
+        raise YamlError(f"{filename}:{lineno}: flow mapping '{{...}}' is not "
+                        f"supported — use a block map (nested 2-space-"
+                        f"indented 'key: value' lines)")
+    text = _strip_comment(s)
+    if c in "|>":
+        if re.fullmatch(r"[|>][+-]?", text):
+            return "block", text
+        raise YamlError(f"{filename}:{lineno}: block scalar header '{text}' "
+                        f"is not supported — write '|', '|-', '>' or '>-' "
+                        f"with no indentation number, and indent the text "
+                        f"under it")
+    return "value", _plain_scalar(text, filename, lineno, "value")
 
 
 def parse_yaml(text: str, filename: str = "<yaml>"):
@@ -600,17 +866,24 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
     n = len(lines)
 
     # YAML forbids tabs in indentation; silently misreading them re-parents
-    # keys (a tab-indented sub-map becomes top-level keys). Fail loudly.
+    # keys (a tab-indented sub-map becomes top-level keys). Fail loudly, on
+    # a blank line too (YAML readers refuse that as well), and on any
+    # character a YAML reader would refuse or read as a line break.
     for idx, line in enumerate(lines):
-        if line.strip() == "":
-            continue
+        bad = _YAML_UNREADABLE.search(line)
+        if bad:
+            raise YamlError(f"{filename}:{idx + 1}: character "
+                            f"U+{ord(bad.group()):04X} is not text a YAML "
+                            f"reader takes as written — remove it, or write "
+                            f"it as an escape inside double quotes")
         lead = line[: len(line) - len(line.lstrip(" \t"))]
         if "\t" in lead:
-            raise YamlError(f"{filename}:{idx + 1}: tab character in indentation "
+            where = "on a blank line" if lead == line else "in indentation"
+            raise YamlError(f"{filename}:{idx + 1}: tab character {where} "
                             f"— YAML forbids tabs; indent with 2 spaces")
 
     def skippable(i: int) -> bool:
-        s = lines[i].strip()
+        s = lines[i].strip(" \t")
         return s == "" or s.startswith("#")
 
     def next_meaningful(i: int) -> int:
@@ -622,7 +895,7 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
         collected: list[str] = []
         base = None
         while i < n:
-            if lines[i].strip() == "":
+            if lines[i].strip(" \t") == "":
                 collected.append("")
                 i += 1
                 continue
@@ -644,6 +917,14 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
             value = value.rstrip("\n")
         return value, i
 
+    def nested_block(i: int, parent_indent: int):
+        """The block an entry with nothing after its ':' (or a bare '-')
+        holds: an indented map or list, else null."""
+        j = next_meaningful(i)
+        if j < n and _indent_of(lines[j]) > parent_indent:
+            return parse_list(j) if _is_list_line(lines[j]) else parse_map(j)
+        return None, i
+
     def parse_map(i: int):
         i = next_meaningful(i)
         base = _indent_of(lines[i])
@@ -658,40 +939,27 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
             if ci > base:
                 raise YamlError(f"{filename}:{i + 1}: unexpected indent "
                                 f"(expected {base} spaces, got {ci})")
-            content = _strip_inline_comment(lines[i]).strip()
-            if content.startswith("- "):
-                raise YamlError(f"{filename}:{i + 1}: list item under a mapping")
-            if ":" not in content:
-                raise YamlError(f"{filename}:{i + 1}: expected 'key: value', "
-                                f"got '{content}'")
-            key, _, val = content.partition(":")
-            key = key.strip()
-            val = val.strip()
+            lineno = i + 1
+            content = lines[i].strip(" ")
+            if _is_list_line(content):
+                raise YamlError(f"{filename}:{lineno}: list item under a mapping")
+            entry = _split_entry(content, filename, lineno)
+            if entry is None:
+                raise YamlError(f"{filename}:{lineno}: expected 'key: value', "
+                                f"got '{_strip_comment(content)}'")
+            key, rest = entry
             if key in result:
-                raise YamlError(f"{filename}:{i + 1}: duplicate key '{key}' — "
+                raise YamlError(f"{filename}:{lineno}: duplicate key '{key}' — "
                                 f"the earlier value would be silently "
                                 f"overwritten; remove one of the definitions")
             i += 1
-            if val == "":
-                j = next_meaningful(i)
-                if j < n and _indent_of(lines[j]) > base:
-                    child = _strip_inline_comment(lines[j]).strip()
-                    if child.startswith("- ") or child == "-":
-                        result[key], i = parse_list(j)
-                    else:
-                        result[key], i = parse_map(j)
-                else:
-                    result[key] = None
-            elif val in (">", ">-", "|", "|-", ">+", "|+"):
-                result[key], i = parse_block_scalar(i, base, val)
-            elif val.startswith("["):
-                result[key] = _parse_flow_list(val, filename, i)
-            elif val.startswith("{"):
-                raise YamlError(f"{filename}:{i}: flow mapping '{{...}}' is not "
-                                f"supported — use a block map (nested 2-space-"
-                                f"indented 'key: value' lines)")
+            kind, value = _read_node(rest, filename, lineno)
+            if kind == "none":
+                result[key], i = nested_block(i, base)
+            elif kind == "block":
+                result[key], i = parse_block_scalar(i, base, value)
             else:
-                result[key] = _parse_scalar(val, filename, i)
+                result[key] = value
         return result, i
 
     def parse_list(i: int):
@@ -707,29 +975,13 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
                 break
             if ci > base:
                 raise YamlError(f"{filename}:{i + 1}: unexpected indent in list")
-            content = _strip_inline_comment(lines[i]).strip()
-            if not (content.startswith("- ") or content == "-"):
+            content = lines[i].strip(" ")
+            if not _is_list_line(content):
                 break
-            item = content[1:].strip()
-            i += 1
-            if item == "":
-                j = next_meaningful(i)
-                if j < n and _indent_of(lines[j]) > base:
-                    child = _strip_inline_comment(lines[j]).strip()
-                    if child.startswith("- ") or child == "-":
-                        sub, i = parse_list(j)
-                    else:
-                        sub, i = parse_map(j)
-                    result.append(sub)
-                else:
-                    result.append(None)
-            elif item.startswith("["):
-                result.append(_parse_flow_list(item, filename, i))
-            elif item.startswith("{"):
-                raise YamlError(f"{filename}:{i}: flow mapping '{{...}}' is not "
-                                f"supported — use a block map (nested 2-space-"
-                                f"indented 'key: value' lines)")
-            elif _MAP_ITEM_RE.match(item):
+            lineno = i + 1
+            item = content[1:].strip(" ")
+            if item[:1] not in ("[", "{") and \
+                    _split_entry(item, filename, lineno) is not None:
                 # `- key: value` starts a MAPPING item (standard YAML), not
                 # the string 'key: value'. The map's indent is the column of
                 # `key`; following keys aligned with it continue the same
@@ -738,20 +990,32 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
                 # which then sees an ordinary map starting at that column. A
                 # sibling '- ' line sits left of the map's column, so
                 # parse_map stops there and this loop takes the next item.
-                i -= 1
                 raw_line = lines[i]
                 lines[i] = raw_line[:ci] + " " + raw_line[ci + 1:]
                 sub, i = parse_map(i)
                 result.append(sub)
-            else:
-                result.append(_parse_scalar(item, filename, i))
+                continue
+            i += 1
+            kind, value = _read_node(item, filename, lineno)
+            if kind == "none":
+                value, i = nested_block(i, base)
+            elif kind == "block":
+                value, i = parse_block_scalar(i, base, value)
+            result.append(value)
         return result, i
 
     start = next_meaningful(0)
     if start >= n:
         return {}
-    first = _strip_inline_comment(lines[start]).strip()
-    value, _ = (parse_list(start) if first.startswith("- ") else parse_map(start))
+    value, end = (parse_list(start) if _is_list_line(lines[start])
+                  else parse_map(start))
+    rest = next_meaningful(end)
+    if rest < n:
+        # YAML refuses a document whose later lines sit left of its first,
+        # or a list followed by a key; the parser used to drop them.
+        raise YamlError(f"{filename}:{rest + 1}: this line does not continue "
+                        f"the document that line {start + 1} starts — indent "
+                        f"every top-level key the same, from the first")
     return value
 
 
@@ -1029,7 +1293,8 @@ def _require_name_list(value, where: str, origin: str, what: str) -> None:
                         f"({_fmt(item)}) — write one {what} name per item")
 
 
-def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
+def resolve_manifest(raw: dict, presets: dict, manifest_name: str,
+                     table_name: str = "phases.yaml") -> Resolved:
     phase = raw.get("phase")
     if phase is None:
         raise Fatal(f"{manifest_name}: required key 'phase:' is missing — set it "
@@ -1038,12 +1303,26 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
         raise Fatal(f"{manifest_name}: phase '{phase}' is not valid — use one of: "
                     f"{', '.join(PHASES)}")
 
+    plabel = f"phase:{phase}"
+    # The layers are iterated below, so a layer out of shape (`baseline: 5`,
+    # `decisions: [agent]`) escaped as an AttributeError or TypeError
+    # traceback; it is a Fatal naming the table and the layer.
+    for name, label in (("baseline", "baseline"), (phase, plabel)):
+        layer = presets.get(name)
+        if layer is not None and not isinstance(layer, dict):
+            raise Fatal(f"{table_name}: '{name}:' must be a mapping of the "
+                        f"keys it sets — got {layer!r}")
+        for key in ("channels", "decisions", "params"):
+            val = (layer or {}).get(key)
+            if val is not None and not isinstance(val, dict):
+                raise Fatal(f"{table_name} ({label}): {key}: must be a "
+                            f"mapping of one 'name: value' line per entry — "
+                            f"got {val!r}")
     baseline = presets.get("baseline") or {}
     preset = presets.get(phase) or {}
     r = Resolved()
     r.phase = phase
     r.raw = raw
-    plabel = f"phase:{phase}"
 
     def layer_scalar(key: str):
         val, prov = baseline.get(key), "baseline"
@@ -1086,7 +1365,7 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
     # came from, so a malformed preset is not blamed on the manifest.
     def origin(key: str) -> str:
         prov = r.provenance.get(key, "explicit")
-        return manifest_name if prov == "explicit" else f"phases.yaml ({prov})"
+        return manifest_name if prov == "explicit" else f"{table_name} ({prov})"
 
     opt = r.values.get("optimize-for")
     if opt is not None and not isinstance(opt, str):
@@ -1116,6 +1395,14 @@ def resolve_manifest(raw: dict, presets: dict, manifest_name: str) -> Resolved:
                 for k, v in cfg.items():
                     params[ns][k] = v
                     r.provenance[f"params.{ns}.{k}"] = label
+            elif cfg is not None:
+                # Merging skips it, so `pipeline: 5` would leave the
+                # inherited bound in force without a word.
+                where = (manifest_name if label == "explicit"
+                         else f"{table_name} ({label})")
+                raise Fatal(f"{where}: params.{ns}: must be a mapping of one "
+                            f"'key: value' line per parameter (such as "
+                            f"'max-cycles: 3') — got {cfg!r}")
     r.values["params"] = params
 
     # pass-through explicit-only keys. `sinks:` is project-declared like
@@ -1258,16 +1545,50 @@ def retired_params(raw: dict) -> list[str]:
     return found
 
 
-def manifest_warnings(raw: dict, manifest_name: str) -> list[str]:
+def read_params(source) -> set[str]:
+    """Every `<ns>.<key>` under params: that something reads: named in the
+    workflow sources (`params.<ns>.<key>`), or set by a preset."""
+    paths = set()
+    for f in source.src.rglob("*.md"):
+        paths.update(m.group(1) for m in re.finditer(
+            r"params\.([a-z][a-z-]*\.[a-z][a-z-]*)", read_text(f)))
+    for layer in source.presets.values():
+        params = layer.get("params") if isinstance(layer, dict) else None
+        for ns, cfg in (params.items() if isinstance(params, dict) else ()):
+            paths.update(f"{ns}.{k}" for k in
+                         (cfg if isinstance(cfg, dict) else ()))
+    return paths
+
+
+def unread_params(raw: dict, read: set) -> list[str]:
+    """The `params.<ns>.<key>` paths the manifest sets that nothing reads
+    (`max_cycles`, `run-pipeline.max-cycles`): a tightening that silently
+    does nothing while the inherited bound stays in force."""
+    params = raw.get("params")
+    return [f"{ns}.{k}"
+            for ns, cfg in (params.items() if isinstance(params, dict) else ())
+            for k in (cfg if isinstance(cfg, dict) else ())
+            if f"{ns}.{k}" not in read and f"{ns}.{k}" not in RETIRED_PARAMS]
+
+
+def manifest_warnings(raw: dict, manifest_name: str,
+                      source=None) -> list[str]:
     """Non-fatal findings about the manifest itself (never block an install).
     Unknown top-level keys, each named with the known set so a typo is one
-    glance from its fix; and retired `params` keys, each with why."""
+    glance from its fix; retired `params` keys, each with why; and, given
+    the source, `params` keys nothing reads."""
     known = ", ".join(KNOWN_MANIFEST_KEYS)
+    read = read_params(source) if source is not None else None
     return [f"{manifest_name}: unknown top-level key '{k}' is ignored — check "
             f"the spelling (known keys: {known})"
             for k in unknown_manifest_keys(raw)] + [
             f"{manifest_name}: params.{path} is {RETIRED_PARAMS[path]}; "
-            f"remove it" for path in retired_params(raw)]
+            f"remove it" for path in retired_params(raw)] + [
+            f"{manifest_name}: params.{path} is read by nothing, so it "
+            f"changes nothing — check the spelling (read: "
+            f"{', '.join(sorted(read))})"
+            for path in (unread_params(raw, read) if read is not None
+                         else ())]
 
 
 def _print_warnings(warnings: list[str]) -> None:
@@ -1614,6 +1935,24 @@ def run_type_checks(source: Source, comp: Compilation,
                               f"under params: in glados.yaml or a phase-preset "
                               f"baseline")
 
+    # ---- (8b) loop bounds are whole numbers ----------------------------------
+    # Every `params.<ns>.max-…` key bounds a loop (*Loop bounds*), whichever
+    # layer set it. Text, true/false, a list or a number below 1 is no count
+    # an agent can stop at. An absent value is (8)'s; a retired key is read
+    # by nothing.
+    for ns, cfg in sorted(params.items()):
+        for key, val in sorted(cfg.items()):
+            if (not key.startswith("max-") or val is None
+                    or f"{ns}.{key}" in RETIRED_PARAMS):
+                continue
+            problem = _loop_bound_problem(val)
+            if problem:
+                prov = r.provenance.get(f"params.{ns}.{key}", "baseline")
+                errors.append(f"params.{ns}.{key}: must be a whole number of "
+                              f"1 or more (it bounds a loop) — {problem} "
+                              f"(value from {prov}); write a plain integer "
+                              f"such as 3, with no quotes or decimal point")
+
     # ---- (9) project workflows: pipelines + steps ----------------------------
     # Lane 2 by design (run-pipeline reads them live), but they decide which
     # steps gate a change, so they are checked wherever the compiler runs:
@@ -1637,6 +1976,19 @@ def run_type_checks(source: Source, comp: Compilation,
             comp.warnings.append(w)
 
     return errors
+
+
+def _loop_bound_problem(val):
+    """What is wrong with ``val`` as a loop bound, or None for a whole number
+    of 1 or more. YAML's `true` is a bool, which Python counts as an int, so
+    it is refused before the int test."""
+    if isinstance(val, bool):
+        return f"got {_fmt(val)}"
+    if isinstance(val, int):
+        return None if val >= 1 else f"got {val}"
+    if isinstance(val, str):
+        return f"got the text '{val}'"
+    return f"got {_fmt(val)}"
 
 
 def _check_phase_invariants(source: Source, r: Resolved) -> list[str]:
@@ -3677,7 +4029,7 @@ def _prepare_compilation(source: Source, target: Path, mode: str):
     # warnings ride on the Fatal (exc.warnings) for install/check to print —
     # together with any the type checks added (an unused step is often the
     # other half of a misspelt sequence id).
-    warnings = manifest_warnings(raw, manifest_path.name)
+    warnings = manifest_warnings(raw, manifest_path.name, source)
     comp = None
     try:
         resolved = resolve_manifest(raw, source.presets, manifest_path.name)
@@ -4346,7 +4698,11 @@ def _assembly_report_doctor_line(source: Source, target: Path,
         except Exception as exc:  # deliberately broad: doctor never fails
             text = str(exc)
             first = text.splitlines()[0] if text else type(exc).__name__
-            if not isinstance(exc, Fatal):
+            if isinstance(exc, CheckFailed) and exc.errors:
+                # The first line is only "install checks failed:".
+                more = len(exc.errors) - 1
+                first = exc.errors[0] + (f"; and {more} more" if more else "")
+            elif not isinstance(exc, Fatal):
                 first = f"{type(exc).__name__}: {first}"
             return (f"  assembly report: could not render a fresh copy to "
                     f"compare ({first}) — run check for details")

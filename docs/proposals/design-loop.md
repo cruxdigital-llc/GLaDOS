@@ -120,3 +120,6 @@ and their counting. No new severity tier, verdict word or step status:
   `max-stalled-cycles` does not exceed `max-cycles`. A bound that is not a
   number installs today for every loop; that check belongs with all of
   them.
+  (Since done for every loop: install, check and validate refuse a bound
+  that is not a whole number of 1 or more, and a workflow escalates on one
+  at run time. `max-stalled-cycles` was retired.)

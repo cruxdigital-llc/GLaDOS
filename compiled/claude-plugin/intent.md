@@ -415,6 +415,10 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 
 Rules:
 
+- A bound must resolve to a whole number of 1 or more. Anything else
+  (missing, text, `true` or `false`, a list, 0 or less) is no bound: do not
+  start the loop; emit an `escalation` naming the key and its value, and
+  end the run.
 - Count cycles in the run record and check the bound **before** starting the
   next cycle.
 - On hitting a bound: stop, emit an `escalation` outcome carrying the open

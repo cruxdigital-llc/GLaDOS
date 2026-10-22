@@ -211,7 +211,11 @@ takes its spec from the caller.
   6. each project step the pipeline runs has a body at
      `product-knowledge/steps/<id>.md`, named exactly as the id (case
      included), with no YAML frontmatter;
-  7. each pipeline's description is 250 characters or fewer.
+  7. each pipeline's description is 250 characters or fewer;
+  8. `params.pipeline.max-cycles`, and every other `max-cycles` under
+     `params:`, resolves (`glados.yaml` over the preset table) to a whole
+     number of 1 or more: not text, `true` or `false`, a list, or 0 or
+     less.
 - An error or a missing step body means an `escalation` naming it and a
   stop; never improvise around it. Warnings do not stop the run: an MR with
   no verification step before it, or a declared step no pipeline uses.
@@ -583,6 +587,10 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 
 Rules:
 
+- A bound must resolve to a whole number of 1 or more. Anything else
+  (missing, text, `true` or `false`, a list, 0 or less) is no bound: do not
+  start the loop; emit an `escalation` naming the key and its value, and
+  end the run.
 - Count cycles in the run record and check the bound **before** starting the
   next cycle.
 - On hitting a bound: stop, emit an `escalation` outcome carrying the open

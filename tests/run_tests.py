@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -911,6 +912,298 @@ class TestParamsResolution(unittest.TestCase):
         self.assertIn("intent", out)
         self.assertNotIn("Traceback", out)
 
+    # -- loop bounds are whole numbers (B1) ----------------------------------
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: evolving\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    def _type_errors(self, manifest):
+        """The type-check errors ``manifest`` fails with, in-process."""
+        try:
+            glados._prepare_compilation(glados.Source(REPO),
+                                        make_target(manifest), "claude")
+        except glados.CheckFailed as exc:
+            return exc.errors
+        return []
+
+    def test_every_loop_bound_is_a_whole_number_of_one_or_more(self):
+        """Every `params.<ns>.<key>` a compiled workflow relies on, the
+        persona roster aside, bounds a loop, so it must be a whole number of
+        1 or more. Text, true (an int to Python), a list and a number below
+        1 used to resolve and install, leaving the loop no count it could
+        stop at."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        bounds = set()
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            bounds |= set(glados.PARAMS_LITERAL_RE.findall(read(core)))
+        bounds.discard("params.review-panel.personas")
+        self.assertIn("params.pipeline.max-cycles", bounds)
+        self.assertEqual(len(bounds), 4, bounds)
+        bad = (('"8"', "got the text '8'"), ("lots", "got the text 'lots'"),
+               ("true", "got true"), ("[8]", "got [8]"), ("0", "got 0"),
+               ("-2", "got -2"))
+        for lit in sorted(bounds):
+            _, ns, key = lit.split(".")
+            for value, shown in bad:
+                with self.subTest(bound=lit, value=value):
+                    errors = self._type_errors(
+                        self.MINIMAL + f"params:\n  {ns}:\n    {key}: {value}\n")
+                    hit = [e for e in errors if e.startswith(lit + ":")]
+                    self.assertTrue(hit, errors)
+                    self.assertIn("must be a whole number of 1 or more", hit[0])
+                    self.assertIn(shown, hit[0])
+                    self.assertIn("(value from explicit)", hit[0])
+            with self.subTest(bound=lit, value="1"):
+                self.assertEqual(self._type_errors(
+                    self.MINIMAL + f"params:\n  {ns}:\n    {key}: 1\n"), [])
+
+    def test_a_preset_bound_and_a_bound_out_of_shape_fail_too(self):
+        """A bound the manifest inherits is checked like one it sets, and
+        validate (which run-pipeline runs before its first step) names it.
+        A namespace written as a number was dropped without a word, leaving
+        the baseline's bound in force."""
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        text = read(presets)
+        self.assertIn("      max-cycles: 8\n", text)
+        presets.write_text(text.replace("      max-cycles: 8\n",
+                                        "      max-cycles: \"8\"\n"),
+                           encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("params.pipeline.max-cycles: must be a whole number of "
+                      "1 or more", out)
+        self.assertIn("(value from baseline)", out)
+        self.assertNotIn("Traceback", out)
+        for params, needle in (
+                ("  pipeline:\n    max-cycles: true\n",
+                 "params.pipeline.max-cycles: must be a whole number"),
+                ("  pipeline: 5\n", "params.pipeline: must be a mapping")):
+            with self.subTest(params=params):
+                t = make_target(self.MINIMAL + "params:\n" + params)
+                rc, out = run_cli("validate", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("glados validate: FAIL", out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_a_quoted_key_is_the_key_it_quotes(self):
+        """`"max-cycles": true` is max-cycles: true in YAML, and to the agent
+        that reads glados.yaml at run time. The parser kept the quotes on
+        the key, so the bound checks never saw it (the assembly report even
+        listed it beside the baseline's bound), and a decision right
+        written `"schema-migration": agent` skipped the relaxation check."""
+        quoted = ('params:\n  pipeline:\n    "max-cycles": true\n'
+                  "  review-panel:\n    'max-cycles': lots\n")
+        self.assertEqual(glados.parse_yaml(quoted, "t"), {"params": {
+            "pipeline": {"max-cycles": True},
+            "review-panel": {"max-cycles": "lots"}}})
+        errors = self._type_errors(self.MINIMAL + quoted)
+        for lit, shown in (("params.pipeline.max-cycles", "got true"),
+                           ("params.review-panel.max-cycles",
+                            "got the text 'lots'")):
+            hit = [e for e in errors if e.startswith(lit + ":")]
+            self.assertTrue(hit, errors)
+            self.assertIn(shown, hit[0])
+        # one key, however it is spelt
+        with self.assertRaises(glados.YamlError) as ctx:
+            glados.parse_yaml('pipeline:\n  max-cycles: 3\n'
+                              '  "max-cycles": 9\n', "t")
+        self.assertIn("duplicate key 'max-cycles'", str(ctx.exception))
+        # a decision right is as lax quoted as plain
+        production = self.MINIMAL.replace("phase: evolving",
+                                          "phase: production")
+        plain = self._type_errors(
+            production + "decisions:\n  schema-migration: agent\n")
+        self.assertTrue([e for e in plain if "laxer" in e], plain)
+        self.assertEqual(self._type_errors(
+            production + 'decisions:\n  "schema-migration": agent\n'), plain)
+        # a `- "key": value` item is a mapping, as `- key: value` is
+        self.assertEqual(
+            glados.parse_yaml('items:\n  - "name": a\n    \'kind\': gate\n',
+                              "t"),
+            {"items": [{"name": "a", "kind": "gate"}]})
+        # and the refusal says how to write a bound
+        hit = self._type_errors(
+            self.MINIMAL + "params:\n  pipeline:\n    max-cycles: 3.0\n")
+        self.assertTrue(hit)
+        self.assertIn("write a plain integer such as 3, with no quotes or "
+                      "decimal point", hit[0])
+
+    def test_every_spelling_yaml_reads_as_the_bound_is_checked_or_refused(self):
+        """Quoting was one spelling of a key. The parser kept the rest of
+        YAML's key syntax as text: an escape it did not know (`\\x2D`,
+        `\\u002D`, `\\U0000002D`), an anchor (`&a`), a tag (`!!str`, on the
+        key or on `params:` above it), a merge key (`<<:`). A YAML reader,
+        the agent included, reads each of these as
+        params.pipeline.max-cycles: true, but every command that reads
+        the manifest saw a key nothing reads, warned, and passed with
+        the inherited 8. Each is now read as YAML reads it, so the bound
+        check names it, or refused with the line it is on."""
+        bs = "\\"
+        head = "glados: 2\nplatform: github\nphase: evolving\n"
+        pipe = head + "params:\n  pipeline:\n"
+        bound = ("params.pipeline.max-cycles: must be a whole number of 1 or "
+                 "more")
+        cases = {
+            # read as YAML reads it, so the bound check sees max-cycles
+            "x escape": (pipe + f'    "max{bs}x2Dcycles": true\n', bound),
+            "u escape": (pipe + f'    "max{bs}u002Dcycles": true\n', bound),
+            "U escape": (pipe + f'    "max{bs}U0000002Dcycles": true\n',
+                         bound),
+            # syntax the subset does not read: refused, naming the line
+            "anchor": (pipe + "    &a max-cycles: true\n",
+                       "glados.yaml:6: '&a max-cycles' starts with '&'"),
+            "tag": (pipe + "    !!str max-cycles: true\n",
+                    "glados.yaml:6: '!!str max-cycles' starts with '!'"),
+            "tag above": (head + "!!str params:\n  pipeline:\n"
+                          "    max-cycles: true\n",
+                          "glados.yaml:4: '!!str params' starts with '!'"),
+            "merge key": (pipe + "    <<:\n      max-cycles: true\n",
+                          "glados.yaml:6: '<<' is a YAML merge key"),
+        }
+        installed = make_target(head)
+        rc, out = install("claude", installed)
+        self.assertEqual(rc, 0, out)
+        for name, (manifest, needle) in cases.items():
+            t = make_target(manifest)
+            write(installed / "glados.yaml", manifest)
+            for args in (("validate", "--target", t),
+                         ("install", "--mode", "claude", "--target", t),
+                         ("check", "--target", installed)):
+                with self.subTest(case=name, command=args[0]):
+                    rc, out = run_cli(*args, "--source", REPO)
+                    self.assertEqual(rc, 1, out)
+                    self.assertIn(needle, out)
+                    self.assertNotIn("Traceback", out)
+                    self.assertNotIn("passes every check", out)
+
+    def test_a_preset_table_out_of_shape_is_named_not_a_traceback(self):
+        """A preset layer that is not a mapping, or whose params, channels
+        or decisions are not, crashed resolution with an AttributeError or
+        TypeError traceback instead of a sentence naming the table."""
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        original = read(presets)
+
+        def block(name):
+            return re.search(rf"^{name}:\n(?:(?:[ #].*)?\n)*", original,
+                             re.M).group(0)
+
+        baseline = block("baseline")
+        params_at = baseline.index("  params:\n")
+        for label, edited, needle in (
+                ("baseline", original.replace(baseline, "baseline: 5\n\n"),
+                 "phases.yaml: 'baseline:' must be a mapping"),
+                ("phase", original.replace(block("evolving"),
+                                           "evolving: 5\n\n"),
+                 "phases.yaml: 'evolving:' must be a mapping"),
+                ("params", original.replace(
+                    baseline, baseline[:params_at] + "  params: 5\n\n"),
+                 "phases.yaml (baseline): params: must be a mapping"),
+                ("decisions", original.replace(
+                    block("evolving"), "evolving:\n  decisions: [agent]\n\n"),
+                 "phases.yaml (phase:evolving): decisions: must be a "
+                 "mapping")):
+            with self.subTest(layer=label):
+                self.assertNotEqual(edited, original)
+                write(presets, edited)
+                rc, out = install("direct", make_target(self.MINIMAL),
+                                  source=src)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_a_number_too_long_to_read_is_a_named_error(self):
+        """Python refuses to read an integer of more than 4300 digits, and
+        the ValueError escaped as a traceback from every command: install,
+        validate, `check --report-only` (which never fails) and doctor
+        (which never fails either)."""
+        t = make_target(self.MINIMAL)
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", self.MINIMAL
+              + "params:\n  pipeline:\n    max-cycles: " + "9" * 5000 + "\n")
+        limited = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+        for args, code in ((("validate",), 1), (("install", "--mode",
+                                                 "direct"), 1),
+                           (("check", "--report-only"), 0), (("doctor",), 0)):
+            with self.subTest(command=args[0]):
+                rc, out = run_cli(*args, "--target", t, "--source", REPO)
+                self.assertNotIn("Traceback", out)
+                if args[0] in ("check", "doctor") or limited:
+                    self.assertEqual(rc, code, out)
+                if limited:
+                    self.assertIn("glados.yaml:9: the number", out)
+
+    def test_a_params_key_nothing_reads_is_named(self):
+        """`max_cycles: 1`, or a `run-pipeline:` namespace, installed
+        without a word while the inherited bound stayed in force, so a
+        team's intended tightening did nothing. It warns (and fails
+        nothing), naming the keys that are read."""
+        t = make_target(self.MINIMAL + "params:\n  pipeline:\n"
+                        "    max_cycles: 1\n  run-pipeline:\n"
+                        "    max-cycles: 1\n  review-panel:\n"
+                        "    max-cycles: 2\n")
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        for path in ("pipeline.max_cycles", "run-pipeline.max-cycles"):
+            needle = f"glados.yaml: params.{path} is read by nothing"
+            self.assertEqual(out.count(needle), 1, out)
+            self.assertIn("pipeline.max-cycles", out.split(needle)[1])
+        self.assertNotIn("params.review-panel.max-cycles is read by", out)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("params.pipeline.max_cycles is read by nothing", out)
+
+    def test_doctor_names_the_check_that_failed(self):
+        """doctor printed only "install checks failed:", the first line of
+        the error, so a bound that is not a whole number went unnamed."""
+        t = make_target(self.MINIMAL)
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml",
+              self.MINIMAL + "params:\n  pipeline:\n    max-cycles: lots\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("could not render a fresh copy to compare "
+                      "(params.pipeline.max-cycles: must be a whole number",
+                      out)
+
+    def test_a_bound_that_is_no_whole_number_stops_the_loop_at_run_time(self):
+        """Bounds are lane-2 values the agent reads live from glados.yaml,
+        so one edited after install (no reinstall; CI's check is
+        report-only) reaches the loop past every install-time check, and
+        only run-pipeline runs validate. Every workflow that bounds a loop
+        says what a value that is not a whole number of 1 or more is: no
+        bound, so the loop does not start and the run escalates naming the
+        key. run-pipeline's no-Python checklist checks its own bound."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        rule = ("A bound must resolve to a whole number of 1 or more. "
+                "Anything else (missing, text, `true` or `false`, a list, 0 "
+                "or less) is no bound: do not start the loop; emit an "
+                "`escalation` naming the key and its value, and end the run.")
+        bounded = set()
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            text = " ".join(read(core).split())
+            if any(lit.endswith(".max-cycles")
+                   for lit in glados.PARAMS_LITERAL_RE.findall(text)):
+                bounded.add(core.stem)
+                with self.subTest(core=core.stem):
+                    self.assertIn(rule, text)
+        self.assertTrue({"review-mr", "address-review", "build-feature",
+                         "verify-feature", "fix-bug", "run-pipeline"}
+                        <= bounded, bounded)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        self.assertIn("7. each pipeline's description is 250 characters or "
+                      "fewer; 8. `params.pipeline.max-cycles`, and every "
+                      "other `max-cycles` under `params:`, resolves "
+                      "(`glados.yaml` over the preset table) to a whole "
+                      "number of 1 or more: not text, `true` or `false`, a "
+                      "list, or 0 or less.", text)
+
 
 class TestVerifyLedger(unittest.TestCase):
 
@@ -995,6 +1288,251 @@ class TestYamlParserAttacks(unittest.TestCase):
         self.assertIn("glados.yaml", out)
         self.assertIn("UTF-8", out)
         self.assertNotIn("Traceback", out)
+
+    # -- the subset reads what YAML reads, or refuses -----------------------
+
+    def _refused(self, text, line, needle=""):
+        with self.assertRaises(glados.YamlError) as ctx:
+            glados.parse_yaml(text, "t")
+        self.assertIn(f"t:{line}:", str(ctx.exception))
+        self.assertIn(needle, str(ctx.exception))
+
+    def test_escapes_read_as_yaml_reads_them(self):
+        """A double-quoted scalar takes YAML's escapes, all of them, and no
+        others. The parser decoded five and kept the backslash on the rest,
+        so `"max\\x2Dcycles"` was a key nothing checks while YAML reads it
+        as max-cycles."""
+        bs = "\\"
+        table = {
+            "x2D": "-", "u002D": "-", "U0000002D": "-", "u00e9": "\u00e9",
+            "U0001F600": "\U0001F600", "0": "\x00", "a": "\x07", "b": "\x08",
+            "t": "\t", "\t": "\t", "n": "\n", "v": "\x0b", "f": "\x0c",
+            "r": "\r", "e": "\x1b", " ": " ", '"': '"', "/": "/", bs: bs,
+            "N": "\x85", "_": "\xa0", "L": "\u2028", "P": "\u2029",
+        }
+        for esc, char in table.items():
+            with self.subTest(escape=esc):
+                self.assertEqual(
+                    glados.parse_yaml(f'k: "a{bs}{esc}b"\n', "t"),
+                    {"k": f"a{char}b"})
+                if unicodedata.category(char) in ("Cc", "Cf"):
+                    # a key that differs from a visible one by a character
+                    # that does not show is refused (below)
+                    self._refused(f'"a{bs}{esc}b": 1\n', 1, "does not show")
+                    continue
+                self.assertEqual(
+                    glados.parse_yaml(f'"a{bs}{esc}b": 1\n', "t"),
+                    {f"a{char}b": 1})
+                self.assertEqual(
+                    glados.parse_yaml(f'k: ["a{bs}{esc}b"]\n', "t"),
+                    {"k": [f"a{char}b"]})
+        for esc, needle in (("q", f"'{bs}q' is not a YAML escape"),
+                            ("x4", "needs 2 hex digits"),
+                            ("xZZ", "needs 2 hex digits"),
+                            ("u12", "needs 4 hex digits"),
+                            ("uD800", "is not a character"),
+                            ("U00110000", "is not a character")):
+            with self.subTest(escape=esc):
+                self._refused(f'k: "a{bs}{esc}"\n', 1, needle)
+                self._refused(f'x: 1\n"a{bs}{esc}": 1\n', 2, needle)
+                self._refused(f'x: 1\nk: [b, "a{bs}{esc}"]\n', 2, needle)
+        self._refused(f'k: "a{bs}"\n', 1, "unterminated")
+
+    def test_yaml_syntax_the_subset_does_not_read_is_refused(self):
+        """Anchors, aliases, tags, merge keys, explicit keys and YAML's
+        reserved indicators were kept as text, so the parser read another
+        key or value than any YAML reader does: `&a max-cycles: true` was
+        a key nothing checks. Each is refused, naming the line, wherever it
+        stands: a key, a value, a list item, a flow-list item."""
+        for key in ("&a k", "*a", "!!str k", "!k", "? k", "?k", "|k", ">k",
+                    "%k", "@k", "`k", "[k]", "{k", ",k", ":k"):
+            with self.subTest(key=key):
+                self._refused(f"m:\n  {key}: 1\n", 2,
+                              f"'{key}' starts with '{key[0]}'")
+                self._refused(f"l:\n  - {key}: 1\n", 2)
+        self._refused("l:\n  - - k: 1\n", 2, "'- k' starts with '-'")
+        for key in ("<<", '"<<"'):
+            self._refused(f"m:\n  {key}:\n    max-cycles: true\n", 2,
+                          "'<<' is a YAML merge key")
+        for value in ("&a 1", "*a", "!!int 3", "!x v", "%v", "@v", "`v`",
+                      "- v", "? v", "?v", ":v", ",v", "]", "}"):
+            with self.subTest(value=value):
+                self._refused(f"m:\n  k: {value}\n", 2,
+                              f"'{value}' starts with '{value[0]}'")
+                self._refused(f"l:\n  - z\n  - {value}\n", 3)
+                self._refused(f"x: 1\nl: [a, {value}]\n", 2)
+        for text, line, needle in (
+                ("k: |2\n   x\n", 1, "block scalar"),
+                ("k: >-1\n x\n", 1, "block scalar"),
+                ("k: |x\n", 1, "block scalar"),
+                ('k: "a" b\n', 1, "after the closing quote"),
+                ("k: 'a'b'\n", 1, "after the closing quote"),
+                ('"k" x: 1\n', 1, "after the closing quote"),
+                ('k: "abc\n', 1, "unterminated"),
+                ("k: 'abc\n", 1, "unterminated"),
+                ("m:\n  k:v\n", 2, "expected 'key: value', got 'k:v'"),
+                ("k: a: b\n", 1, "': '"),
+                ("k: a:\n", 1, "': '"),
+                ("k: 010\n", 1, "leading zero"),
+                ("k: -08\n", 1, "leading zero"),
+                ("k: [a: b]\n", 1, "': '"),
+                ("k: [?x]\n", 1, "'?'"),
+                ("k: [a?b]\n", 1, "'?'"),
+                ("k: [a, , b]\n", 1, "empty item"),
+                ("k: [a, b] c\n", 1, "after ']'"),
+                ('k: ["a" x, b]\n', 1, "after the closing quote"),
+                ("k: [a, {b: c}]\n", 1, "nested flow"),
+                ("k: [a, b\n", 1, "unterminated inline list"),
+                ("k: [a, b # c]\n", 1, "unterminated inline list"),
+                ("x: 1\n<<: *a\n", 2, "merge key"),
+                ("k: <<\n", 1, "merge key"),
+                ("k: [a, <<]\n", 1, "merge key"),
+                ("k: =\n", 1, "value key"),
+                # a key YAML reads as null, a bool, a number or a date: two
+                # keys here were one to YAML (null and ~, 1 and 01)
+                ("m:\n  null: a\n  ~: b\n", 2, "the key 'null' is a null"),
+                ("m:\n  1: a\n", 2, "the key '1' is"),
+                ("m:\n  yes: a\n", 2, "the key 'yes' is"),
+                ("m:\n  1.5: a\n", 2, "the key '1.5' is"),
+                ("m:\n  2026-10-22: a\n", 2, "the key '2026-10-22' is"),
+                # a tab outside quotes, which YAML readers do not agree on
+                ("k: a\tb\n", 1, "tab outside quotes"),
+                ("k\t: v\n", 1, "tab outside quotes"),
+                ("k: v\t# c\n", 1, "tab outside quotes"),
+                ("k: [a,\tb]\n", 1, "tab outside quotes"),
+                ('k: "v"\t# c\n', 1, "after the closing quote"),
+                ("k: v\n\t\n", 2, "tab character on a blank line"),
+                # characters YAML refuses, or reads as a line break in 1.1
+                ("k: a\x00b\n", 1, "U+0000"),
+                ("k: a\x85b\n", 1, "U+0085"),
+                ("k: a\u2028b\n", 1, "U+2028"),
+                # a key another key in disguise: YAML reads a different key,
+                # the agent looking at the text sees the visible one
+                ('m:\n  "schema-migration\\0": agent\n', 2, "U+0000"),
+                ("m:\n  max-cycles\u200b: 3\n", 2, "U+200B"),
+                ('m:\n  "max-cycles\\u200B": 3\n', 2, "U+200B"),
+                # lines the parser used to drop: YAML refuses the document
+                ("  a: 1\nb: 2\n", 2, "does not continue the document"),
+                ("- a\nb: 2\n", 2, "does not continue the document")):
+            with self.subTest(text=text):
+                self._refused(text, line, needle)
+        # a quoted key is text to YAML, whatever it spells
+        self.assertEqual(glados.parse_yaml('"1": a\n"null": b\n', "t"),
+                         {"1": "a", "null": "b"})
+
+    def test_the_subset_reads_yaml_as_yaml_does(self):
+        """What the parser accepts, it reads as YAML does: a quote only
+        opens a quoted scalar at the start of one (an apostrophe in a plain
+        value no longer swallows the comment after it), an escaped quote
+        does not close one, and a key ends at the first ': '."""
+        bs = "\\"
+        for text, expected in (
+                (f'k: "a{bs}" # b" # c\n', {"k": 'a" # b'}),
+                ("k: don't # c\n", {"k": "don't"}),
+                ("k: it's 'quoted' # c\n", {"k": "it's 'quoted'"}),
+                ("k: a:b\n", {"k": "a:b"}),
+                ("a:b: c\n", {"a:b": "c"}),
+                ("k: http://x/#f\n", {"k": "http://x/#f"}),
+                ("k: [a, b,]\n", {"k": ["a", "b"]}),
+                ("k: [a:b, http://x]\n", {"k": ["a:b", "http://x"]}),
+                ("k: [\"a\" , 'b'] # c\n", {"k": ["a", "b"]}),
+                ("k: []  # none\n", {"k": []}),
+                ("k: -3\n", {"k": -3}),
+                ("k: 0\n", {"k": 0}),
+                ("k: -x\n", {"k": "-x"}),
+                # digits of another script are text to YAML, not a number
+                ("k: \u0663\n", {"k": "\u0663"}),
+                ("'it''s': x\n", {"it's": "x"}),
+                ('"k" : 1  # c\n', {"k": 1}),
+                ("k:  # c\n  m: 1\n", {"k": {"m": 1}}),
+                ("l:\n  - |\n    one\n    two\n  - x\n",
+                 {"l": ["one\ntwo", "x"]}),
+                ("l:\n  - >-\n    one\n    two\n", {"l": ["one two"]}),
+                ("l:\n  - # c\n    k: 1\n", {"l": [{"k": 1}]})):
+            with self.subTest(text=text):
+                self.assertEqual(glados.parse_yaml(text, "t"), expected)
+
+    def test_what_the_subset_reads_a_yaml_reader_reads_too(self):
+        """The property behind the cases above, checked against a YAML
+        reader when one is installed (PyYAML; the suite needs none): what
+        the parser accepts, YAML reads the same way. It may refuse more
+        than YAML does, never read differently. The corpus crosses keys
+        and values in every position, and adds every YAML file and
+        frontmatter block the toolchain reads."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        bs = "\\"
+        keys = ["k", "max-cycles", '"k"', "'k'", f'"m{bs}x41x"',
+                f'"{bs}u006b"', f'"k{bs}"', "&a k", "!!str k", "*a", "? k",
+                "?k", "<<", '"<<"', "a:b", '"a: b"', "'it''s'", "-k", "[k]",
+                "{k}", "|k", ">k", "%k", "@k", "`k", ",k", ":k", "k #c",
+                '"k" x', "a b", "a'b", 'a"b', "- k", "k\t", "null", "~",
+                "1", "07", "yes", "1.5", '"1"', "=", "k\x85"]
+        values = [
+            "v", "3", "-3", "0", "010", "08", "true", "false", "null", "~",
+            "", '"v"', "'v'", f'"a{bs}" # b"', "don't # c", "a 'b' # c",
+            "&a v", "*a", "!!int 3", "!x v", "|", "|-", ">", ">-", "|2",
+            ">+", "|+", "[a, b]", "[a, b,]", "[]", "[ ]", "[&a x]", "[*a]",
+            "[?x]", "[a?b]", "[a: b]", "[a:b]", "[a:]", '["a" , b]',
+            "[a, , b]", "[,]", "[a, b] c", "[a, [b]]", "[a, b # c]",
+            "[a b, 'c''d']", "a: b", "a:b", "a:", "http://x#f", "v # c",
+            "v#c", '"v" w', '"abc', "'abc", "- x", "-", "? x", "?x", ":x",
+            "%x", "@x", "`x", "]", "}", ",x", "{a: b}", "{}", f'"{bs}q"',
+            f'"{bs}x4"', f'"{bs}uD800"', f'"{bs}U00110000"',
+            f'"{bs}e{bs}N{bs}_{bs}L{bs}P{bs}/{bs} {bs}0{bs}a{bs}b{bs}v{bs}f"',
+            f'"{bs}x41{bs}u00e9{bs}U0001F600{bs}t{bs}\t{bs}{bs}{bs}"x"',
+            "'a''b'", "a #", "#c", "-x", "a\tb", '"a" # c', "'a' #c",
+            "'a'#c", '"a"#c', "a\t# c", "''", '""', "a ' b", 'a " b',
+            "\u0663", "-\u0663", "<<", "=", "[<<]", "k\x85",
+        ]
+        templates = ["{k}: {v}\n", "m:\n  {k}: {v}\n  z: 1\n",
+                     "l:\n  - {k}: {v}\n    z: 1\n",
+                     "{k}: {v}\n  one\n  two\nz: 1\n"]
+        item_templates = ["l:\n  - {v}\n  - z\n", "l:\n- {v}\n",
+                          "l:\n  - {v}\n    one\n  - z\n"]
+        corpus = [t.format(k=k, v=v) for t in templates
+                  for k in keys for v in values]
+        corpus += [t.format(v=v) for t in item_templates for v in values]
+        corpus += [read(p) for p in (
+            EXAMPLE, REPO / "src" / "kernel" / "presets" / "phases.yaml",
+            REPO / "src" / "kernel" / "state-registry.yaml",
+            REPO / "src" / "kernel" / "aliases.yaml")]
+        for md in sorted((REPO / "src").rglob("*.md")):
+            lines = read(md).split("\n")
+            if lines[0].strip() == "---" and "---" in lines[1:]:
+                corpus.append("\n".join(lines[1:lines.index("---", 1)]))
+
+        def norm(node):
+            if isinstance(node, dict):
+                return {k: norm(v) for k, v in node.items()}
+            if isinstance(node, list):
+                return [norm(v) for v in node]
+            # the subset drops a block scalar's final newline by design
+            return node.rstrip("\n") if isinstance(node, str) else node
+
+        accepted, wrong = 0, []
+        for text in corpus:
+            try:
+                mine = glados.parse_yaml(text, "t")
+            except glados.YamlError:
+                continue
+            accepted += 1
+            try:
+                theirs = yaml.safe_load(text)
+            except Exception as exc:  # PyYAML raises ValueError for some
+                # ill-formed escapes, not only YAMLError
+                wrong.append(f"{text!r}: read {mine!r}, YAML refuses it "
+                             f"({str(exc).splitlines()[0]})")
+                continue
+            if norm(mine) != norm({} if theirs is None else theirs):
+                wrong.append(f"{text!r}: read {mine!r}, YAML reads "
+                             f"{theirs!r}")
+        self.assertGreater(accepted, 500)
+        if wrong:
+            self.fail(f"{len(wrong)} of {accepted} accepted documents "
+                      f"misread:\n" + "\n".join(wrong[:40]))
 
 
 class TestYamlListOfMaps(unittest.TestCase):
@@ -1336,6 +1874,41 @@ class TestManifestKeysAndDecisions(unittest.TestCase):
         self.assertNotIn("unknown top-level key", out)
         rc, out = run_cli("doctor", "--target", t, "--source", REPO)
         self.assertIn("manifest keys: all known", out)
+
+    def test_a_decision_right_in_any_key_spelling_meets_the_floor(self):
+        """In production, `"schema\\x2Dmigration": agent` and
+        `&d schema-migration: agent` are schema-migration: agent to a YAML
+        reader, but the parser kept them as other leaves, so the relaxation
+        check never fired and validate passed with no warning at all."""
+        bs = "\\"
+        head = "glados: 2\nplatform: github\nphase: production\ndecisions:\n"
+
+        def validate(body):
+            rc, out = run_cli("validate", "--target",
+                              make_target(head + body), "--source", REPO)
+            self.assertNotIn("Traceback", out)
+            return rc, out
+
+        laxer = ("decision 'schema-migration: agent' is laxer than phase "
+                 "'production'")
+        for body in ("  schema-migration: agent\n",
+                     f'  "schema{bs}x2Dmigration": agent\n',
+                     f'  "schema{bs}u002Dmigration": agent\n'):
+            with self.subTest(body=body):
+                rc, out = validate(body)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(laxer, out)
+        for body, needle in (
+                ("  &d schema-migration: agent\n",
+                 "glados.yaml:5: '&d schema-migration' starts with '&'"),
+                ("  schema-migration: !!str agent\n",
+                 "glados.yaml:5: '!!str agent' starts with '!'"),
+                ("  schema-migration: *d\n",
+                 "glados.yaml:5: '*d' starts with '*'")):
+            with self.subTest(body=body):
+                rc, out = validate(body)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
 
     def test_bad_decision_value_is_fatal_and_names_the_leaf(self):
         text = read(EXAMPLE).replace("  new-dependency: agent",

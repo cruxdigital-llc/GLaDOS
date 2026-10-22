@@ -461,16 +461,45 @@ before you reinstall:
   be one of `agent`, `record`, `escalate` or `forbidden`. 2.4 ignored any
   other value (`vendor-choice: ask`); 2.5 fails install and check on it,
   naming the key.
+- **A loop bound that is not a whole number.** Every `max-cycles` under
+  `params:` must be a whole number of 1 or more. 2.4 installed `"5"`,
+  `true`, a list or `0`, leaving the loop no count to stop at; 2.5 fails
+  install and check on it, naming the key and where the value came from,
+  and a workflow that reads one at run time escalates instead of starting
+  the loop. A `params:` entry written as a value instead of a mapping
+  (`pipeline: 5`), which 2.4 ignored, fails the same way.
 - **A `- key: value` list item.** It now reads as a mapping, as standard
   YAML does, where 2.4 read it as the string `'key: value'`. Lists of
   workflow or module names (`disabled-workflows:`, `default-modules:`,
   `workflows:`) reject a mapping with an error naming the key; anywhere
   else the value just changes shape. Quote the item (`- "key: value"`) if
   you meant the string.
+- **A quoted key.** `"max-cycles": 3` now sets `max-cycles`, as standard
+  YAML does. 2.4 kept the quotes, so the value went under a key nothing
+  read, and none of the checks on `max-cycles` (or on a decision right
+  written the same way) saw it. A quoted key beside its plain spelling is
+  now a duplicate key.
+- **YAML that 2.4 read differently from YAML.** The toolchain reads
+  `glados.yaml`, the preset table and frontmatter as a YAML subset, and the
+  agent reads them as YAML. 2.4 kept syntax it did not know as text, so
+  `&a max-cycles: true`, `!!str max-cycles: true`, `"max\x2Dcycles": true`
+  and a `<<:` merge key were each a key nothing checked while YAML reads
+  max-cycles. 2.5 decodes every YAML escape in double quotes and refuses,
+  naming the line: anchors, aliases and tags; merge keys; `?` keys; a key
+  YAML reads as a null, bool, number or date (`null:`, `1:`, `yes:`; quote
+  it if it is a name); a key holding a character that does not show (`\0`,
+  a zero-width space); a tab outside quotes; text after a closing quote;
+  `key:value` with no space (YAML reads it as one string); `: ` inside an
+  unquoted value; an integer with a leading zero (`010`, octal to some
+  readers); a block scalar with an indentation number (`|2`); an unknown
+  escape (`\q`); and lines left of the first line, which 2.4 dropped. Quote
+  the value, or write it plainly.
 
-One change prints a warning and fails nothing: a top-level key GLaDOS does
+Two changes print a warning and fail nothing. A top-level key GLaDOS does
 not read (usually a typo, such as `sinsk:`) is named at install, check and
-validate, and listed by doctor.
+validate, and listed by doctor. A `params:` key nothing reads (`max_cycles:`,
+or a `run-pipeline:` namespace), which leaves the inherited value in force,
+is named at install, check and validate with the keys that are read.
 
 Check the manifest with the 2.5 toolchain before you reinstall. The
 vendored `.glados/glados.py` is still the 2.4 one until you do, and it has
