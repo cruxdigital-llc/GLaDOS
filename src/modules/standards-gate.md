@@ -74,12 +74,10 @@ gate.
   disposition as the severity scale requires — fixed, or declined with a
   one-line reason.
 
-Each re-run of the gate on a corrected artifact is one gate cycle. Count
-the cycles in the run record. At `params.standards-gate.max-cycles`, do not
-re-run again: stop, emit an `escalation` carrying the open blocking findings
-and the cycle history, and end the run. A run enclosing this one (preamble
-step 1) stops too, rather than advancing on an artifact the gate did not
-pass. Gate cycles are bounded as *Loop bounds* sets out:
+Each re-run of the gate on a corrected artifact is one gate cycle, bounded
+by `params.standards-gate.max-cycles` as *Loop bounds* sets out. A run
+enclosing this one (preamble step 1) stops too, rather than advancing on an
+artifact the gate did not pass:
 
 <!-- glados:include vocabulary/loop-bounds.md -->
 

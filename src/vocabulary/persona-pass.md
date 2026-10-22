@@ -1,8 +1,8 @@
 ## Persona pass
 
 An in-context review: the agent that produced an artifact reads it again
-through each seated review persona. The pass shapes the artifact. It is not
-the adversarial review loop, which runs later against the diff.
+through each seated review persona. It is not the adversarial review loop,
+which runs later against the diff.
 
 - **Seat the personas.** Read `run.active-personas` (seated by
   plan-feature); when that key is absent, resolve the default roster from

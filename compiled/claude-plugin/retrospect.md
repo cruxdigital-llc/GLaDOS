@@ -410,12 +410,10 @@ gate.
   disposition as the severity scale requires — fixed, or declined with a
   one-line reason.
 
-Each re-run of the gate on a corrected artifact is one gate cycle. Count
-the cycles in the run record. At `params.standards-gate.max-cycles`, do not
-re-run again: stop, emit an `escalation` carrying the open blocking findings
-and the cycle history, and end the run. A run enclosing this one (preamble
-step 1) stops too, rather than advancing on an artifact the gate did not
-pass. Gate cycles are bounded as *Loop bounds* sets out:
+Each re-run of the gate on a corrected artifact is one gate cycle, bounded
+by `params.standards-gate.max-cycles` as *Loop bounds* sets out. A run
+enclosing this one (preamble step 1) stops too, rather than advancing on an
+artifact the gate did not pass:
 
 ## Loop bounds
 
@@ -428,7 +426,6 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
 | revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
-| stalled revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-stalled-cycles` |
 
 Rules:
 
@@ -438,7 +435,8 @@ Rules:
   findings and the cycle history, and end the run. Never loop indefinitely.
 - If a finding previously recorded as resolved **re-opens**, that is a
   stalemate regardless of the counter: stop and emit an `escalation`
-  immediately rather than spending remaining cycles on it.
+  immediately rather than spending remaining cycles on it, except in
+  run-pipeline's revise loop, which parks for a person (its **Bound**).
 - An escalated loop is a finished run, not a failed one — the record states
   where it stopped and why.
 
@@ -483,10 +481,10 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that ends with its unit of work still waiting on an approval has
-   not finished it: run-pipeline parking at a `human` checkpoint or
-   resuming a park that has no approval yet, and run-epic stopping with
-   only parked tickets left. It keeps its claim and appends no row, and the
+   A run that ends with its unit of work still waiting on a person has
+   not finished it: run-pipeline parking a step or resuming a park that
+   has no approval or answer yet, and run-epic stopping with only parked
+   tickets left. It keeps its claim and appends no row, and the
    run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
@@ -537,7 +535,7 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that ends with its unit still waiting on an approval (step 3) has not
+     that ends with its unit still waiting on a person (step 3) has not
      ended it: its items stay pending for the run that resumes the work and
      opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These

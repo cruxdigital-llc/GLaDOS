@@ -1797,10 +1797,32 @@ class TestReviewInputs(unittest.TestCase):
         "A person's words, meaning anyone's but the author's",
         "are quoted verbatim with where they were said (a file path or an MR "
         "note) and labelled as theirs",
-        "A person set only what their quoted words name: a go-ahead on the "
-        "author's proposal approves the direction, and the proposal stays "
-        "the author's",
+        # a go-ahead approves only what was shown; an answer binds the
+        # outcome its reading describes, never the option's wording (v3)
+        "A person set only what their quoted words name: a go-ahead "
+        "approves the direction of what they were shown, which stays its "
+        "writer's; an answer choosing a question's reading binds that "
+        "reading's outcome, not its mechanism, scope words or phrasing.",
+        # words bind as firmly as they were said (v3)
+        "**Words bind as firmly as they were said.** \"Must\", \"need\", "
+        "\"never\" or a plain statement of what is wanted, in a person's "
+        "own phrasing, binds. Hedged words (\"I think\", \"maybe\", "
+        "\"should\", \"I'd like\", \"seems reasonable\") and a chosen "
+        "reading's words beyond its outcome set a default that evidence can "
+        "revise.",
+        # evidence against a default is routed, never blocking, and has a
+        # channel where the workflow takes no questions (evaluator, panel)
+        "Evidence against a default is never a blocking finding: where it "
+        "changes an outcome the person names, it is a question for them (an "
+        "advisory written as one where the workflow takes none); otherwise "
+        "the work follows it and says so.",
         "A scope statement excuses an absence, never a presence",
+        # an author's deferral never excuses an outcome a person set, and
+        # only words that name it let it go (v3)
+        "means the reviewer does not report that thing as missing, except a "
+        "criterion the work received: only a person's quoted words naming it "
+        "and letting it go waive one, never a go-ahead on an artifact that "
+        "lists it unmet.",
         "No scope statement, the author's or a person's, makes what the "
         "change does add correct: what it adds is reviewed on its merits",
         "Deferring a unit's consumer does not excuse the unit: that nothing "
@@ -1997,8 +2019,10 @@ class TestReviewInputs(unittest.TestCase):
     def test_the_evaluator_brief_labels_its_inputs(self):
         self.assertAllIn((
             "| What was agreed | The acceptance criteria, each with its "
-            "source: the ticket, a person's words quoted, or the author's "
-            "plan or spec, labelled as the author's",
+            "source: the ticket, a person's words quoted (an answer to a "
+            "question, with the reading it chose, among them), or the "
+            "author's plan, shape or spec, labelled as the author's, each "
+            "assumption they label included",
             "A contract file takes precedence over the plan and spec only for "
             "what a person's words name; a criterion the author derived is "
             "the author's, under review like the code",
@@ -2090,7 +2114,7 @@ class TestReviewInputs(unittest.TestCase):
 
 
 class TestDesignLoop(unittest.TestCase):
-    """How run-pipeline's revise loop ends: questions park, stalls count.
+    """How run-pipeline's revise loop ends: questions and stalls park.
 
     Two trial runs of a plain-first pipeline spent hours in design: the
     fresh-agent gate caught real defects, but every cycle counted against the
@@ -2108,9 +2132,14 @@ class TestDesignLoop(unittest.TestCase):
         "Whoever finds an artifact resting on words whose readings differ "
         "materially, or on an `escalate` choice no one's words reach, "
         "raises a question: the author, a reviewer or a gate's audit.",
-        "**Materially**: one reading adds, drops or changes a unit, a stored "
-        "record, a failure path or an outcome, or needs a choice "
-        "`decisions:` classes `escalate`.",
+        "**Materially**: one reading changes an outcome the ticket or a "
+        "person names, or needs a choice `decisions:` classes `escalate`.",
+        # narrow variants do not park: they take the project's own
+        # precedent before the plainest, and a test pins the assumption
+        "Readings that differ otherwise (a unit, a stored record, a failure "
+        "path) are not: the artifact takes the one the project's standards "
+        "or nearest in-tree precedent follows, else the plainest, labelled "
+        "as an assumption for a test to pin.",
         "**Form**: numbered, under *Questions for a person* in its finder's "
         "file",
         "the words it turns on, quoted with where said, or the `escalate` "
@@ -2132,21 +2161,24 @@ class TestDesignLoop(unittest.TestCase):
 
     PARK = (
         "**Questions.** The run records each question for a person, a "
-        "nested plan's open ones included, and how it went, routing each "
-        "from the readings as their finder wrote them, never reworded",
+        "nested plan's open ones included, and how it went:",
+        # routed from the readings as their finder wrote them
+        "the question and its readings stay their finder's",
         # decision rights decide what is never asked
         "A reading that needs a choice classed `forbidden` is refused as "
-        "*Decision rights* sets out, never asked; one classed `agent` or "
-        "`record` is made under its class and by itself asks nothing",
-        # a class adds no materiality, nor takes it away
-        "A question left with no reading materially different from the "
-        "plainest is an advisory finding",
+        "*Decision rights* sets out, never asked.",
+        # only `escalate` makes a choice material (questions.md), so an
+        # `agent` or `record` choice by itself asks nothing
+        "or needs a choice `decisions:` classes `escalate`",
+        # a body may defer its questions to a later step, which parks even
+        # when it asks nothing, and never past code or the MR
         "**Every other question parks the step** once its check is done "
-        "(with no check, once its artifact is written): one park for all of "
-        "them, as at a `human` checkpoint, the questions standing where the "
-        "approval would",
-        "A run with no branch of its own cuts one before parking, as "
-        "**Branch** does",
+        "(with no check, once its artifact is written), or at the end or "
+        "skip of a later step its body names, none up to it producing "
+        "`change` or `mr`: one park for all of them, as at a `human` "
+        "checkpoint, the questions standing where the approval would",
+        "Any other pipeline claims no branch, and its rows commit nothing, "
+        "until it parks and cuts one.",
         "At a bound, the run stops instead, its escalation carrying the "
         "questions too",
         "**Answers.** Record each verbatim, with who gave it and where, "
@@ -2183,13 +2215,21 @@ class TestDesignLoop(unittest.TestCase):
         "`given`: what earlier rows left open. `closed`: those its file "
         "reports closed or not a defect, naming whose call it was; a check "
         "done here reports as step 5 of the reviewer's prompt sets out",
-        "`raised`: its new blocking findings, each `new`, or `re-opens <n>` "
-        "when the table shows it closed (same path, input and consequence), "
-        "which stops the run (*Loop bounds*)",
+        # recurrence is the same consequence elsewhere, and doubt parks
+        "`raised`: its new blocking findings, each `new`, or `recurs <n>` "
+        "when its file shows earlier finding n's defect (the same "
+        "consequence) at another path, input or place, a re-open included, "
+        "saying why; when unsure, `recurs`.",
         "`questions`: those it asked (**Questions**)",
-        "`stalled`: `yes` for a revise cycle given findings that closes "
-        "none, `—` for a check after no revision, else `no`",
-        "At either bound in *Loop bounds*, mark the row `failed`.",
+        "`stalled`: `yes` when it raises a `recurs`, or ends a revise cycle "
+        "given findings that closes none of them; `—` for a check after no "
+        "revision; else `no`",
+        # a stall parks at once, with the decision framed for the person
+        "A stalled check parks the step at once, naming the open findings, "
+        "their kind and how the author would remove it, for the person to "
+        "approve that, rule a finding not a defect, waive findings by name, "
+        "or stop.",
+        "At the bound, mark the row `failed`.",
         "On hitting a bound: stop, emit an `escalation` outcome carrying the "
         "open findings and the cycle history, and end the run.",
         # a refusal is a finding the ask raises: it costs a revise cycle
@@ -2198,21 +2238,25 @@ class TestDesignLoop(unittest.TestCase):
         "modifier, and ask again within the step's bounds",
         # a park never resets the count
         "copies the parked run's step and cycle tables instead",
-        "Build on the parked record and its tables (step 3)",
-        # loop-bounds names both bounds, and the re-open rule still stands
+        # loop-bounds names the runaway guard; its re-open stop stands for
+        # every other loop and names run-pipeline's park as the exception,
+        # so the compiled document holds no two contrary rules
         "| revise cycles per pipeline step (run-pipeline) | "
         "`params.pipeline.max-cycles` |",
-        "| stalled revise cycles per pipeline step (run-pipeline) | "
-        "`params.pipeline.max-stalled-cycles` |",
         "that is a stalemate regardless of the counter: stop and emit an "
-        "`escalation` immediately",
+        "`escalation` immediately rather than spending remaining cycles on "
+        "it, except in run-pipeline's revise loop, which parks for a person "
+        "(its **Bound**).",
     )
 
     REVIEW = (
         "| Findings still open | Those the cycle table leaves open, by "
         "number, copied verbatim from where they were raised |",
-        "| Answers | Each question this run asked, with its readings and "
-        "answer, copied verbatim from the run record |",
+        # the reviewer knows what the work received, not only the author's
+        # restatement of it (v3)
+        "| What was asked | The ticket, each instruction a person gave this "
+        "run, and each question answered, with its readings and answer, "
+        "copied verbatim with where said: the criteria the work received |",
         "| Vocabulary | The rules in *Verdicts and finding severities*, *What "
         "a fresh reviewer is given* and *Questions for a person*, copied "
         "verbatim |",
@@ -2232,7 +2276,8 @@ class TestDesignLoop(unittest.TestCase):
         "for a person, Canon conflicts",
         "PASS: no blocking issue. FAIL: list the blocking issues, open "
         "findings not closed included.",
-        "Record the latest brief and review paths in the step's row.",
+        "The result feeds the step's cycle table (**Bound**) and, for a "
+        "gate, its pass or fail.",
     )
 
     @classmethod
@@ -2304,15 +2349,16 @@ class TestDesignLoop(unittest.TestCase):
         self.assertIn("check each parked ticket once for its approval or "
                       "answer", text)
 
-    def test_both_bounds_resolve_in_every_phase(self):
-        """Both `params.pipeline` bounds are compiled into run-pipeline, so
-        each must resolve with no params: block, in every phase, from the
-        baseline (a dangling literal fails the install)."""
+    def test_the_runaway_guard_resolves_and_no_stall_count_is_tuned(self):
+        """`params.pipeline.max-cycles` is compiled into run-pipeline, so it
+        must resolve with no params: block, in every phase, from the
+        baseline (a dangling literal fails the install). A stall has no
+        number: the first stalled check parks, so no stalled-cycle bound is
+        set or compiled anywhere."""
         report = read(self.target / ".glados" / "assembly-report.md")
         self.assertIn("| params.pipeline.max-cycles | 8 | (baseline) |",
                       report)
-        self.assertIn("| params.pipeline.max-stalled-cycles | 3 | "
-                      "(baseline) |", report)
+        self.assertNotIn("max-stalled-cycles", report)
         source = glados.Source(REPO)
         for phase in glados.PHASES:
             with self.subTest(phase=phase):
@@ -2320,7 +2366,10 @@ class TestDesignLoop(unittest.TestCase):
                 r = glados.resolve_manifest(raw, source.presets, "glados.yaml")
                 pipeline = r.values["params"]["pipeline"]
                 self.assertEqual(pipeline["max-cycles"], 8)
-                self.assertEqual(pipeline["max-stalled-cycles"], 3)
+                self.assertNotIn("max-stalled-cycles", pipeline)
+        for path in sorted(self.dir.glob("*.md")):
+            with self.subTest(core=path.stem):
+                self.assertNotIn("max-stalled-cycles", read(path))
         # a project that set max-cycles keeps its meaning: all cycles
         raw = {"glados": 2, "platform": "gitlab", "phase": "evolving",
                "params": {"pipeline": {"max-cycles": 2}}}
@@ -2328,8 +2377,6 @@ class TestDesignLoop(unittest.TestCase):
         self.assertEqual(r.values["params"]["pipeline"]["max-cycles"], 2)
         self.assertEqual(r.provenance["params.pipeline.max-cycles"],
                          "explicit")
-        self.assertEqual(
-            r.values["params"]["pipeline"]["max-stalled-cycles"], 3)
 
     def test_the_other_loops_keep_their_counting(self):
         """Only run-pipeline's revise loop changed: the MR review loop, the
@@ -2349,6 +2396,256 @@ class TestDesignLoop(unittest.TestCase):
                     self.assertIn(row, text)
                 self.assertNotIn("`check | file | given | closed", text)
                 self.assertNotIn("`stalled`: `yes`", text)
+
+
+class TestHealthierRun(unittest.TestCase):
+    """The v3 rules from the first plain-first trial runs (docs/proposals/
+    v3.md): an outcome a person set cannot be deferred by the author, an
+    answer binds the outcome it chose and is traced to code and a test, a
+    repeated advisory goes to the person, a fix covers its kind, one full
+    suite per fix loop, and a record that is an index. Each rule is pinned
+    into the compiled cores it governs, with whitespace flattened so a
+    re-wrap of the source does not break a test.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    def test_an_author_cannot_defer_a_received_criterion(self):
+        """The ticket's outcome stays owed until a person waives it, at every
+        fresh reviewer (the rule is in the fragment TestReviewInputs pins
+        into each); the panel's scope order points at it by name, and each
+        brief's out-of-scope row raises one, not only what breaks."""
+        self.assertAllIn((
+            "Do not report that back as a gap, except where *What a fresh "
+            "reviewer is given* says to",), "review-mr")
+        self.assertNotIn("Do not report that back as a gap: it costs",
+                         self.core("review-mr"))
+        for name in ("run-pipeline", "verify-feature"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "Raise one where living with it breaks something, an "
+                    "unmet criterion the work received included, and say "
+                    "what breaks",), name)
+                self.assertNotIn("Raise one only where living with it",
+                                 self.core(name))
+
+    def test_every_fresh_reviewer_is_given_what_was_asked(self):
+        """A gate briefed only with the author's restated outcomes checks the
+        author's words; the ticket and the person's words reach the design
+        reviewer and the panel too, the author's spec labelled as such."""
+        self.assertAllIn((
+            "| What was asked | The ticket, each instruction a person gave "
+            "this run, and each question answered, with its readings and "
+            "answer, copied verbatim with where said: the criteria the work "
+            "received |",), "run-pipeline")
+        self.assertAllIn((
+            "the ticket or a person's brief, the spec labelled as the "
+            "author's,",), "review-mr")
+        self.assertNotIn("the changed-file list, the spec or ticket",
+                         self.core("review-mr"))
+
+    def test_words_bind_as_firmly_as_they_were_said(self):
+        """Hedged words set a default evidence can revise; firm ones bind;
+        an answer binds its reading's outcome, never the option's wording.
+        Pinned into every reviewer by TestReviewInputs.FRAGMENT; here, that
+        each core says it once and that the old readings are gone."""
+        for name in ("run-pipeline", "verify-feature", "review-mr"):
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertEqual(text.count(
+                    "Words bind as firmly as they were said"), 1)
+                self.assertNotIn("and the proposal stays the author's", text)
+                self.assertNotIn("and its wording stays its writer's", text)
+
+    def test_an_answer_and_an_assumption_are_traced_to_code_and_test(self):
+        """An answer is a criterion the work received, and an assumption the
+        author labelled instead of asking is the author's: the evaluator
+        checks both, and an untested one is a test gap at the tier its
+        source earns."""
+        self.assertAllIn((
+            "a person's words quoted (an answer to a question, with the "
+            "reading it chose, among them)",
+            "or the author's plan, shape or spec, labelled as the author's, "
+            "each assumption they label included",
+            "5. Mark each acceptance criterion PASS or FAIL, with the "
+            "evidence you observed: the code that meets it and the test "
+            "that pins it. One a test can pin that no test pins is an issue: "
+            "blocking for a criterion the work received, advisory for the "
+            "author's.",
+        ), "verify-feature")
+        # the answers reach the nested verify-feature that writes the brief
+        self.assertAllIn((
+            "Pass the artifacts that meet their needs, by path from the step "
+            "table, and the run's answers as caller context.",
+        ), "run-pipeline")
+
+    def test_a_repeated_declined_advisory_goes_to_the_person(self):
+        """Recorded where a reader of the index finds it, asked once, never
+        parking on its own, whatever the materiality rule says."""
+        self.assertAllIn((
+            "**A declined advisory** (a fresh agent's, left undone when its "
+            "row ends) is noted in that row by file and number.",
+            "Once two fresh reviewers or evaluators in this run have raised "
+            "it (the same defect at the same unit), it is a question for the "
+            "person, asked once whatever *Materially* says: whether they "
+            "want it, readings \"wanted\" and \"not wanted\", the two "
+            "findings quoted as its words.",
+            "It joins the next park, or the MR when none comes before "
+            "open-mr, and is neither declined again nor made blocking.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("**An advisory two fresh agents", text)
+        # it sits with the question routes, after the rule for parking
+        self.assertLess(text.index("**Every other question parks the step**"),
+                        text.index("**A declined advisory**"))
+
+    def test_a_fix_covers_its_kind_in_code(self):
+        """Every place the change has the defect, not a sweep of code that
+        predates it, and a place left alone names the input that shows it."""
+        self.assertAllIn((
+            "A finding the caller passes to fix (a gate's or an evaluator's) "
+            "is a task covering its kind: list in the checklist every place "
+            "where the change has the same defect (each other path, input or "
+            "place of its kind; a breach that predates the change is not "
+            "one), then fix each or name, per place, the input that shows it "
+            "does not hold there. Fixing only the place it names leaves it "
+            "open.",
+        ), "implement-feature")
+
+    def test_one_full_suite_per_fix_loop(self):
+        self.assertAllIn((
+            "run the tests of every area the diff touches and the project's "
+            "unit suite — not just the tests written above",
+            "The full suite runs once per fix loop, in verify-feature's "
+            "evaluator.",
+        ), "implement-feature")
+        self.assertNotIn("run the full test suite — not just the tests",
+                         self.core("implement-feature"))
+        # the one full run is checked against CI, not the author's list
+        self.assertAllIn((
+            "| How to verify | The full test suite and lint commands, as CI "
+            "runs them, and the path of the CI configuration;",
+            "3. Run every test and lint command in the brief. A test job in "
+            "the CI configuration it names that the brief leaves out is an "
+            "issue.",
+        ), "verify-feature")
+        # committing code needs the full suite, and the evaluator's run of
+        # it on the same diff counts, so a fix loop pays for it once
+        for name in ("run-pipeline", "build-feature", "fix-bug"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "Run the project's full test suite before committing "
+                    "code, and its exact CI checks locally before pushing "
+                    "it; a fresh evaluator's run of them on the same diff "
+                    "counts.",), name)
+
+    def test_the_record_is_an_index_and_commits_go_by_row(self):
+        """A reader reads the head and its rows, not the whole record; a
+        revision's dispositions stay out of the artifact the next reviewer
+        reads; a run with no branch of its own makes no row commit on the one
+        it is on, and the epilogue still commits its record there."""
+        self.assertAllIn((
+            "**The record is an index**: under its header, `## Now` (the "
+            "step in progress, what it waits on, the next action), kept "
+            "current; a reader reads it and the rows its step needs.",
+            "Findings stay in their check's files, and how the revision "
+            "before check n answered them in `<record>.<id>.revision-<n>.md`, "
+            "which no brief names.",
+            "**Commits.** A row's process files (artifact, briefs, check "
+            "results, record) go in one commit when the row ends or parks, "
+            "never file by file.",
+            "Any other pipeline claims no branch, and its rows commit "
+            "nothing, until it parks and cuts one.",
+            # the rule limits row commits only, so the mandatory epilogue's
+            # record commit, compiled into the same core, still holds
+            "**Commit the record** on the current working branch",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("PASS with advisory issues records them in the "
+                         "step's row", text)
+        self.assertNotIn("none is committed alone", text)
+        self.assertNotIn("claims no branch, and commits nothing", text)
+
+    def test_each_rule_is_said_once_in_run_pipeline(self):
+        """Text the v3 rules made redundant is gone, so run-pipeline did not
+        grow: each of these is stated by the section the remaining pointer
+        names."""
+        text = self.core("run-pipeline")
+        # a nested escalation ends the run: said under the modifiers only
+        self.assertEqual(text.count("ends in `escalation`"), 1)
+        self.assertIn("A nested workflow that ends in `escalation`, and the "
+                      "standards gate stopping at its bound", text)
+        # pending MR items: the epilogue lists whose; open-mr points at it
+        self.assertIn("post every item waiting for it, as *No MR yet is not "
+                      "a failed delivery*", text)
+        self.assertNotIn("the `## Pending MR delivery` items of this run's "
+                         "record", text)
+        # self-review defers to After the MR opens instead of restating it
+        self.assertIn("Its verdict follows **After the MR opens** in "
+                      "run-pipeline's step 4, whatever the step's modifier",
+                      text)
+        self.assertNotIn("queue fixes so review line references stay stable",
+                         text)
+        # a design review's result is no verdict before the MR, and a step
+        # after the MR posts one: said once, by run-pipeline's step 4
+        self.assertNotIn("It never becomes a `verdict` outcome", text)
+        # the push after the record and the work left for a human: one
+        # rule, under Branch, which step 5 points at
+        self.assertEqual(text.count("once the epilogue has committed the "
+                                    "record"), 1)
+        self.assertIn("When no MR was opened, the artifacts in the record are "
+                      "the deliverable (**Branch** in step 4).", text)
+        # a re-open: Loop bounds names run-pipeline's park as its exception,
+        # so Bound does not restate the stop it overrides
+        self.assertNotIn("not the stop *Loop bounds* sets for a re-open",
+                         text)
+        # the gate's bound stop is Loop bounds' own, not restated
+        self.assertNotIn("do not re-run again", text)
+        # the bypass is documented in the pipelines guide, not run-time text
+        self.assertNotIn("Known gap", text)
+        self.assertIn("**Known gap.** Anyone can still run build-feature "
+                      "directly", " ".join(read(
+                          REPO / "docs" / "guides" / "pipelines.md").split()))
+
+    def test_a_retired_stall_count_is_reported_not_silently_kept(self):
+        """A manifest that still tunes the v2 stall count resolves, but
+        install and validate warn that nothing reads it, and the assembly
+        report marks it retired instead of listing it as a live setting."""
+        raw = {"glados": 2, "platform": "gitlab", "phase": "evolving",
+               "params": {"pipeline": {"max-cycles": 5,
+                                       "max-stalled-cycles": 2}}}
+        warnings = glados.manifest_warnings(raw, "glados.yaml")
+        self.assertIn("glados.yaml: params.pipeline.max-stalled-cycles is "
+                      "retired in 2.5 (v3): the first stalled check parks "
+                      "the step for a person, so no stall count is read; "
+                      "remove it", warnings)
+        self.assertEqual(glados.manifest_warnings(
+            {"glados": 2, "params": {"pipeline": {"max-cycles": 5}}},
+            "glados.yaml"), [])
+        manifest = read(EXAMPLE).replace(
+            "\nparams:\n", "\nparams:\n  pipeline:\n    "
+            "max-stalled-cycles: 2\n", 1)
+        self.assertIn("max-stalled-cycles: 2", manifest)
+        t = make_target(manifest)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("params.pipeline.max-stalled-cycles is retired", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| params.pipeline.max-stalled-cycles | 2 | (explicit; "
+                      "retired, read by nothing) |", report)
 
 
 class TestSinkConfig(unittest.TestCase):
@@ -2668,8 +2965,8 @@ class TestKernelRunRules(unittest.TestCase):
         self.assertIn('"no MR for this work; mr-comment delivery not applicable"',
                       text)
         # a parked unit of work has not ended: its items wait for the resume
-        self.assertIn("A run that ends with its unit still waiting on an "
-                      "approval (step 3) has not ended it: its items stay "
+        self.assertIn("A run that ends with its unit still waiting on a "
+                      "person (step 3) has not ended it: its items stay "
                       "pending for the run that resumes the work and opens "
                       "the MR", text)
         # the existing guarantees survive
@@ -2736,8 +3033,14 @@ class TestKernelRunRules(unittest.TestCase):
             source.presets["baseline"]["params"]["standards-gate"]["max-cycles"], 3)
         self.assertIn("escalation", source.modules["standards-gate"]["emits"])
         text = self._core("implement-feature")
-        self.assertIn("At `params.standards-gate.max-cycles`, do not re-run "
-                      "again: stop, emit an `escalation`", text)
+        # the bound's stop is Loop bounds' own rule, said once there
+        self.assertIn("Each re-run of the gate on a corrected artifact is one "
+                      "gate cycle, bounded by "
+                      "`params.standards-gate.max-cycles` as *Loop bounds* "
+                      "sets out", text)
+        self.assertIn("On hitting a bound: stop, emit an `escalation` outcome "
+                      "carrying the open findings and the cycle history, and "
+                      "end the run", text)
         self.assertIn("A run enclosing this one (preamble step 1) stops too, "
                       "rather than advancing on an artifact the gate did not "
                       "pass", text)
@@ -3581,13 +3884,13 @@ class TestPipelines(unittest.TestCase):
             "`params.pipeline.max-cycles`",
             # checkpoint: commit (code included) and push before waiting,
             # park when unattended, and the park keeps MR items pending
-            "`human`: commit the run record and step artifacts first, with "
-            "any working diff a step left uncommitted, on the run's branch, "
-            "and push the branch",
+            "`human`: commit first (**Commits**), with any working diff a "
+            "step left uncommitted, and push the branch",
             "A refusal, with the person's reasons, is a blocking finding",
             "mark the row `parked`",
-            "the parked-run rule in step 3 of *Before ending this run*",
-            "its pending MR items stay pending",
+            # a park has not finished its unit: the epilogue's rule, cited
+            "and end the run, which has not finished its unit of work "
+            "(*Before ending this run*, steps 3 and 5)",
             # resume: the parked pipeline, its table, and its pins
             "(selected by: resume)",
             "compares its fresh pins with the parked run's",
@@ -3610,15 +3913,19 @@ class TestPipelines(unittest.TestCase):
             "as *No MR yet is not a failed delivery* (step 5 of *Before "
             "ending this run*) sets out",
             "## Persona pass", "## Fresh-agent design review",
-            "Known gap: build-feature can still be run directly",
         ):
             self.assertIn(rule, text)
         self.assertIn("A run that ends with its unit of work still waiting "
-                      "on an approval has not finished it: run-pipeline "
-                      "parking at a `human` checkpoint or resuming a park "
-                      "that has no approval yet, and run-epic stopping with "
+                      "on a person has not finished it: run-pipeline "
+                      "parking a step or resuming a park that has no "
+                      "approval or answer yet, and run-epic stopping with "
                       "only parked tickets left", text,
                       "the epilogue owns the parked rule")
+        # said once: run-pipeline no longer restates the claim, row and
+        # pending-item consequences of a park
+        self.assertNotIn("the parked-run rule in step 3", text)
+        self.assertNotIn("the claim stays, no work-unit row is appended",
+                         text)
         self.assertEqual(text.count("## Verdicts and finding severities"), 1)
         for rule in (
             # rule 1 is a person's choice only: run-epic hands over its row
@@ -3647,7 +3954,14 @@ class TestPipelines(unittest.TestCase):
             "When this run, or the parked run it resumed, opened an MR",
             "When no MR was opened, the artifacts in the record are the "
             "deliverable",
-            "Push it again once the epilogue has committed the record",
+            # one rule for every end with no MR: the work stays on the
+            # branch, and the push after the record lets its paths resolve
+            "A run on its own branch that ends with no MR, a park included, "
+            "leaves its work there for a human: it commits any working diff, "
+            "pushes, says so in the record, and pushes again once the "
+            "epilogue has committed the record, before publishing any "
+            "escalation, so the paths the record and escalation name "
+            "resolve",
             # a gate with no persona seated is still audited
             "With no persona seated, this agent does the audit itself "
             "against the body",
@@ -4313,8 +4627,12 @@ class TestCanon(unittest.TestCase):
         rp = core("run-pipeline")
         self.assertIn("**Check the shape against canon.** The consult point "
                       "is `shape`", rp)
-        self.assertIn("the consult point for *Consulting canon* is the "
-                      "step's id", rp)
+        self.assertIn("inside run-pipeline, the current step (`shape`, or a "
+                      "project step's id); a step's review and standards gate "
+                      "belong to that step", rp)
+        # said once: run-pipeline's project-step bullet no longer repeats it
+        self.assertNotIn("the consult point for *Consulting canon* is the "
+                         "step's id", rp)
         self.assertIn("principle of the canon that applies at this step", rp)
         self.assertIn("the digest of each entry that applies at the reviewed "
                       "step, as *Consulting canon* sets out", rp)

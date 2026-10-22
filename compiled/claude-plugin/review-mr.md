@@ -147,7 +147,6 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
 | revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
-| stalled revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-stalled-cycles` |
 
 Rules:
 
@@ -157,7 +156,8 @@ Rules:
   findings and the cycle history, and end the run. Never loop indefinitely.
 - If a finding previously recorded as resolved **re-opens**, that is a
   stalemate regardless of the counter: stop and emit an `escalation`
-  immediately rather than spending remaining cycles on it.
+  immediately rather than spending remaining cycles on it, except in
+  run-pipeline's revise loop, which parks for a person (its **Bound**).
 - An escalated loop is a finished run, not a failed one — the record states
   where it stopped and why.
 
@@ -723,10 +723,11 @@ verdict composition rules, never by silently dropping the seat.
 
 Panelists cannot ask questions, so the brief must be self-contained. It
 carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
-spec or ticket, the commands to run tests and linters, each panelist's seated
-mandate, and the rules in *Verdicts and finding severities* and *What a fresh
-reviewer is given*, copied verbatim. If anything is missing, assemble it
-before spawning — a panelist that has to guess reviews the wrong change.
+ticket or a person's brief, the spec labelled as the author's, the commands
+to run tests and linters, each panelist's seated mandate, and the rules in
+*Verdicts and finding severities* and *What a fresh reviewer is given*,
+copied verbatim. If anything is missing, assemble it before spawning — a
+panelist that has to guess reviews the wrong change.
 
 ## What a fresh reviewer is given
 
@@ -746,14 +747,25 @@ conclusions about them.
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
   and labelled as theirs. A person set only what their quoted words name: a
-  go-ahead on the author's proposal approves the direction, and the
-  proposal stays the author's.
+  go-ahead approves the direction of what they were shown, which stays its
+  writer's; an answer choosing a question's reading binds that reading's
+  outcome, not its mechanism, scope words or phrasing.
+- **Words bind as firmly as they were said.** "Must", "need", "never" or a
+  plain statement of what is wanted, in a person's own phrasing, binds.
+  Hedged words ("I think", "maybe", "should", "I'd like", "seems
+  reasonable") and a chosen reading's words beyond its outcome set a
+  default that evidence can revise. Evidence against a default is never a
+  blocking finding: where it changes an outcome the person names, it is a
+  question for them (an advisory written as one where the workflow takes
+  none); otherwise the work follows it and says so.
 - **A scope statement excuses an absence, never a presence.** "Deferred to
   <item>" or "not in this MR" means the reviewer does not report that thing
-  as missing. No scope statement, the author's or a person's, makes what the
-  change does add correct: what it adds is reviewed on its merits. Deferring
-  a unit's consumer does not excuse the unit: that nothing calls it is still
-  a finding.
+  as missing, except a criterion the work received: only a person's quoted
+  words naming it and letting it go waive one, never a go-ahead on an
+  artifact that lists it unmet. No scope statement, the author's or a
+  person's, makes what the change does add correct: what it adds is
+  reviewed on its merits. Deferring a unit's consumer does not excuse the
+  unit: that nothing calls it is still a finding.
 
 
 ### Spawn the panel (parallel)
@@ -775,9 +787,10 @@ Your job is to find real problems, not to confirm success.
    brief carries it: without its step table or the findings it lists. Scope
    it states — "that is a change of its own and is not in this MR",
    "deferred to <item>" — tells you what the change leaves out. Do not
-   report that back as a gap: it costs the author an exchange to repeat
-   what they already wrote. It never makes what the change puts in
-   correct, whoever asked for it: that is reviewed on its merits.
+   report that back as a gap, except where *What a fresh reviewer is
+   given* says to: it costs the author an exchange to repeat what they
+   already wrote. It never makes what the change puts in correct, whoever
+   asked for it: that is reviewed on its merits.
 4. Write each finding as one plain sentence saying what is wrong, in the
    words you would use saying it out loud. Then where it is, then the rule
    it breaks if there is one. The rule is evidence for the finding, never
@@ -1014,10 +1027,10 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that ends with its unit of work still waiting on an approval has
-   not finished it: run-pipeline parking at a `human` checkpoint or
-   resuming a park that has no approval yet, and run-epic stopping with
-   only parked tickets left. It keeps its claim and appends no row, and the
+   A run that ends with its unit of work still waiting on a person has
+   not finished it: run-pipeline parking a step or resuming a park that
+   has no approval or answer yet, and run-epic stopping with only parked
+   tickets left. It keeps its claim and appends no row, and the
    run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
@@ -1068,7 +1081,7 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that ends with its unit still waiting on an approval (step 3) has not
+     that ends with its unit still waiting on a person (step 3) has not
      ended it: its items stay pending for the run that resumes the work and
      opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These

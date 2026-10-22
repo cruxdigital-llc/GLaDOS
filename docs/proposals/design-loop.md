@@ -9,7 +9,9 @@
 > [review-inputs.md](review-inputs.md).
 
 **Status:** part of 2.5.0, still a release candidate. **Baseline:** the
-2.5.0 candidate with *What a fresh reviewer is given*.
+2.5.0 candidate with *What a fresh reviewer is given*. **Revised by**
+[v3.md](v3.md): `max-stalled-cycles` is gone (one stalled check parks the
+step), and materiality now turns on named outcomes.
 
 ## The problem
 

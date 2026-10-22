@@ -135,8 +135,7 @@ team can see, and no step that was not declared.
   branch this run started on, and read the record with the `parked` row
   there. This run resumes it: take that record's pipeline, record
   `pipeline: <name> (selected by: resume)`, and check the approval or
-  answer as **Resume** in step 4 sets out before step 2. The rules are not
-  applied again.
+  answer as **Resume** in step 4 sets out before step 2.
 - Otherwise the first rule that applies picks the pipeline:
 
 | # | Rule | Selected by |
@@ -154,13 +153,13 @@ team can see, and no step that was not declared.
   `escalation` and a stop, never a silent fallback.
 - Choosing by rule 4, skipping an optional step, and the one switch in step
   4 are discretion: apply `decisions.pipeline-discretion` as *Decision
-  rights* sets out, except that `record` pools every act into one `decision`
-  outcome for the run. Under `escalate`, rule 4 stops with an `escalation`
-  naming the pipelines that fit, so a person names one, and a misfit the
-  re-check finds in a pipeline the agent chose stops the same way. Under
-  `forbidden`, the agent makes none of these choices: rule 4 is passed over
-  (rules 5 and 6 decide), and a misfit is recorded for the MR while the
-  pipeline continues. Under either, optional steps run.
+  rights* sets out, `record` acts pooled as step 5 says. Under `escalate`,
+  rule 4 stops with an `escalation` naming the pipelines that fit, so a
+  person names one, and a misfit the re-check finds in a pipeline the agent
+  chose stops the same way. Under `forbidden`, the agent makes none of
+  these choices: rule 4 is passed over (rules 5 and 6 decide), and a misfit
+  is recorded for the MR while the pipeline continues. Under either,
+  optional steps run.
 
 ### 2. Validate before running anything
 
@@ -227,17 +226,21 @@ takes its spec from the caller.
 - Every artifact path goes in its row, nested runs' records included. A
   step's own file is `<record>.<id>.md`, where `<record>` is this run's
   record path without `.md`.
+- **The record is an index**: under its header, `## Now` (the step in
+  progress, what it waits on, the next action), kept current; a reader
+  reads it and the rows its step needs. Findings stay in their check's
+  files, and how the revision before check n answered them in
+  `<record>.<id>.revision-<n>.md`, which no brief names.
 - Pin the gating inputs: record the git blob SHA (`git hash-object`) of
   `glados.yaml` and of each step body used. Re-check them before each step
   and before finishing. A change means an `escalation` ("gating inputs
   changed mid-run") and a stop.
 - A resumed run (step 1) copies the parked run's step and cycle tables
   instead, finished rows and their artifacts kept, and compares its fresh
-  pins with the parked run's. It takes the fresh pins from the branch the work
-  targets (`git rev-parse <target>:<path>` after a fetch), since the parked
-  branch still holds the copies pinned at the park. Any difference,
-  including a sequence edited while the work was parked, is "gating inputs
-  changed mid-run".
+  pins with the parked run's, taking the fresh pins from the branch the
+  work targets (`git rev-parse <target>:<path>` after a fetch), not the
+  parked branch. Any difference, including a sequence edited while the
+  work was parked, is "gating inputs changed mid-run".
 
 ### 4. Run the sequence
 Run the rows in order. Never fold steps together, skip ahead, or run a step
@@ -245,21 +248,25 @@ the sequence does not list.
 
 - **Branch.** A pipeline whose sequence has a step that produces `change`
   (implement-feature or a `change` step), or a `human` checkpoint, works on
-  its own branch from before its first step, so every commit this run and
-  its nested runs make lands there. When the caller already put this run on
-  a working branch (run-epic does), stay on it; a resumed run stays on the
-  parked branch (step 1). Otherwise resolve
-  `branching` from `glados.yaml` and create one per its `feature` pattern,
-  cut from `epic.integration-branch` inside an epic, else from
-  `branching.default-target`. Never work on the default target.
-  `work.base-sha` is already recorded and the SDA claim follows the
-  preamble. Any other pipeline claims no branch.
+  its own branch from before its first step. When the caller already put
+  this run on a working branch (run-epic does), stay on it; a resumed run
+  stays on the parked branch (step 1). Otherwise resolve `branching` from
+  `glados.yaml` and create one per its `feature` pattern, cut from
+  `epic.integration-branch` inside an epic, else from
+  `branching.default-target`. Never work on the default target. Any other
+  pipeline claims no branch, and its rows commit nothing, until it parks
+  and cuts one. A run on its own branch that ends with no MR, a park
+  included, leaves its work there for a human: it commits any working diff,
+  pushes, says so in the record, and pushes again once the epilogue has
+  committed the record, before publishing any escalation, so the paths the
+  record and escalation name resolve.
+- **Commits.** A row's process files (artifact, briefs, check results,
+  record) go in one commit when the row ends or parks, never file by file.
 - **Nested workflows** run as build-feature runs them ("run the spec-feature
-  workflow"). Pass the artifacts that meet their needs as caller context, by
-  path from the step table. Those artifacts bind, and a stage states any
-  departure in its own artifact. Its "run X next" line gives way to this
-  sequence. A nested run that ends in `escalation` ends this run too,
-  whatever the step's modifier.
+  workflow"). Pass the artifacts that meet their needs, by path from the
+  step table, and the run's answers as caller context. Those artifacts
+  bind, and a stage states any departure in its own artifact. Its "run X
+  next" line gives way to this sequence.
 - **Project steps.** The body says what to produce or check; this document
   says how. `produce`: write the result to `<record>.<id>.md`. `change`:
   edit code on the branch and record what changed in `<record>.<id>.md`.
@@ -267,8 +274,6 @@ the sequence does not list.
   the body, and write findings on the *Verdicts and finding severities*
   scale to its audit's file (**Bound**). A gate passes with no `blocking`
   finding.
-  While a project step runs, with its review and its gate, the consult point
-  for *Consulting canon* is the step's id.
 - **Modifiers** (`modifier:`, default `required`):
 
 | Modifier | Runs | On a `blocking` finding | Row ends |
@@ -302,37 +307,35 @@ the sequence does not list.
     earlier rows left open. `closed`: those its file reports closed or not a
     defect, naming whose call it was; a check done here reports as step 5 of
     the reviewer's prompt sets out. `raised`: its new blocking findings,
-    each `new`, or `re-opens <n>` when the table shows it closed (same path,
-    input and consequence), which stops the run (*Loop bounds*).
-    `questions`: those it asked (**Questions**).
-  - `stalled`: `yes` for a revise cycle given findings that closes none,
-    `—` for a check after no revision, else `no`.
+    each `new`, or `recurs <n>` when its file shows earlier finding n's
+    defect (the same consequence) at another path, input or place, a
+    re-open included, saying why; when unsure, `recurs`. `questions`: those
+    it asked (**Questions**).
+  - `stalled`: `yes` when it raises a `recurs`, or ends a revise cycle
+    given findings that closes none of them; `—` for a check after no
+    revision; else `no`.
 
-  At either bound in *Loop bounds*, mark the row `failed`.
+  A stalled check parks the step at once, naming the open findings, their
+  kind and how the author would remove it, for the person to approve that,
+  rule a finding not a defect, waive findings by name, or stop. At the
+  bound, mark the row `failed`.
 - **Review** (`review:`) of the step's artifact; for a gate, it is how the
   audit is done. `none`: this agent alone. `in-context`: a *Persona pass*.
   `fresh-agent`: a *Fresh-agent design review*.
 - **Checkpoint** (`checkpoint:`, default `none`), once the step is done.
   `record`: add the step's result to the pooled `decision` outcome and go
-  on. `human`: commit the run record and step artifacts first, with any
-  working diff a step left uncommitted, on the run's branch, and push the
-  branch (the Stop hook blocks ending a turn on an uncommitted record). If
-  a person invoked the run, mark the row `parked` in that commit, ask them
-  in the session, record who answered what, and set the row as the answer
-  decides; a session that ends before the answer leaves a park that a later
-  run resumes. A refusal, with the person's reasons, is a blocking finding
-  the ask raises: revise the artifact as `required` does, whatever the
-  modifier, and ask again within the step's bounds; a person who says stop
-  ends the run.
+  on. `human`: commit first (**Commits**), with any working diff a step
+  left uncommitted, and push the branch. If a person invoked the run, mark
+  the row `parked` in that commit, ask them in the session, record who
+  answered what, and set the row as the answer decides; a session that ends
+  before the answer leaves a park that a later run resumes. A refusal, with
+  the person's reasons, is a blocking finding the ask raises: revise the
+  artifact as `required` does, whatever the modifier, and ask again within
+  the step's bounds; a person who says stop ends the run.
   Unattended (run-epic, headless), park: mark the row `parked`, keep the
   branch, emit one `escalation` naming the branch, this run's record, the
-  artifact paths and the approval needed, and end the run. Push the branch
-  again once the epilogue has committed the record and before it publishes
-  the escalation, so every path the escalation names resolves for the
-  approver and for a run in another session. A parked run has not finished
-  its unit of work, so its SDA claim and work-unit row follow the
-  parked-run rule in step 3 of *Before ending this run*, and its pending MR
-  items stay pending (step 5 there).
+  artifact paths and the approval needed, and end the run, which has not
+  finished its unit of work (*Before ending this run*, steps 3 and 5).
 - **Resume.** A run resuming parked work (step 1) continues after the
   checkpoint, or inside the step for answers, once a maintainer, or a
   CODEOWNER of `glados.yaml` or `product-knowledge/steps/`, has approved
@@ -340,28 +343,29 @@ the sequence does not list.
   platform CLI and quote the approval or answers in the
   new record. A park left by a session that ended before its in-session
   answer has no escalation: a person who invoked this run answers as at the
-  checkpoint, and an unattended run parks it as above. Build on the parked
-  record and its tables (step 3); a claim the parked run left is the one
-  this run resumes, not contention. With no approval or answer yet, say so
-  in the record and end the run there, running no step and copying no
-  table.
-  It ends as a park does, with no new escalation: the claim stays, no
-  work-unit row is appended, pending MR items stay pending, and the branch
-  is pushed again once the epilogue has committed the record.
+  checkpoint, and an unattended run parks it as above. A claim the parked
+  run left is the one this run resumes, not contention. With no approval
+  or answer yet, say so in the record and end the run there, running no
+  step and copying no table: it ends as a park does, with no new
+  escalation.
 - **Questions.** The run records each question for a person, a nested
-  plan's open ones included, and how it went, routing each from the
-  readings as their finder wrote them, never reworded:
+  plan's open ones included, and how it went:
   - A reading that needs a choice classed `forbidden` is refused as
-    *Decision rights* sets out, never asked; one classed `agent` or
-    `record` is made under its class and by itself asks nothing. A
-    question left with no reading materially different from the plainest
-    is an advisory finding.
+    *Decision rights* sets out, never asked.
   - **Every other question parks the step** once its check is done (with
-    no check, once its artifact is written): one park for all of them, as
-    at a `human` checkpoint, the questions standing where the approval
-    would. A run with no branch of its own cuts one before parking, as
-    **Branch** does. At a bound, the run stops instead, its escalation
-    carrying the questions too.
+    no check, once its artifact is written), or at the end or skip of a
+    later step its body names, none up to it producing `change` or `mr`:
+    one park for all of them, as at a `human` checkpoint, the questions
+    standing where the approval would. At a bound, the run stops instead,
+    its escalation carrying the questions too.
+  - **A declined advisory** (a fresh agent's, left undone when its row
+    ends) is noted in that row by file and number. Once two fresh reviewers
+    or evaluators in this run have raised it (the same defect at the same
+    unit), it is a question for the person, asked once whatever
+    *Materially* says: whether they want it, readings "wanted" and "not
+    wanted", the two findings quoted as its words. It joins the next park,
+    or the MR when none comes before open-mr, and is neither declined again
+    nor made blocking.
   - **Answers.** Record each verbatim, with who gave it and where, noting
     when that is not the person whose words the question turns on; the
     question and its readings stay their finder's. The author then revises
@@ -380,33 +384,28 @@ the sequence does not list.
   publish no `verdict` outcome. Their results ride the step table into
   `progress` and the MR description.
 - **After the MR opens.** A step later in the sequence than open-mr reviews
-  work that is already under review, so its blocking findings start no
-  revise loop and the branch is not edited for them. They go into a
-  `verdict` on the MR, as *Publishing a verdict* sets out, delivered to its
-  bound sinks when the step ends, not at the end of the run, and marked
-  delivered in the record so the epilogue does not post it again. The row
-  ends `done` once it is posted, and step 5 hands its blocking findings to
-  review-mr. self-review is such a step.
+  work already under review: its blocking findings start no revise loop
+  and the branch is not edited for them. They go into a `verdict` on the
+  MR, as *Publishing a verdict* sets out, delivered to its bound sinks when
+  the step ends, not at the end of the run, and marked delivered so the
+  epilogue does not post it again. The row ends `done` once it is posted,
+  and step 5 hands its blocking findings to review-mr. self-review is such
+  a step.
 
 ### 5. Finish
-- Bring the step table up to date: it indexes every artifact of the run.
+- Bring the step table up to date.
 - When there is anything to list, emit one pooled `decision` outcome: every
   `record` checkpoint and, when `decisions.pipeline-discretion` is `record`,
   every discretionary act. This holds on every way the run ends: here, at a
   park, and at a stop on an `escalation`, each listing the acts made so far.
 - When this run, or the parked run it resumed, opened an MR, hand it to
-  review after the last step: run the review-mr workflow to begin the
-  adversarial review loop, handing it the blocking findings of every
-  verdict a step after open-mr posted, each named, as findings still open.
-- When no MR was opened, the artifacts in the record are the deliverable.
-  A run on a branch of its own (step 4) leaves its work there for a human:
-  commit any working diff on it, push it, and say so in the record. Push it
-  again once the epilogue has committed the record, as at a park, so the
-  record reaches the remote too.
+  review after the last step: run the review-mr workflow, handing it the
+  blocking findings of every verdict a step after open-mr posted, each
+  named, as findings still open.
+- When no MR was opened, the artifacts in the record are the deliverable
+  (**Branch** in step 4).
 - This run produces a `progress` outcome carrying the pipeline, the step
   table, and the MR reference if there is one.
-- Known gap: build-feature can still be run directly, outside any pipeline.
-  Its MR carries no step table, which is how the bypass shows.
 
 The shared rules for findings, loops and canon, then the steps and reviews
 this run performs itself:
@@ -574,7 +573,6 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
 | revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
-| stalled revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-stalled-cycles` |
 
 Rules:
 
@@ -584,7 +582,8 @@ Rules:
   findings and the cycle history, and end the run. Never loop indefinitely.
 - If a finding previously recorded as resolved **re-opens**, that is a
   stalemate regardless of the counter: stop and emit an `escalation`
-  immediately rather than spending remaining cycles on it.
+  immediately rather than spending remaining cycles on it, except in
+  run-pipeline's revise loop, which parks for a person (its **Bound**).
 - An escalated loop is a finished run, not a failed one — the record states
   where it stopped and why.
 
@@ -653,7 +652,7 @@ and nothing else.
 | Dependency direction | Which unit depends on which, and the layer each one sits in. |
 | Readers | For every new field, parameter, public method or function, and exception type, the unit that reads, calls or handles it, as *Verdicts and finding severities* defines them. |
 | Precedent | The unit on the target branch each new one follows. |
-| Left to spec | Semantics, invariants and error behavior: named here, decided in the spec. |
+| Left to spec | Semantics, invariants, payloads and errors: named here, decided in the spec. |
 
 One unit, for example:
 
@@ -665,25 +664,22 @@ def issue_invoice(order: Order, due_in_days: int) -> Invoice: ...
 Issues one invoice for a paid order. Follows `src/billing/receipts.py`.
 ~~~
 
-- **Readers is the cheapest place to drop a field.** *Verdicts and finding
-  severities* asks a review to name the line that reads each new field; at
-  shape time, name the unit. A field with no reader is dropped now, or its
-  reader is named, before a spec, a test and a caller are built around it.
+- **Readers is the cheapest place to drop a field**: one with no reader is
+  dropped now, or its reader named, before a spec, a test and a caller are
+  built around it.
 - **A change with no new or changed signatures** writes one line: "no new or
   changed signatures".
 - **Never write stub files to the branch.** The shape lives only in its
   file. When implement-feature or verify-feature runs after a shape, pass it
   the shape with the spec: implement-feature's first task lays the
   signatures down as stubs, and no stub survives to the MR.
-- **Shape and spec split the decisions.** Shape decides names, types,
-  placement and dependency direction. The spec decides semantics,
-  invariants, payloads and errors. When spec-feature runs after a shape, pass
-  it the shape with the plan: the spec builds on the shape and states any
-  departure, and its persona pass does not reopen settled shape decisions.
-- **Check the shape against canon.** The consult point is `shape`: read the
-  canon that applies, as *Consulting canon* sets out, and name in
-  Dependency direction, by canon id, each principle the shape relies on or
-  departs from.
+- **Shape and spec split the decisions**, as the table sets out. When
+  spec-feature runs after a shape, pass it the shape with the plan: the
+  spec builds on the shape and states any departure, and its persona pass
+  does not reopen settled shape decisions.
+- **Check the shape against canon.** The consult point is `shape`: name in
+  Dependency direction, by canon id, each principle of the canon applying
+  there that the shape relies on or departs from.
 - **Gate the shape.** After the review its `review:` setting asks for, this is
   the standards gate's shape checkpoint: audit the shape against the
   project's standards tree, as *Standards gate* sets out, and hand on only a
@@ -693,8 +689,8 @@ Issues one invoice for a paid order. Follows `src/billing/receipts.py`.
 ## Persona pass
 
 An in-context review: the agent that produced an artifact reads it again
-through each seated review persona. The pass shapes the artifact. It is not
-the adversarial review loop, which runs later against the diff.
+through each seated review persona. It is not the adversarial review loop,
+which runs later against the diff.
 
 - **Seat the personas.** Read `run.active-personas` (seated by
   plan-feature); when that key is absent, resolve the default roster from
@@ -739,11 +735,11 @@ Write the brief self-contained:
 |---|---|
 | What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
+| What was asked | The ticket, each instruction a person gave this run, and each question answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
-| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out (a lone reviewer holds every seat), and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
-| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out, and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
+| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
 | Findings still open | Those the cycle table leaves open, by number, copied verbatim from where they were raised |
-| Answers | Each question this run asked, with its readings and answer, copied verbatim from the run record |
 | Vocabulary | The rules in *Verdicts and finding severities*, *What a fresh reviewer is given* and *Questions for a person*, copied verbatim |
 
 ## What a fresh reviewer is given
@@ -764,14 +760,25 @@ conclusions about them.
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
   and labelled as theirs. A person set only what their quoted words name: a
-  go-ahead on the author's proposal approves the direction, and the
-  proposal stays the author's.
+  go-ahead approves the direction of what they were shown, which stays its
+  writer's; an answer choosing a question's reading binds that reading's
+  outcome, not its mechanism, scope words or phrasing.
+- **Words bind as firmly as they were said.** "Must", "need", "never" or a
+  plain statement of what is wanted, in a person's own phrasing, binds.
+  Hedged words ("I think", "maybe", "should", "I'd like", "seems
+  reasonable") and a chosen reading's words beyond its outcome set a
+  default that evidence can revise. Evidence against a default is never a
+  blocking finding: where it changes an outcome the person names, it is a
+  question for them (an advisory written as one where the workflow takes
+  none); otherwise the work follows it and says so.
 - **A scope statement excuses an absence, never a presence.** "Deferred to
   <item>" or "not in this MR" means the reviewer does not report that thing
-  as missing. No scope statement, the author's or a person's, makes what the
-  change does add correct: what it adds is reviewed on its merits. Deferring
-  a unit's consumer does not excuse the unit: that nothing calls it is still
-  a finding.
+  as missing, except a criterion the work received: only a person's quoted
+  words naming it and letting it go waive one, never a go-ahead on an
+  artifact that lists it unmet. No scope statement, the author's or a
+  person's, makes what the change does add correct: what it adds is
+  reviewed on its merits. Deferring a unit's consumer does not excuse the
+  unit: that nothing calls it is still a finding.
 
 
 ## Questions for a person
@@ -782,9 +789,12 @@ choice no one's words reach, raises a question: the author, a reviewer or
 a gate's audit. An artifact that assumes an answer instead has a blocking
 finding.
 
-- **Materially**: one reading adds, drops or changes a unit, a stored
-  record, a failure path or an outcome, or needs a choice `decisions:`
-  classes `escalate`.
+- **Materially**: one reading changes an outcome the ticket or a person
+  names, or needs a choice `decisions:` classes `escalate`. Readings that
+  differ otherwise (a unit, a stored record, a failure path) are not: the
+  artifact takes the one the project's standards or nearest in-tree
+  precedent follows, else the plainest, labelled as an assumption for a
+  test to pin.
 - **Form**: numbered, under *Questions for a person* in its finder's file:
   the question; the words it turns on, quoted with where said, or the
   `escalate` class it needs; the readings, plainest first, each an outcome
@@ -835,17 +845,14 @@ FAIL: list the blocking issues, open findings not closed included.
 
 ### Use the result
 
-- FAIL is a `blocking` finding for the step, handled by its modifier: revise
-  the artifact, then review again. PASS with advisory issues records them in
-  the step's row.
+- FAIL is a `blocking` finding for the step, handled by its modifier. The
+  result feeds the step's cycle table (**Bound**) and, for a gate, its pass
+  or fail.
 - Each check spawns a **new** reviewer from a freshly written brief. Never
   reuse, continue or negotiate with an earlier one: fix the artifact, not the
   review.
 - File each canon conflict the review lists, as *Consulting canon* sets
   out. A conflict is never a finding and never fails the review.
-- Record the latest brief and review paths in the step's row. The result
-  feeds the step table and, for a gate, its pass or fail. It never becomes
-  a `verdict` outcome.
 
 
 ## Opening the merge request
@@ -876,8 +883,9 @@ Defaults, where the project states nothing:
   issues, or comments.
 - **Separate `git add`, `git commit`, `git push`** — never chained, so each
   result is visible on its own.
-- Run the project's full test suite before committing; reproduce the project's
-  exact CI checks locally before pushing.
+- Run the project's full test suite before committing code, and its exact
+  CI checks locally before pushing it; a fresh evaluator's run of them on
+  the same diff counts.
 - Never force-push over work you did not write.
 
 
@@ -896,15 +904,13 @@ Defaults, where the project states nothing:
   - when no step in this pipeline produced `verification`, this sentence in
     the Summary: "No verification step ran in this pipeline."
 - Resolve `merge-authority` from `glados.yaml` for who may merge. This step
-  states no authority, and it never merges.
+  states no authority.
 
 ### Deliver what waited for the MR
 
-With the MR open, and before anything reviews it, post the outcomes that
-were waiting for it: the `## Pending MR delivery` items of this run's record,
-of the runs nested inside it, and of a parked run this run resumed (with the
-runs nested inside that one), as *No MR yet is not a failed delivery* (step 5
-of *Before ending this run*) sets out for the run that opens the MR.
+With the MR open, and before anything reviews it, post every item waiting
+for it, as *No MR yet is not a failed delivery* (step 5 of *Before ending
+this run*) sets out for the run that opens the MR.
 
 
 ## Self-review
@@ -919,11 +925,9 @@ panel runs.
 - Classify each finding on the *Verdicts and finding severities* scale. This
   step produces a `verdict` outcome, which lands on the MR as *Publishing a
   verdict* sets out.
-- Its verdict follows **After the MR opens** in run-pipeline's step 4: it is
-  posted when the step ends, and its findings start no revise loop,
-  whatever the step's modifier.
-- Do not edit the branch while findings are open; queue fixes so review line
-  references stay stable.
+- Its verdict follows **After the MR opens** in run-pipeline's step 4,
+  whatever the step's modifier, so the branch is not edited for its
+  findings.
 
 ## Publishing a verdict
 
@@ -1101,12 +1105,10 @@ gate.
   disposition as the severity scale requires — fixed, or declined with a
   one-line reason.
 
-Each re-run of the gate on a corrected artifact is one gate cycle. Count
-the cycles in the run record. At `params.standards-gate.max-cycles`, do not
-re-run again: stop, emit an `escalation` carrying the open blocking findings
-and the cycle history, and end the run. A run enclosing this one (preamble
-step 1) stops too, rather than advancing on an artifact the gate did not
-pass. Gate cycles are bounded as *Loop bounds* sets out:
+Each re-run of the gate on a corrected artifact is one gate cycle, bounded
+by `params.standards-gate.max-cycles` as *Loop bounds* sets out. A run
+enclosing this one (preamble step 1) stops too, rather than advancing on an
+artifact the gate did not pass:
 
 *(See **Loop bounds**, earlier in this document.)*
 
@@ -1150,10 +1152,10 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that ends with its unit of work still waiting on an approval has
-   not finished it: run-pipeline parking at a `human` checkpoint or
-   resuming a park that has no approval yet, and run-epic stopping with
-   only parked tickets left. It keeps its claim and appends no row, and the
+   A run that ends with its unit of work still waiting on a person has
+   not finished it: run-pipeline parking a step or resuming a park that
+   has no approval or answer yet, and run-epic stopping with only parked
+   tickets left. It keeps its claim and appends no row, and the
    run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
@@ -1204,7 +1206,7 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that ends with its unit still waiting on an approval (step 3) has not
+     that ends with its unit still waiting on a person (step 3) has not
      ended it: its items stay pending for the run that resumes the work and
      opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These

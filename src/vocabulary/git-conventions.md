@@ -15,6 +15,7 @@ Defaults, where the project states nothing:
   issues, or comments.
 - **Separate `git add`, `git commit`, `git push`** — never chained, so each
   result is visible on its own.
-- Run the project's full test suite before committing; reproduce the project's
-  exact CI checks locally before pushing.
+- Run the project's full test suite before committing code, and its exact
+  CI checks locally before pushing it; a fresh evaluator's run of them on
+  the same diff counts.
 - Never force-push over work you did not write.

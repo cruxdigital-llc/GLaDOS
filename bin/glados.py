@@ -1229,14 +1229,38 @@ def unknown_manifest_keys(raw: dict) -> list[str]:
     return [k for k in raw if k not in KNOWN_MANIFEST_KEYS]
 
 
+# `params` keys a release stopped reading, each with why. A manifest that
+# still sets one resolves (it is only a value nothing reads), but a team that
+# tuned it would otherwise get no signal that the tuning does nothing, and
+# the assembly report would list it as a live setting.
+RETIRED_PARAMS = {
+    "pipeline.max-stalled-cycles": (
+        "retired in 2.5 (v3): the first stalled check parks the step for a "
+        "person, so no stall count is read"),
+}
+
+
+def retired_params(raw: dict) -> list[str]:
+    """The retired `params.<ns>.<key>` paths the manifest sets, in order."""
+    found = []
+    params = raw.get("params")
+    for ns, cfg in (params.items() if isinstance(params, dict) else ()):
+        for k in (cfg if isinstance(cfg, dict) else ()):
+            if f"{ns}.{k}" in RETIRED_PARAMS:
+                found.append(f"{ns}.{k}")
+    return found
+
+
 def manifest_warnings(raw: dict, manifest_name: str) -> list[str]:
     """Non-fatal findings about the manifest itself (never block an install).
-    Today: unknown top-level keys, each named with the known set so a typo
-    is one glance from its fix."""
+    Unknown top-level keys, each named with the known set so a typo is one
+    glance from its fix; and retired `params` keys, each with why."""
     known = ", ".join(KNOWN_MANIFEST_KEYS)
     return [f"{manifest_name}: unknown top-level key '{k}' is ignored — check "
             f"the spelling (known keys: {known})"
-            for k in unknown_manifest_keys(raw)]
+            for k in unknown_manifest_keys(raw)] + [
+            f"{manifest_name}: params.{path} is {RETIRED_PARAMS[path]}; "
+            f"remove it" for path in retired_params(raw)]
 
 
 def _print_warnings(warnings: list[str]) -> None:
@@ -2468,8 +2492,10 @@ def build_assembly_report(source: Source, comp: Compilation) -> str:
     for ns, cfg in sorted((r.values.get("params") or {}).items()):
         for k in sorted(cfg.keys()):
             path = f"params.{ns}.{k}"
-            out.append(f"| {path} | {_fmt(cfg[k])} | "
-                       f"({r.provenance.get(path, 'baseline')}) |")
+            prov = r.provenance.get(path, 'baseline')
+            if f"{ns}.{k}" in RETIRED_PARAMS:
+                prov += "; retired, read by nothing"
+            out.append(f"| {path} | {_fmt(cfg[k])} | ({prov}) |")
     for leaf in sorted((r.values.get("branching") or {}).keys()):
         out.append(f"| branching.{leaf} | {_fmt(r.values['branching'][leaf])} | "
                    f"(explicit) |")

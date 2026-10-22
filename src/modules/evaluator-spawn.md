@@ -34,14 +34,14 @@ conversation:
 | Section | Contents |
 |---|---|
 | What was requested | The requirements (for a fix, the reproduction steps), copied in full |
-| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted, or the author's plan or spec, labelled as the author's. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
+| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted (an answer to a question, with the reading it chose, among them), or the author's plan, shape or spec, labelled as the author's, each assumption they label included. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
 | What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`), or against the branch's merge-base with the target branch when that commit is not on the target — not the full diff; the evaluator reads files directly |
-| How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
+| How to verify | The full test suite and lint commands, as CI runs them, and the path of the CI configuration; app start commands/entry points; repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
 | Personas to consult | The feature's persona roster: `run.active-personas` (recorded by plan-feature); when that key is absent, the default roster in `params.review-panel.personas` from `glados.yaml`. List each persona as its name plus the path of its definition file so the evaluator reads it directly. Resolve each name project-first: `product-knowledge/personas/`, then the library personas in `.glados/personas/`. A name with no definition file in either is reported in the brief, not silently dropped |
 | Canon digests | Only when this document has a *Consulting canon* section and an entry applies: each digest's path (never a summary), and the rules that section gives a fresh agent, copied verbatim. Otherwise leave this row out |
 | Shape | Only when the run has a shape: its path, and each departure from it that implement-feature's `progress` outcome states, labelled as the author's. Otherwise leave this row out |
-| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
 | Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
 
 <!-- glados:include vocabulary/review-inputs.md -->
@@ -61,13 +61,17 @@ what it actually does. Be skeptical. Be thorough.
    .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation-brief.md.
    It is your only context; do not ask for more.
 2. Read the changed files directly.
-3. Run every test and lint command in the brief.
+3. Run every test and lint command in the brief. A test job in the CI
+   configuration it names that the brief leaves out is an issue.
 4. If the brief lists app entry points and you have the tools, start the app
    and use it. Do not judge by reading alone.
 5. Mark each acceptance criterion PASS or FAIL, with the evidence you
-   observed. A failed criterion the brief labels as the author's is not
-   one the work received: it is an issue at the tier its consequence
-   earns, and where the criterion itself is unnecessary, say so.
+   observed: the code that meets it and the test that pins it. One a test
+   can pin that no test pins is an issue: blocking for a criterion the
+   work received, advisory for the author's. A failed criterion the brief
+   labels as the author's is not one the work received: it is an issue at
+   the tier its consequence earns, and where the criterion itself is
+   unnecessary, say so.
 6. If the brief names a shape, list every public unit the diff adds that
    the shape does not list, and every shape unit the diff drops. One the
    brief does not list as a stated departure is an issue. A stated

@@ -9,7 +9,6 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
 | revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
-| stalled revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-stalled-cycles` |
 
 Rules:
 
@@ -19,6 +18,7 @@ Rules:
   findings and the cycle history, and end the run. Never loop indefinitely.
 - If a finding previously recorded as resolved **re-opens**, that is a
   stalemate regardless of the counter: stop and emit an `escalation`
-  immediately rather than spending remaining cycles on it.
+  immediately rather than spending remaining cycles on it, except in
+  run-pipeline's revise loop, which parks for a person (its **Bound**).
 - An escalated loop is a finished run, not a failed one — the record states
   where it stopped and why.

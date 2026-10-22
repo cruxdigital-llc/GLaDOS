@@ -6,9 +6,12 @@ choice no one's words reach, raises a question: the author, a reviewer or
 a gate's audit. An artifact that assumes an answer instead has a blocking
 finding.
 
-- **Materially**: one reading adds, drops or changes a unit, a stored
-  record, a failure path or an outcome, or needs a choice `decisions:`
-  classes `escalate`.
+- **Materially**: one reading changes an outcome the ticket or a person
+  names, or needs a choice `decisions:` classes `escalate`. Readings that
+  differ otherwise (a unit, a stored record, a failure path) are not: the
+  artifact takes the one the project's standards or nearest in-tree
+  precedent follows, else the plainest, labelled as an assumption for a
+  test to pin.
 - **Form**: numbered, under *Questions for a person* in its finder's file:
   the question; the words it turns on, quoted with where said, or the
   `escalate` class it needs; the readings, plainest first, each an outcome

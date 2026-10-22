@@ -70,17 +70,14 @@ baseline:
       # must resolve in every install.
       max-cycles: 3
     pipeline:
-      # Safety bound for revise cycles on one pipeline step (run-pipeline)
+      # Runaway guard for revise cycles on one pipeline step (run-pipeline)
       # before it escalates — the compiled `params.pipeline.max-cycles`
-      # reference must resolve in every install. Well above what a design
-      # loop that keeps closing findings needs: a step still revising after
-      # 8 is one a person should see.
+      # reference must resolve in every install. A step that stops making
+      # progress parks for a person at its first stalled check, with no
+      # number to tune, so this only ends a loop that keeps closing one
+      # finding and raising another: a step still revising after 8 is one a
+      # person should see.
       max-cycles: 8
-      # Bound on STALLED revise cycles of one step, those that close none of
-      # the open blocking findings they were given. The compiled
-      # `params.pipeline.max-stalled-cycles` reference must resolve in every
-      # install.
-      max-stalled-cycles: 3
 
 # ---------------------------------------------------------------------------
 # Phase presets

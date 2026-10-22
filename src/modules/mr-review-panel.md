@@ -34,10 +34,11 @@ Two invariants govern the panel:
 
 Panelists cannot ask questions, so the brief must be self-contained. It
 carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
-spec or ticket, the commands to run tests and linters, each panelist's seated
-mandate, and the rules in *Verdicts and finding severities* and *What a fresh
-reviewer is given*, copied verbatim. If anything is missing, assemble it
-before spawning — a panelist that has to guess reviews the wrong change.
+ticket or a person's brief, the spec labelled as the author's, the commands
+to run tests and linters, each panelist's seated mandate, and the rules in
+*Verdicts and finding severities* and *What a fresh reviewer is given*,
+copied verbatim. If anything is missing, assemble it before spawning — a
+panelist that has to guess reviews the wrong change.
 
 <!-- glados:include vocabulary/review-inputs.md -->
 
@@ -60,9 +61,10 @@ Your job is to find real problems, not to confirm success.
    brief carries it: without its step table or the findings it lists. Scope
    it states — "that is a change of its own and is not in this MR",
    "deferred to <item>" — tells you what the change leaves out. Do not
-   report that back as a gap: it costs the author an exchange to repeat
-   what they already wrote. It never makes what the change puts in
-   correct, whoever asked for it: that is reviewed on its merits.
+   report that back as a gap, except where *What a fresh reviewer is
+   given* says to: it costs the author an exchange to repeat what they
+   already wrote. It never makes what the change puts in correct, whoever
+   asked for it: that is reviewed on its merits.
 4. Write each finding as one plain sentence saying what is wrong, in the
    words you would use saying it out loud. Then where it is, then the rule
    it breaks if there is one. The rule is evidence for the finding, never

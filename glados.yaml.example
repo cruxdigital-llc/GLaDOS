@@ -123,7 +123,6 @@ params:
     max-cycles: 3
   # pipeline:
   #   max-cycles: 8                # revise cycles per pipeline step
-  #   max-stalled-cycles: 3        # of them, cycles that closed nothing
 
 # Project workflows (lane 2, explicit-only: no phase preset sets them). A
 # pipeline is an ordered list of steps, GLaDOS's built-in ones (plan-feature,

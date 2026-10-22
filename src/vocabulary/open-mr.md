@@ -26,12 +26,10 @@ carries resolves for whoever reviews the MR.
   - when no step in this pipeline produced `verification`, this sentence in
     the Summary: "No verification step ran in this pipeline."
 - Resolve `merge-authority` from `glados.yaml` for who may merge. This step
-  states no authority, and it never merges.
+  states no authority.
 
 ### Deliver what waited for the MR
 
-With the MR open, and before anything reviews it, post the outcomes that
-were waiting for it: the `## Pending MR delivery` items of this run's record,
-of the runs nested inside it, and of a parked run this run resumed (with the
-runs nested inside that one), as *No MR yet is not a failed delivery* (step 5
-of *Before ending this run*) sets out for the run that opens the MR.
+With the MR open, and before anything reviews it, post every item waiting
+for it, as *No MR yet is not a failed delivery* (step 5 of *Before ending
+this run*) sets out for the run that opens the MR.

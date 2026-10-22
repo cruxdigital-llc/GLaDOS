@@ -375,7 +375,6 @@ written into workflow text. Resolve bounds from `glados.yaml` at run time:
 | evaluator verify/fix cycles per feature | `params.evaluator.max-cycles` |
 | standards-gate re-runs per gated artifact | `params.standards-gate.max-cycles` |
 | revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-cycles` |
-| stalled revise cycles per pipeline step (run-pipeline) | `params.pipeline.max-stalled-cycles` |
 
 Rules:
 
@@ -385,7 +384,8 @@ Rules:
   findings and the cycle history, and end the run. Never loop indefinitely.
 - If a finding previously recorded as resolved **re-opens**, that is a
   stalemate regardless of the counter: stop and emit an `escalation`
-  immediately rather than spending remaining cycles on it.
+  immediately rather than spending remaining cycles on it, except in
+  run-pipeline's revise loop, which parks for a person (its **Bound**).
 - An escalated loop is a finished run, not a failed one — the record states
   where it stopped and why.
 
@@ -426,14 +426,14 @@ conversation:
 | Section | Contents |
 |---|---|
 | What was requested | The requirements (for a fix, the reproduction steps), copied in full |
-| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted, or the author's plan or spec, labelled as the author's. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
+| What was agreed | The acceptance criteria, each with its source: the ticket, a person's words quoted (an answer to a question, with the reading it chose, among them), or the author's plan, shape or spec, labelled as the author's, each assumption they label included. A contract file takes precedence over the plan and spec only for what a person's words name; a criterion the author derived is the author's, under review like the code |
 | What changed | File list plus a summary-level diff against the base commit recorded at run start (`work.base-sha`), or against the branch's merge-base with the target branch when that commit is not on the target — not the full diff; the evaluator reads files directly |
-| How to verify | Test and lint commands, app start commands/entry points, repro steps for fixes |
+| How to verify | The full test suite and lint commands, as CI runs them, and the path of the CI configuration; app start commands/entry points; repro steps for fixes |
 | Standards to enforce | The applicable standards, listed by file path so the evaluator reads them directly |
 | Personas to consult | The feature's persona roster: `run.active-personas` (recorded by plan-feature); when that key is absent, the default roster in `params.review-panel.personas` from `glados.yaml`. List each persona as its name plus the path of its definition file so the evaluator reads it directly. Resolve each name project-first: `product-knowledge/personas/`, then the library personas in `.glados/personas/`. A name with no definition file in either is reported in the brief, not silently dropped |
 | Canon digests | Only when this document has a *Consulting canon* section and an entry applies: each digest's path (never a summary), and the rules that section gives a fresh agent, copied verbatim. Otherwise leave this row out |
 | Shape | Only when the run has a shape: its path, and each departure from it that implement-feature's `progress` outcome states, labelled as the author's. Otherwise leave this row out |
-| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| What is deliberately out of scope | Anything the spec, plan or merge-request description declares deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
 | Vocabulary | The rules in *Verdicts and finding severities* and *What a fresh reviewer is given*, copied verbatim |
 
 ## What a fresh reviewer is given
@@ -454,14 +454,25 @@ conclusions about them.
   author's (the ticket, an instruction given in the session or on the MR),
   are quoted verbatim with where they were said (a file path or an MR note)
   and labelled as theirs. A person set only what their quoted words name: a
-  go-ahead on the author's proposal approves the direction, and the
-  proposal stays the author's.
+  go-ahead approves the direction of what they were shown, which stays its
+  writer's; an answer choosing a question's reading binds that reading's
+  outcome, not its mechanism, scope words or phrasing.
+- **Words bind as firmly as they were said.** "Must", "need", "never" or a
+  plain statement of what is wanted, in a person's own phrasing, binds.
+  Hedged words ("I think", "maybe", "should", "I'd like", "seems
+  reasonable") and a chosen reading's words beyond its outcome set a
+  default that evidence can revise. Evidence against a default is never a
+  blocking finding: where it changes an outcome the person names, it is a
+  question for them (an advisory written as one where the workflow takes
+  none); otherwise the work follows it and says so.
 - **A scope statement excuses an absence, never a presence.** "Deferred to
   <item>" or "not in this MR" means the reviewer does not report that thing
-  as missing. No scope statement, the author's or a person's, makes what the
-  change does add correct: what it adds is reviewed on its merits. Deferring
-  a unit's consumer does not excuse the unit: that nothing calls it is still
-  a finding.
+  as missing, except a criterion the work received: only a person's quoted
+  words naming it and letting it go waive one, never a go-ahead on an
+  artifact that lists it unmet. No scope statement, the author's or a
+  person's, makes what the change does add correct: what it adds is
+  reviewed on its merits. Deferring a unit's consumer does not excuse the
+  unit: that nothing calls it is still a finding.
 
 
 *(See **Verdicts and finding severities**, earlier in this document.)*
@@ -479,13 +490,17 @@ what it actually does. Be skeptical. Be thorough.
    .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation-brief.md.
    It is your only context; do not ask for more.
 2. Read the changed files directly.
-3. Run every test and lint command in the brief.
+3. Run every test and lint command in the brief. A test job in the CI
+   configuration it names that the brief leaves out is an issue.
 4. If the brief lists app entry points and you have the tools, start the app
    and use it. Do not judge by reading alone.
 5. Mark each acceptance criterion PASS or FAIL, with the evidence you
-   observed. A failed criterion the brief labels as the author's is not
-   one the work received: it is an issue at the tier its consequence
-   earns, and where the criterion itself is unnecessary, say so.
+   observed: the code that meets it and the test that pins it. One a test
+   can pin that no test pins is an issue: blocking for a criterion the
+   work received, advisory for the author's. A failed criterion the brief
+   labels as the author's is not one the work received: it is an issue at
+   the tier its consequence earns, and where the criterion itself is
+   unnecessary, say so.
 6. If the brief names a shape, list every public unit the diff adds that
    the shape does not list, and every shape unit the diff drops. One the
    brief does not list as a stated departure is an issue. A stated
@@ -671,10 +686,10 @@ the record rather than omitting it.
    The exception is the one the preamble names: a ticket's build inside
    run-epic is a unit of work of its own, so it appends the ticket's row
    and clears the ticket's claim; the runs nested inside it do neither.
-   A run that ends with its unit of work still waiting on an approval has
-   not finished it: run-pipeline parking at a `human` checkpoint or
-   resuming a park that has no approval yet, and run-epic stopping with
-   only parked tickets left. It keeps its claim and appends no row, and the
+   A run that ends with its unit of work still waiting on a person has
+   not finished it: run-pipeline parking a step or resuming a park that
+   has no approval or answer yet, and run-epic stopping with only parked
+   tickets left. It keeps its claim and appends no row, and the
    run that resumes the work does both when the unit ends.
 4. **Commit the record** on the current working branch:
    `chore(glados): record <workflow> run`. Runs that act on a merge request
@@ -725,7 +740,7 @@ the record rather than omitting it.
      (run-epic's backlog selection, a standalone plan), mark that item "no
      MR for this work; mr-comment delivery not applicable" instead of
      escalating, even if nested runs opened MRs for their own work. A run
-     that ends with its unit still waiting on an approval (step 3) has not
+     that ends with its unit still waiting on a person (step 3) has not
      ended it: its items stay pending for the run that resumes the work and
      opens the MR. Once
      the MR exists, a post that fails is a failed delivery as above. These

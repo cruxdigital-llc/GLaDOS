@@ -146,7 +146,6 @@ decisions:
 params:
   pipeline:
     max-cycles: 8               # revise cycles per step before escalating
-    max-stalled-cycles: 3       # of them, cycles that closed nothing
 ```
 
 `pipeline-discretion` sets how much the agent may decide on its own: picking
@@ -161,20 +160,25 @@ needs `relaxation-acknowledged:`, like any other decision.
 
 A revise cycle is one revision of a step's artifact, for findings, for a
 person's answers or for a refusal, and the check after it. `max-cycles`
-counts them all, as it does for every other loop. `max-stalled-cycles`
-counts only the stalled ones: a revision whose next check closes none of the
-blocking findings it was given. A cycle that closes one is progress, even
-when the check raises new findings, so a design loop that keeps finding and
-fixing real defects is stopped only by `max-cycles`. A finding is closed
-only when nothing else in the artifact has the same defect, so patching the
-one path a finding named while its twins remain is a stall, not progress. A
-finding that was closed and comes back stops the run at once, whatever
-either count says.
+counts them all, as it does for every other loop, and is only a runaway
+guard. Progress is judged per check instead, with no number to tune: a
+check is stalled when the revision before it closed none of the blocking
+findings it was given, or when it raises an earlier finding's defect (the
+same consequence) at another path, input or place, a closed finding coming
+back included; when the run is unsure, it counts as a recurrence. The
+first stalled check parks the step at once, naming the open findings, their
+kind and how the author would remove it, and asking you to approve that,
+rule a finding not a defect, waive findings by name, or stop. A finding is
+closed only when nothing else in the artifact has the same defect, so
+patching the one path a finding named while its twins remain is a stall,
+not progress. The 2.5 candidates' `max-stalled-cycles` is retired: install
+and validate warn when a manifest still sets it, and the assembly report
+marks it read by nothing.
 
 Each step that is checked keeps a cycle table in the run record, one row per
 check, linking the check's own file (no check overwrites another's),
 listing what it was given, closed and raised, and marking each raised
-finding `new` or `re-opens <n>`, so you can check the counting against what
+finding `new` or `recurs <n>`, so you can check the counting against what
 each reviewer wrote. A fresh reviewer decides closure; for a gate audited
 in-context or with `review: none`, the closure is the author's, and the row
 says so.
@@ -245,7 +249,7 @@ from an earlier step.
 
 | Modifier | Runs | Findings | What the agent may do |
 |---|---|---|---|
-| `required` (default) | Always | A blocking finding stops the pipeline. The audited artifact is revised and checked again, within `params.pipeline.max-cycles` revise cycles, `params.pipeline.max-stalled-cycles` of them stalled, then the run escalates. | Nothing. Only a human waiver, recorded with who gave it, lifts it. |
+| `required` (default) | Always | A blocking finding stops the pipeline. The audited artifact is revised and checked again: a stalled check parks the step for a person, and after `params.pipeline.max-cycles` revise cycles the run escalates. | Nothing. Only a human waiver, recorded with who gave it, lifts it. |
 | `optional` | When the agent judges the step's `when:` holds (an optional step must have one) | Same as required, if it runs | Skip it, recording the `when:` evaluation and a one-line reason. |
 | `advisory` | Always | Recorded at advisory severity and carried to the MR description. Never stops the run. | Treat a finding as blocking anyway. |
 
@@ -306,11 +310,15 @@ persona pass. `implement-feature`, `verify-feature`, `open-mr` and
 
 **Questions for a person.** Some things no reading of the code settles:
 what a person meant by their words. When the readings differ materially
-(one adds, drops or changes a unit, a stored record, a failure path or an
-outcome, or needs a choice classed `escalate` under `decisions:`), the author,
-a review or a gate's audit raises a question for a person. It quotes the
-words it turns on and lists the readings, plainest first, and what each
-would change. A question never stands in for a finding: what the code, the
+(one changes an outcome the ticket or a person names, or needs a choice
+classed `escalate` under `decisions:`), the author, a review or a gate's
+audit raises a question for a person. It quotes the words it turns on and
+lists the readings, plainest first, and what each would change. Readings
+that differ otherwise (a unit, a stored record, a failure path) are not
+material: the artifact takes the one your standards or nearest in-tree
+precedent follows, else the plainest, labelled as an assumption. The
+evaluator checks that a test pins each labelled assumption, as it does each
+answer. A question never stands in for a finding: what the code, the
 files, a standard or a stated outcome settles is a finding, and a doubt
 that changes nothing material is an advisory. A reviewer also checks each
 assumption the artifact labels: going on under one whose readings differ
@@ -318,15 +326,21 @@ materially is a blocking finding.
 
 Every question parks the step exactly as at a `human` checkpoint, all of a
 check's questions in one park, with the questions in place of the approval
-and answered by the same people. The run routes them from the readings as
-written, so the author cannot reword its way past one. A reading that needs
-a `forbidden` choice is refused, never asked; a choice your classes leave to
-the agent (`agent` or `record`) is made, not asked. The answer is recorded
+and answered by the same people. A project step's body may instead name a
+later step, before any step that writes code or opens the MR, at whose end
+(or skip) its questions park, so a run asks once. An advisory the author
+declines is noted in its step row; once two fresh reviewers or evaluators
+of the run have raised it, it is a question for you, asked once: whether
+you want it. It joins the next park, or goes on the MR, and is neither
+declined again nor made blocking. The run routes questions from the
+readings as written, so the author cannot reword its way past one.
+A reading that needs a `forbidden` choice is refused, never asked; a choice
+your classes leave to the agent is made, not asked. The answer is recorded
 verbatim as the answerer's words, the question and readings as their
 finder's, and the run resumes inside the step: the author revises, and the
-check runs again. That revision is a revise cycle, though never a stalled
-one by itself, and the bounds are checked first: a step already at a bound
-escalates with its questions instead of parking.
+check runs again. That revision is a revise cycle, and the bound is checked
+first: a step already at it escalates with its questions instead of
+parking.
 
 Gates and reviews before the MR publish no verdict, because no MR exists yet.
 Their results go into the step table, the run's `progress` outcome and the MR
@@ -454,6 +468,15 @@ Warnings, which never fail:
 
   Statuses are `pending`, `done`, `skipped`, `waived`, `parked` and
   `failed`, written as words, not checkboxes.
+- **`## Now` first.** Under its header, the record holds the step in
+  progress, what it waits on and the next action, kept current; a reader
+  reads that and the rows its step needs. What a check found stays in that
+  check's files, and how a revision answered it in
+  `<record>.<id>.revision-<n>.md`, which no reviewer's brief names. A row's
+  process files are committed together when the row ends or parks, never
+  one by one; a pipeline with no branch of its own makes no row commit until
+  it parks and cuts one, and if it ends without parking, the epilogue's
+  record commit on the current branch is its only commit.
 - **The step table is the index.** A step's own file sits beside the record
   as `<record>.<id>.md` (shape writes `<record>.shape.md`). Each check of a
   step writes files of its own, numbered by its row in the step's cycle

@@ -18,11 +18,11 @@ Write the brief self-contained:
 |---|---|
 | What to review | The artifact path or paths: the step's own file, or for a gate, the artifact it audits. For code, the changed files and the base commit (`work.base-sha`, or the branch's merge-base with the target branch when that commit is not on the target). |
 | What to check | For a project step, its body: `product-knowledge/steps/<id>.md`. For a built-in step, what its artifact must contain, copied from the document that defines it (this one for shape, the stage's own workflow for plan-feature and spec-feature), and the plan or brief it answers. |
+| What was asked | The ticket, each instruction a person gave this run, and each question answered, with its readings and answer, copied verbatim with where said: the criteria the work received |
 | Personas to seat | Each persona's name and definition file path, resolved as *Persona pass* resolves them |
-| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out (a lone reviewer holds every seat), and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
-| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one only where living with it breaks something, and then say what breaks |
+| Standards and canon | The applicable files under `product-knowledge/standards/` (philosophies included) and, when `glados.yaml` declares `canon:`, the digest of each entry that applies at the reviewed step, as *Consulting canon* sets out, and the rules that section gives a fresh agent, copied verbatim. Paths, never summaries. |
+| What is deliberately out of scope | Anything the plan, the spec or an earlier step deferred, each labelled with who deferred it: the author, or a person quoted. A deferral excuses an absence, as *What a fresh reviewer is given* sets out. Raise one where living with it breaks something, an unmet criterion the work received included, and say what breaks |
 | Findings still open | Those the cycle table leaves open, by number, copied verbatim from where they were raised |
-| Answers | Each question this run asked, with its readings and answer, copied verbatim from the run record |
 | Vocabulary | The rules in *Verdicts and finding severities*, *What a fresh reviewer is given* and *Questions for a person*, copied verbatim |
 
 <!-- glados:include vocabulary/review-inputs.md -->
@@ -68,14 +68,11 @@ FAIL: list the blocking issues, open findings not closed included.
 
 ### Use the result
 
-- FAIL is a `blocking` finding for the step, handled by its modifier: revise
-  the artifact, then review again. PASS with advisory issues records them in
-  the step's row.
+- FAIL is a `blocking` finding for the step, handled by its modifier. The
+  result feeds the step's cycle table (**Bound**) and, for a gate, its pass
+  or fail.
 - Each check spawns a **new** reviewer from a freshly written brief. Never
   reuse, continue or negotiate with an earlier one: fix the artifact, not the
   review.
 - File each canon conflict the review lists, as *Consulting canon* sets
   out. A conflict is never a finding and never fails the review.
-- Record the latest brief and review paths in the step's row. The result
-  feeds the step table and, for a gate, its pass or fail. It never becomes
-  a `verdict` outcome.

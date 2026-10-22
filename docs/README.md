@@ -74,8 +74,12 @@ after its opening paragraph.
 - [proposals/review-inputs.md](proposals/review-inputs.md) — why what a
   fresh reviewer is given is core text, and what 2.5 changed in it.
 - [proposals/design-loop.md](proposals/design-loop.md) — why a question for
-  a person parks instead of failing a gate, and why run-pipeline's revise
-  loop also stops on stalled cycles.
+  a person parks instead of failing a gate, and why a stalled revise loop
+  parks for a person (revised by v3.md).
+- [proposals/v3.md](proposals/v3.md) — what the first trial runs of a
+  plain-first pipeline changed next: a stall parks for a person, questions
+  turn on named outcomes, an author cannot defer an outcome a person set,
+  and the record and test runs got lighter.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.

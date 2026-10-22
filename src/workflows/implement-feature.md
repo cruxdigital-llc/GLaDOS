@@ -41,6 +41,12 @@ those belong to the workflows around it.
   enough that its tests can pass on their own.
 - Order by dependency: shared types and interfaces before their consumers,
   migrations before the code that assumes them.
+- A finding the caller passes to fix (a gate's or an evaluator's) is a task
+  covering its kind: list in the checklist every place where the change has
+  the same defect (each other path, input or place of its kind; a breach
+  that predates the change is not one), then fix each or name, per place,
+  the input that shows it does not hold there. Fixing only the place it
+  names leaves it open.
 - When a human invoked this workflow directly, offer the breakdown for review
   before writing code; inside a pipeline run, proceed.
 
@@ -60,8 +66,10 @@ Work the checklist top to bottom. For each task:
   mismatch to the caller; do not silently diverge from what was specified.
 
 ### 5. Verify the whole
-- With the checklist complete, run the full test suite — not just the tests
-  written above. A green per-task loop with a red suite is unfinished work.
+- With the checklist complete, run the tests of every area the diff touches
+  and the project's unit suite — not just the tests written above. A green
+  per-task loop with a red suite is unfinished work. The full suite runs
+  once per fix loop, in verify-feature's evaluator.
 - Re-read the spec's acceptance criteria against the final diff; anything
   unmet goes back on the checklist.
 - With a shape, compare the final diff with it. Any public unit the diff
