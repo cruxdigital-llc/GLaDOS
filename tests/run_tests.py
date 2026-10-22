@@ -6567,7 +6567,12 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn("glados/ledger is not in this clone", out)
         write(repo / ".glados" / "runs" / "r.md", "# r\n")
         self._save(repo, "--no-push", ".glados/runs/r.md")
-        rc, out = run_cli("verify-ledger", "--target", repo)
+        # With no --base, verify-ledger takes the base from CI's merge or
+        # pull request; run outside one, as a developer would, or a pull
+        # request's own GITHUB_BASE_REF leaks in as this repo's base.
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("GITHUB_BASE_REF", "CI_MERGE_REQUEST_DIFF_BASE_SHA")}
+        rc, out = run_cli("verify-ledger", "--target", repo, env=env)
         self.assertIn("ledger branch: refs/heads/glados/ledger", out)
         self.assertIn("not checked (no base", out)
 
