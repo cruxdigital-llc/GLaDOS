@@ -6553,6 +6553,7 @@ class TestHookGuards(unittest.TestCase):
         runs = repo / ".glados" / "runs"
         write(runs / "run-1.md", "# run record\n")
         self._ledger_save(repo)
+        write(runs / "stack", "run-1.md\n")
         write(runs / "current", "run-1.md\n")
         self._assert_allows(repo)
         write(runs / "run-1.md", "# run record\n\n## Now\nstep 2\n")
@@ -6564,7 +6565,8 @@ class TestHookGuards(unittest.TestCase):
         self._assert_blocks(repo, "run-1.shape.md")
         self._ledger_save(repo)
         self._assert_allows(repo)
-        # another run's file is not this run's to save
+        # another run's file is not this run's to save, while the stack
+        # lists the runs in flight
         write(runs / "other-run.md", "# another session's record\n")
         self._assert_allows(repo)
 
@@ -6681,13 +6683,192 @@ class TestHookGuards(unittest.TestCase):
         (runs / "current").write_bytes("run-2.md\r\n".encode("utf-16"))
         write(runs / "run-2.md", "# run 2\n")
         self._assert_blocks(repo, "run-2.md")
-        # an undecodable marker is still a run in flight: the dirty check
-        # runs and blocks, and the guard never crashes open
+        # an undecodable marker blocks, naming itself and every unsaved file
+        # under .glados/runs/, and the guard never crashes open
         (runs / "current").write_bytes(b"\x80\x81run-2.md\n")
         self._assert_blocks(repo, "run-2.md")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
         (runs / "current").unlink()
         (runs / "stack").write_bytes(b"\x80\x81run-2.md\n")
         self._assert_blocks(repo, "run-2.md")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read")
+
+    def test_an_unreadable_marker_blocks_though_every_file_is_saved(self):
+        """A marker that exists but cannot be read or decoded hides which
+        runs are in flight, so none of them can be shown saved. It used to
+        read as no record at all: with every file on disk saved, the
+        session ended though the run it named might have no record yet."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        way_out = "delete both .glados/runs/current and .glados/runs/stack"
+        undecodable = b"\x80\x81outer.md\ninner.md\n"
+        for state in ("stack undecodable", "current undecodable",
+                      "stack unreadable, current readable"):
+            with self.subTest(state=state):
+                for name in ("stack", "current"):
+                    path = runs / name
+                    if path.is_dir():
+                        path.rmdir()
+                    elif path.exists():
+                        path.unlink()
+                if state == "stack undecodable":
+                    (runs / "stack").write_bytes(undecodable)
+                    bad = ".glados/runs/stack"
+                elif state == "current undecodable":
+                    (runs / "current").write_bytes(undecodable)
+                    bad = ".glados/runs/current"
+                else:
+                    (runs / "stack").mkdir()  # exists; reading it fails
+                    write(runs / "current", "inner.md\n")
+                    bad = ".glados/runs/stack"
+                self._assert_blocks(repo, f"{bad} cannot be read")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertIn(way_out, reason)
+                self.assertIn(way_out, self._run_gemini(repo).stderr)
+        # rewritten as text, the same saved records let the session end
+        (runs / "stack").rmdir()
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_allows(repo)
+
+    def test_an_unreadable_stack_still_guards_the_outer_run(self):
+        """With current readable, an unreadable stack used to narrow the
+        check to current's own record, so an outer run's unsaved record let
+        the session end. As before the ledger (918f16a), the guard blocks
+        while any run that may be on the stack lacks a saved record, and
+        names it."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "inner.md")
+        write(runs / "outer.md", "# outer\n")
+        (runs / "stack").write_bytes("outer.md\ninner.md\n".encode("utf-16")
+                                     [:-1])  # a truncated UTF-16 write
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read")
+        # the same outer run on a readable stack is guarded as it always was
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_blocks(repo, "outer.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+
+    def test_a_current_with_no_stack_lines_guards_every_record(self):
+        """With `current` set, a stack that is missing, empty or blank names
+        no run enclosing it (the preamble writes the stack for every run,
+        its last line equal to current), so it cannot clear one. Only
+        current's own files were checked, and an outer run's unsaved record
+        let the session end; 918f16a's dirty check covered every record."""
+        for state in ("missing", "empty", "blank lines"):
+            with self.subTest(stack=state):
+                repo, git = self._repo()
+                runs = repo / ".glados" / "runs"
+                self._commit_records(repo, git, "inner.md")
+                write(runs / "outer.md", "# outer\n")
+                write(runs / "current", "inner.md\n")
+                if state == "empty":
+                    (runs / "stack").write_bytes(b"")
+                elif state == "blank lines":
+                    (runs / "stack").write_bytes(b"\n  \r\n\t\n")
+                self._assert_blocks(repo, "outer.md")
+                self._ledger_save(repo)
+                self._assert_allows(repo)
+        # a stack that lists the runs in flight is the authority: a file no
+        # run on it owns is not this session's to save
+        write(runs / "stack", "inner.md\n")
+        write(runs / "stale.md", "# a crashed session's record\n")
+        self._assert_allows(repo)
+        (runs / "stack").unlink()
+        self._assert_blocks(repo, "stale.md")
+
+    def test_a_marker_names_a_record_by_its_exact_name(self):
+        """On Windows and macOS a name that differs in case (or, on Windows,
+        ends in a dot) opens the record, so it did not count as missing,
+        but no file matched it exactly, so none was checked and an unsaved
+        run let the session end. A marker names a record exactly, or the
+        guard blocks and says so."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "inner.md")
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "stack", "Outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, ".glados/runs/Outer.md")
+        self._assert_blocks(repo, "no file has exactly the name")
+        self._ledger_save(repo)  # saves outer.md, which is not `Outer.md`
+        self._assert_blocks(repo, ".glados/runs/Outer.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_allows(repo)
+        # a trailing dot reaches inner.md on Windows; it names no record
+        write(runs / "inner.md", "# inner, changed since the save\n")
+        write(runs / "stack", "outer.md\ninner.md.\n")
+        write(runs / "current", "inner.md.\n")
+        self._assert_blocks(repo, ".glados/runs/inner.md.")
+
+    def _deny(self, path, listing_only=False):
+        """Take this user's access to ``path`` (only the right to list it,
+        with ``listing_only``) for the rest of the test. Skips where the
+        account ignores it (root)."""
+        if os.name == "nt":
+            user = os.environ.get("USERNAME")
+            if not user:
+                self.skipTest("no USERNAME to deny access to")
+            rights = "(RD)" if listing_only else "(OI)(CI)(F)"
+            p = subprocess.run(["icacls", str(path), "/deny",
+                                f"{user}:{rights}"],
+                               capture_output=True, text=True)
+            if p.returncode:
+                self.skipTest(f"icacls refused: {p.stdout}{p.stderr}")
+            self.addCleanup(subprocess.run, ["icacls", str(path),
+                                             "/remove:d", user],
+                            capture_output=True)
+        else:
+            mode = path.stat().st_mode
+            os.chmod(path, 0o300 if listing_only else 0)
+            self.addCleanup(os.chmod, path, mode)
+        try:
+            os.listdir(path)
+        except PermissionError:
+            return
+        self.skipTest("this account lists a directory it was denied")
+
+    def test_a_runs_directory_that_cannot_be_read_blocks(self):
+        """A permission error on .glados/runs/ or a directory in it hid the
+        files there. From Python 3.13, Path.exists() reads it as no marker,
+        so no run was in flight; on 3.10, listing the directory raised,
+        which both hosts treat as a non-blocking error. Either way the
+        session ended with a run's record unsaved. A directory under
+        .glados/runs/ that rglob could not read was skipped the same way."""
+        for state in ("all access denied", "listing denied"):
+            with self.subTest(runs=state):
+                repo, git = self._repo()
+                runs = repo / ".glados" / "runs"
+                self._commit_records(repo, git, "inner.md")
+                write(runs / "outer.md", "# outer\n")
+                write(runs / "stack", "outer.md\ninner.md\n")
+                write(runs / "current", "inner.md\n")
+                self._deny(runs, listing_only=state == "listing denied")
+                self._assert_blocks(repo, ".glados/runs cannot be listed")
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "inner.steps" / "design.md", "# not saved\n")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, "inner.steps/design.md")
+        self._deny(runs / "inner.steps", listing_only=True)
+        self._assert_blocks(repo, ".glados/runs/inner.steps cannot be listed")
+
+    def test_a_marker_that_is_a_dangling_link_blocks(self):
+        """Path.exists() follows a link, so a marker that is a link to
+        nothing counted as no marker at all."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "run.md")
+        try:
+            os.symlink(runs / "nowhere", runs / "current")
+        except (OSError, NotImplementedError):
+            self.skipTest("this account cannot make a symbolic link")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
 
     def test_block_message_names_both_markers_and_the_way_out(self):
         repo, _ = self._repo()

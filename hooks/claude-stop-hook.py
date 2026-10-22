@@ -7,8 +7,11 @@ mechanical backstop. It refuses session end while a run is in flight
 saved to the `glados/ledger` branch, where every run's record and step
 artifacts live (never on a work branch). `stack` lists every run in flight,
 and each listed record, with its step artifacts, must be on the ledger as it
-is on disk; without a stack file, `current` alone is checked. An abandoned
-run is released by deleting both markers.
+is on disk, under exactly the name the marker gives. With `current` set and
+no stack line (no stack file, or an empty one), nothing says which runs
+enclose it, so any file under .glados/runs/ not saved blocks too. A marker
+or a directory there that cannot be read blocks, since it hides which runs
+are in flight. An abandoned run is released by deleting both markers.
 
 Wire it in `.claude/settings.json`:
 
@@ -31,6 +34,8 @@ Dependency-free; Python 3.10+.
 """
 
 import json
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +50,9 @@ LEDGER = "glados/ledger"
 # Files directly under .glados/runs/ that never leave the working tree.
 LOCAL_ONLY = ("current", "stack", ".gitignore")
 SAVE = "python .glados/glados.py ledger save"
+# How the block message ends, before ABANDON.
+FINISH = (f"Finish the epilogue — save it ({SAVE}) — or, if the run is "
+          "abandoned, ")
 
 
 def _repo_root(cwd: str) -> Path:
@@ -61,6 +69,22 @@ def _git(root: Path, *args, stdin: str = "") -> str:
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def _present(path: Path) -> bool:
+    """Whether a marker exists, asked of the file itself (lstat), so a marker
+    that is a link to nothing is there, and then unreadable. One whose
+    presence cannot be checked (a permission error on .glados/runs/) counts
+    as there too. Path.exists() will not do: from Python 3.13 it reads any
+    error as absent, and a guard that crashes fails OPEN; either way the
+    session would end."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except (OSError, ValueError):
+        return True
+    return True
 
 
 def _marker_lines(path: Path):
@@ -84,31 +108,46 @@ def _marker_lines(path: Path):
 
 
 def in_flight_records(root: Path):
-    """The records of every run in flight, outermost first; None when no run
-    is in flight.
+    """(refs, sweep): the records of every run in flight, outermost first,
+    and whether every file under .glados/runs/ that is not saved counts as
+    well; None when no run is in flight.
 
-    `.glados/runs/stack` lists them: every run writes it, and a nested run
-    (build-feature runs plan-feature inside itself) pushes onto it, so an
-    outer run stays guarded while an inner one runs and after it ends.
-    Without a stack file — an install whose preamble predates it —
-    `.glados/runs/current` alone names the run. A `current` the stack does
-    not list is still checked."""
-    runs = root / ".glados" / "runs"
+    `.glados/runs/stack` lists them: every run writes it, its last line
+    equal to `current`, and a nested run (build-feature runs plan-feature
+    inside itself) pushes onto it, so an outer run stays guarded while an
+    inner one runs and after it ends. A `current` the stack does not list
+    is still checked. With `current` set and no stack line (no stack file,
+    from a preamble that predates it or deleted by hand, or an empty one),
+    nothing says which runs enclose it, so every file not saved counts,
+    as 918f16a's dirty check did; so it does behind an unreadable marker."""
+    runs = root / RUNS
     stack, marker = runs / "stack", runs / "current"
-    if not stack.exists() and not marker.exists():
+    has_stack, has_current = _present(stack), _present(marker)
+    if not has_stack and not has_current:
         return None  # no run in flight — never block ordinary sessions
-    stack_lines = _marker_lines(stack) if stack.exists() else []
+    stack_lines = _marker_lines(stack) if has_stack else []
     refs = list(stack_lines or [])
-    if not marker.exists():
+    if not has_current:
         # A stack with no current: still in flight unless the stack is empty.
-        # An unreadable stack is in flight with no refs: every file is checked.
-        return [] if stack_lines is None else (refs or None)
+        # An unreadable stack is in flight (unreadable_markers blocks on it).
+        if stack_lines is None:
+            return [], True
+        return (refs, False) if refs else None
     for ref in (_marker_lines(marker) or [])[:1]:
         if ref not in refs:
             refs.append(ref)
-    # An empty or unreadable `current` is still a run in flight: every file
-    # under .glados/runs/ is checked.
-    return refs
+    # An empty `current` is still a run in flight; an unreadable one blocks.
+    return refs, not stack_lines
+
+
+def unreadable_markers(root: Path) -> list:
+    """The markers that exist but cannot be read or decoded. Such a marker
+    hides which runs are in flight, so no run on it can be shown saved: it
+    blocks, where reading it as no record at all let the session end with
+    an outer run's record unsaved, or a run's record not yet written."""
+    runs = root / RUNS
+    return [f"{RUNS}/{name}" for name in ("stack", "current")
+            if _present(runs / name) and _marker_lines(runs / name) is None]
 
 
 def _ledger_blobs(root: Path) -> dict:
@@ -129,67 +168,130 @@ def _ledger_blobs(root: Path) -> dict:
     return blobs
 
 
-def _files_to_check(root: Path, refs):
-    """(files, missing): the repo-relative files each in-flight run owns (its
-    record and its step artifacts, `<record-stem>.*`), and the records not
-    on disk at all. With no readable ref, every file under .glados/runs/
-    except the markers and the files this branch tracks unchanged (records
-    committed before they moved to the ledger)."""
+def _listing(path: Path, unlistable: list) -> list:
+    """A directory's entries, sorted. One that cannot be listed goes in
+    ``unlistable``: nothing in it can be shown saved, so it blocks, where
+    the error used to crash the guard (a non-blocking error to both
+    hosts)."""
+    try:
+        with os.scandir(path) as it:
+            return sorted(Path(entry.path) for entry in it)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    except OSError:
+        unlistable.append(path)
+        return []
+
+
+def _walk(entry: Path, unlistable: list) -> list:
+    """Every file at or under ``entry``, walked by hand: rglob skips a
+    directory it cannot read without a word."""
+    try:
+        mode = os.lstat(entry).st_mode
+    except FileNotFoundError:
+        return []
+    except OSError:
+        unlistable.append(entry)
+        return []
+    if stat.S_ISDIR(mode):
+        return [f for child in _listing(entry, unlistable)
+                for f in _walk(child, unlistable)]
+    if stat.S_ISLNK(mode):
+        return [entry] if entry.is_file() else []
+    return [entry] if stat.S_ISREG(mode) else []
+
+
+def _files_to_check(root: Path, refs, sweep: bool):
+    """(files, missing, unlistable): the repo-relative files each in-flight
+    run owns (its record and its step artifacts, `<record-stem>.*`), and
+    with ``sweep`` every file under .glados/runs/ except the markers and the
+    files this branch tracks unchanged (records committed before they moved
+    to the ledger); the records a marker names that are not on disk under
+    exactly that name; and the directories that could not be listed."""
     runs = root / RUNS
-    entries = sorted(runs.iterdir()) if runs.is_dir() else []
-
-    def walk(entry):
-        if entry.is_file():
-            return [entry]
-        return sorted(f for f in entry.rglob("*") if f.is_file())
-
+    unlistable: list = []
+    entries = _listing(runs, unlistable)
     files, missing = [], []
-    if not refs:
+    if sweep:
         tracked = set(_git(root, "ls-files", "-z", "--", RUNS).split("\0"))
         changed = set(_git(root, "diff", "--name-only", "-z", "HEAD", "--",
                            RUNS).split("\0"))
         for entry in entries:
             if entry.name in LOCAL_ONLY:
                 continue
-            for f in walk(entry):
+            for f in _walk(entry, unlistable):
                 rel = f.relative_to(root).as_posix()
                 if rel not in tracked or rel in changed:
                     files.append(rel)
-        return files, missing
+    names = {entry.name for entry in entries}
     for ref in refs:
         name = Path(ref).name
         stem = name[:-3] if name.endswith(".md") else name
-        if not (runs / name).is_file():
+        # Exactly that name. On Windows and macOS `Outer.md` (on Windows,
+        # `outer.md.` too) opens outer.md, but no entry below matches it,
+        # so the run would be checked as having no files at all.
+        if name not in names:
             missing.append(f"{RUNS}/{name}")
         for entry in entries:
             if entry.name == name or entry.name.startswith(stem + "."):
-                files += [f.relative_to(root).as_posix() for f in walk(entry)]
-    return sorted(set(files)), missing
+                files += [f.relative_to(root).as_posix()
+                          for f in _walk(entry, unlistable)]
+    shown = sorted({p.relative_to(root).as_posix() for p in unlistable})
+    return sorted(set(files)), missing, shown
 
 
 def in_flight_without_record(root: Path):
     """Return a reason string if a run is unfinished, else None (allow)."""
-    refs = in_flight_records(root)
-    if refs is None:
+    found = in_flight_records(root)
+    if found is None:
         return None
+    refs, sweep = found
 
     # A run's trail is saved when every file it owns is on the ledger as it
-    # is on disk, compared by the blob `git add` would make of it.
-    files, missing = _files_to_check(root, refs)
+    # is on disk, compared by the blob `git add` would make of it. Behind an
+    # unreadable marker every file under .glados/runs/ is listed.
+    unreadable = unreadable_markers(root)
+    files, missing, unlistable = _files_to_check(root, refs,
+                                                 sweep or bool(unreadable))
     ledger = _ledger_blobs(root)
     shas = _git(root, "hash-object", "--stdin-paths",
                 stdin="".join(f + "\n" for f in files)).split() if files else []
     hashes = dict(zip(files, shas))
-    unsaved = [f for f in files if hashes.get(f) not in ledger.get(f, ())]
-    unsaved += [m for m in missing if m not in ledger]
+    absent = [m for m in missing if m not in ledger]
+    unsaved = sorted(set(f for f in files
+                         if hashes.get(f) not in ledger.get(f, ()))
+                     | set(absent))
+    if unreadable or unlistable:
+        problems = ([" and ".join(unreadable) + " cannot be read or "
+                     "decoded as UTF-8 or UTF-16 text"] if unreadable else [])
+        problems += ([" and ".join(unlistable) + " cannot be listed"]
+                     if unlistable else [])
+        fixes = (["rewrite it as text (stack: each run's record filename, "
+                  "one per line, outermost first; current: the innermost "
+                  "one's)"] if unreadable else [])
+        fixes += ([f"give this user read access to {RUNS}/ and all in it"]
+                  if unlistable else [])
+        fixes.append(f"save every record ({SAVE})")
+        fix = (", ".join(fixes[:-1]) + (", and " if len(fixes) > 2 else
+                                        " and ") + fixes[-1])
+        listed = (f"; not saved to the {LEDGER} branch: "
+                  + ", ".join(unsaved)) if unsaved else ""
+        return ("A GLaDOS run is in flight, but " + "; ".join(problems)
+                + ", so which runs are in flight, and whether each one's "
+                "record is saved, is unknown" + listed + ". "
+                + fix[0].upper() + fix[1:] + "; or, if the run is "
+                "abandoned, " + ABANDON)
     if not unsaved:
         return None
-    return ("A GLaDOS run is in flight (.glados/runs/current or "
-            ".glados/runs/stack is set; the stack lists every run in flight, "
-            "outermost first) but its run record is not saved to the "
-            f"{LEDGER} branch: " + ", ".join(sorted(unsaved)) +
-            f". Finish the epilogue — save it ({SAVE}) — or, if the run is "
-            "abandoned, " + ABANDON)
+    reason = ("A GLaDOS run is in flight (.glados/runs/current or "
+              ".glados/runs/stack is set; the stack lists every run in "
+              "flight, outermost first) but its run record is not saved to "
+              f"the {LEDGER} branch: " + ", ".join(unsaved) + ".")
+    if absent:
+        reason += (" A marker names " + ", ".join(absent) + ", but no file "
+                   "has exactly the name: write that record, or correct "
+                   "the marker line to the file's name, case included.")
+    return reason + " " + FINISH + ABANDON
 
 
 def main() -> int:

@@ -550,7 +550,9 @@ record the branch commits. Two things to do by hand:
   (`git worktree remove <path>`): `ledger save` refuses to move a branch
   under a checkout.
 - Plugin-only repos that copied the guard hooks copy them again: they now
-  check that a run's record is saved to the ledger, not committed.
+  check that a run's record is saved to the ledger, not committed, and a
+  run marker they cannot read (or `.glados/runs/` they cannot list) blocks
+  the session end instead of counting as no record.
 
 **GLaDOS marks what it posts on a merge request.** From 2.5, everything a
 run posts on a merge request starts with `(GLaDOS <workflow>)`, and

@@ -21,16 +21,25 @@ The guards check every record the stack lists, with its step artifacts
 (`<record-stem>.*`): any such file that is not on the ledger as it is on disk
 (compared with the local `glados/ledger` branch and every fetched remote copy
 of it) blocks the session end, and the message names it and the command that
-saves it, `python .glados/glados.py ledger save`. Without a `stack` file (an
-install compiled before it existed), they check `current` alone. Either marker on its own means a run is
-in flight, so to release a run you have abandoned, delete both
-`.glados/runs/current` and `.glados/runs/stack`.
+saves it, `python .glados/glados.py ledger save`. A marker names a record by
+its exact file name: one that differs in case, which still opens the file
+on Windows and macOS, blocks and says so. With `current` set and no line in
+`stack` (no stack file, from an install compiled before it existed or
+deleted by hand, or an empty one), nothing says which runs enclose
+`current`, so they check its files and every file under `.glados/runs/`
+that is not saved, as the guards did before records moved to the ledger.
+Either marker on its own means a run is in flight, so to release a run you
+have abandoned, delete both `.glados/runs/current` and `.glados/runs/stack`.
 
 The guards read the markers whatever encoding the agent's shell wrote them
 in: a UTF-8 byte-order mark is ignored, UTF-16 (Windows PowerShell 5.1
-redirection) is decoded, and a marker they cannot read at all still counts
-as a run in flight, so every unsaved file under `.glados/runs/` is checked
-instead of the guard failing open.
+redirection) is decoded. A marker that exists but cannot be read or
+decoded hides which runs are in flight, so it blocks the session end even
+when every file under `.glados/runs/` is saved, naming the marker and any
+unsaved file there, until it is rewritten as text or both markers are
+deleted. So does a marker that is a link to nothing, and so does
+`.glados/runs/` or a directory in it that cannot be listed (a permission
+error), until this user can read it again.
 
 `glados.py install` vendors the guard scripts into `.glados/hooks/` in your
 repo, so the wiring snippets below reference stable, repo-local paths. The
