@@ -103,6 +103,10 @@ def _marker_lines(path: Path):
         text = data.decode(codec)
     except ValueError:
         return None
+    if "\0" in text:
+        # Half UTF-8, half UTF-16 (PowerShell 5.1's Set-Content, then
+        # `>>`) decodes to names full of NULs: no record has one.
+        return None
     lines = (line.replace("\ufeff", "").strip() for line in text.splitlines())
     return [line for line in lines if line]
 
@@ -257,7 +261,7 @@ def in_flight_without_record(root: Path):
     shas = _git(root, "hash-object", "--stdin-paths",
                 stdin="".join(f + "\n" for f in files)).split() if files else []
     hashes = dict(zip(files, shas))
-    absent = [m for m in missing if m not in ledger]
+    absent = list(dict.fromkeys(m for m in missing if m not in ledger))
     unsaved = sorted(set(f for f in files
                          if hashes.get(f) not in ledger.get(f, ()))
                      | set(absent))
@@ -266,7 +270,8 @@ def in_flight_without_record(root: Path):
                      "decoded as UTF-8 or UTF-16 text"] if unreadable else [])
         problems += ([" and ".join(unlistable) + " cannot be listed"]
                      if unlistable else [])
-        fixes = (["rewrite it as text (stack: each run's record filename, "
+        fixes = ([f"rewrite {'them' if len(unreadable) > 1 else 'it'} "
+                  "as text (stack: each run's record filename, "
                   "one per line, outermost first; current: the innermost "
                   "one's)"] if unreadable else [])
         fixes += ([f"give this user read access to {RUNS}/ and all in it"]
@@ -299,7 +304,11 @@ def main() -> int:
         event = json.load(sys.stdin)
     except (ValueError, OSError):
         event = {}
-    root = _repo_root(event.get("cwd", ""))
+    # Valid JSON that is not an object (null, a list), or a cwd that is
+    # not text, crashed here: exit 1 is a non-blocking error, so the
+    # session ended. Fall back to the process cwd, as for no cwd.
+    cwd = event.get("cwd") if isinstance(event, dict) else None
+    root = _repo_root(cwd if isinstance(cwd, str) else "")
     reason = in_flight_without_record(root)
     if reason:
         json.dump({"decision": "block", "reason": reason}, sys.stdout)

@@ -6692,6 +6692,58 @@ class TestHookGuards(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stderr.strip(), "", "gemini guard must allow")
 
+    def test_an_event_that_is_not_an_object_still_guards(self):
+        """The Claude hook read `cwd` with event.get, so an event that is
+        valid JSON but not an object (null, a list) raised AttributeError:
+        exit 1, a non-blocking error, and the session ended with a record
+        unsaved. A `cwd` that is not text crashed the same way. Both fall
+        back to the process's working directory, as a missing `cwd` does."""
+        repo, _ = self._repo()
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        for event in ("null", "[]", "3", '"x"', '{"cwd": 5}',
+                      '{"cwd": null}', '{"cwd": ["a"]}'):
+            with self.subTest(event=event):
+                p = subprocess.run(
+                    [sys.executable,
+                     str(REPO / "hooks" / "claude-stop-hook.py")],
+                    input=event, capture_output=True, text=True,
+                    cwd=str(repo))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertNotIn("Traceback", p.stderr)
+                self.assertEqual(json.loads(p.stdout)["decision"], "block")
+
+    def test_a_marker_in_mixed_encodings_is_named_undecodable(self):
+        """Windows PowerShell 5.1 can leave a stack half UTF-8, half UTF-16
+        (`Set-Content`, then `>>`). It decoded as UTF-8 to names full of
+        NULs: the guard blocked, but called them missing records, put NULs
+        in its message and named one twice. A NUL is no record name: such a
+        marker is undecodable, and the message asks for a rewrite. A name
+        a marker repeats is named once, and two bad markers are "them"."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        (runs / "stack").write_bytes(
+            b"outer.md\r\n" + "inner.md\r\n".encode("utf-16-le")
+            + "inner.md\r\n".encode("utf-16-le"))
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read or "
+                                  "decoded")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertNotIn("\x00", reason)
+        self.assertNotIn("\x00", self._run_gemini(repo).stderr)
+        self.assertIn("Rewrite it as text", reason)
+        (runs / "current").write_bytes(b"\x80inner.md\n")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertIn(".glados/runs/stack and .glados/runs/current cannot "
+                      "be read", reason)
+        self.assertIn("Rewrite them as text", reason)
+        # a repeated name is named once
+        write(runs / "stack", "ghost.md\nghost.md\n")
+        write(runs / "current", "ghost.md\n")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertEqual(reason.count(".glados/runs/ghost.md"), 2, reason)
+
     def test_stack_with_uncommitted_outer_record_blocks(self):
         # build-feature (outer) runs plan-feature (inner): the inner record is
         # committed, the outer one is not — the session must not end.

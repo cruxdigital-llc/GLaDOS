@@ -34,7 +34,8 @@ have abandoned, delete both `.glados/runs/current` and `.glados/runs/stack`.
 The guards read the markers whatever encoding the agent's shell wrote them
 in: a UTF-8 byte-order mark is ignored, UTF-16 (Windows PowerShell 5.1
 redirection) is decoded. A marker that exists but cannot be read or
-decoded hides which runs are in flight, so it blocks the session end even
+decoded (a file half UTF-8, half UTF-16, from `Set-Content` then `>>`,
+counts too) hides which runs are in flight, so it blocks the session end even
 when every file under `.glados/runs/` is saved, naming the marker and any
 unsaved file there, until it is rewritten as text or both markers are
 deleted. So does a marker that is a link to nothing, and so does
