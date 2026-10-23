@@ -707,6 +707,28 @@ class TestVendor(unittest.TestCase):
         self.assertIn(".glados/ci/glados-check.gitlab-ci.yml", out)
         self.assertIn("include:", out)
 
+    def test_gitlab_enforcement_survives_a_reinstall(self):
+        """The GitLab template said to drop --report-only inside it, but
+        every install vendors it again with the flag, and `check` reports
+        no difference: the upgrade's reinstall quietly turned enforcement
+        off. It says to override the job's script in .gitlab-ci.yml, which
+        no install touches."""
+        tmpl = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        self.assertNotIn("drop --report-only", tmpl)
+        self.assertIn("#   glados-check:\n#     script:\n"
+                      "#       - python .glados/glados.py check --target .\n",
+                      tmpl)
+        t = make_target()
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        vendored = t / ".glados" / "ci" / "glados-check.gitlab-ci.yml"
+        vendored.write_text(read(vendored).replace(" --report-only", ""),
+                            encoding="utf-8", newline="\n")
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("check --target . --report-only", read(vendored),
+                      "a reinstall vendors the flag again")
+
     def test_the_github_enable_commands_run_as_printed(self):
         """The GitHub stanza copied the workflow into .github/workflows/,
         which a repository with no workflow yet lacks, so `cp` failed as
