@@ -5395,6 +5395,38 @@ class TestPipelines(unittest.TestCase):
         write(table, original)
         self.effective(t)
 
+    def test_before_the_reinstall_effective_config_names_the_version(self):
+        """Run on a 2.4 install before the reinstall, effective-config failed
+        on every workflow, each line saying to set the bound 2.4's table
+        lacks (params.pipeline, params.standards-gate) in glados.yaml, where
+        MIGRATION.md says not to: a value there overrides the preset from
+        then on. It now says first that another version built the install
+        and that the reinstall supplies what the table lacks."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        pipeline_ns = re.search(r"^    pipeline:\n(?:(?:      .*| *#.*)?\n)*",
+                                original, re.M).group(0)
+        write(table, original.replace(pipeline_ns, ""))
+        missing = ("`params.pipeline.max-cycles` but the resolved manifest "
+                   "has no value")
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(missing, out)
+        self.assertNotIn("built by GLaDOS", out)
+        vendored = t / ".glados" / "glados.py"
+        write(vendored, re.sub(r'^VERSION = "[^"]+"', 'VERSION = "2.4.0"',
+                               read(vendored), count=1, flags=re.M))
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        first = out.splitlines()[1]
+        self.assertIn("this install was built by GLaDOS 2.4.0", first)
+        self.assertIn("re-run install", first)
+        self.assertIn(".glados/presets.yaml is GLaDOS 2.4.0's table", first)
+        self.assertIn("not glados.yaml's", first)
+        self.assertIn(missing, out)
+
     def test_the_run_table_must_spell_every_decision_right(self):
         """effective-config checked the run's own table for bounds only. A
         decision class it misspells (`agnet`) printed a digest to pin, and

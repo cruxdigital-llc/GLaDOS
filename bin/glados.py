@@ -4643,6 +4643,15 @@ def cmd_effective_config(args) -> int:
               + decision_value_errors(r))
     if errors:
         print(f"glados effective-config: FAIL — {where}")
+        skew = _version_skew(target)
+        if skew:
+            # Before the reinstall the run's table is the old version's,
+            # which lacks keys this version's workflows read, and each error
+            # below says to set them in glados.yaml: a value there would
+            # override the preset from then on.
+            print(f"  - {skew}. Until then {RUN_PRESETS} is GLaDOS "
+                  f"{_installed_version(target)}'s table: what it lacks below "
+                  f"is the reinstall's to supply, not glados.yaml's")
         for e in errors:
             print(f"  - {e}")
         return 1
