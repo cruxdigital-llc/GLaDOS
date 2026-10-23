@@ -6586,6 +6586,66 @@ class TestDoctor(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("does not mention glados.yaml", out)
 
+    def test_ci_for_a_project_in_a_subdirectory_is_named_unsupported(self):
+        """The vendored CI templates run `.glados/glados.py check --target .`
+        from the repository's root, GitHub reads workflows only from the
+        root's .github/workflows/, and a GitLab include's local: path is from
+        the root too. For a project in a subdirectory (packages/app), install
+        printed enable commands that made a workflow GitHub never runs, and
+        doctor called that wired, and a root .gitlab-ci.yml that includes the
+        package's template not wired. Both now say CI enforcement is
+        supported only for a project at the repository's root; a project
+        there, in a repository or not, keeps the stanza and the answer."""
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                repo = tmpdir("glados-ci-sub-")
+                for args in (("init", "-q"), ("checkout", "-q", "-b", "main")):
+                    subprocess.run(["git", "-C", str(repo), *args],
+                                   capture_output=True)
+                app = repo / "packages" / "app"
+                write(app / "glados.yaml", read(EXAMPLE).replace(
+                    "platform: gitlab", f"platform: {platform}", 1))
+                rc, out = install("claude", app)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("cp .glados/ci/", out)
+                self.assertNotIn("- local: '.glados/ci/", out)
+                self.assertIn("only for a project at the repository root",
+                              out)
+                self.assertIn("packages/app/", out)
+                # What the printed commands made, run in the package...
+                write(app / ".github" / "workflows" / "glados-check.yml",
+                      read(app / ".glados" / "ci" /
+                           "glados-check.github-actions.yml"))
+                write(app / ".gitlab-ci.yml", "include:\n  - local: "
+                      "'.glados/ci/glados-check.gitlab-ci.yml'\n")
+                # ...and wiring at the root that reaches the package.
+                write(repo / ".gitlab-ci.yml", "include:\n  - local: "
+                      "'packages/app/.glados/ci/glados-check.gitlab-ci.yml'"
+                      "\n")
+                rc, out = run_cli("doctor", "--target", app, "--source",
+                                  REPO)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("CI check wired: yes", out)
+                self.assertNotIn("CI check wired: no —", out)
+                self.assertIn("CI check wired: not supported", out)
+                self.assertIn("packages/app/", out)
+        # A project at the root of its repository is unchanged.
+        repo = tmpdir("glados-ci-root-")
+        subprocess.run(["git", "-C", str(repo), "init", "-q"],
+                       capture_output=True)
+        write(repo / "glados.yaml", read(EXAMPLE).replace(
+            "platform: gitlab", "platform: github", 1))
+        rc, out = install("claude", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("cp .glados/ci/glados-check.github-actions.yml", out)
+        rc, out = run_cli("doctor", "--target", repo, "--source", REPO)
+        self.assertIn("CI check wired: no —", out)
+        write(repo / ".github" / "workflows" / "glados-check.yml",
+              read(repo / ".glados" / "ci" /
+                   "glados-check.github-actions.yml"))
+        rc, out = run_cli("doctor", "--target", repo, "--source", REPO)
+        self.assertIn("CI check wired: yes", out)
+
 
 class TestSda(unittest.TestCase):
     """The explicit-only `sda:` manifest key — install-time scaffolding,

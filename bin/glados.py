@@ -4214,12 +4214,14 @@ def cmd_install(args) -> int:
     advisory = _phase_transition_advisory(prev_report, comp.resolved.phase)
     if advisory:
         print(advisory)
+    subdir = _repo_subdir(target)
     try:
-        ci_wired = _ci_check_wired(target)
+        ci_wired = not subdir and _ci_check_wired(target)
     except Fatal:
         ci_wired = False
     if not ci_wired:
-        print(_ci_enable_stanza(comp.resolved.values.get("platform")))
+        print(_ci_enable_stanza(comp.resolved.values.get("platform"),
+                                subdir))
     print()
     print(report)
     print(f"glados: assembly report written to .glados/assembly-report.md")
@@ -4267,9 +4269,42 @@ def _phase_transition_advisory(prev_report, new_phase: str):
     return "\n".join(lines)
 
 
-def _ci_enable_stanza(platform) -> str:
+def _repo_subdir(target: Path) -> str:
+    """``target``'s directory inside its git repository, with a trailing
+    '/': '' at the top level, and outside a repository (or without git)."""
+    try:
+        proc = subprocess.run(["git", "-C", str(target), "rev-parse",
+                               "--show-prefix"], capture_output=True,
+                              timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.decode("utf-8", "replace").strip()
+
+
+def _ci_unsupported(subdir: str) -> str:
+    """Why a project in a subdirectory of its repository has no CI check."""
+    return (f"CI enforcement is supported only for a project at the "
+            f"repository root, and this one is {subdir} in its repository: "
+            f"the vendored templates run .glados/glados.py from the root")
+
+
+def _ci_enable_stanza(platform, subdir: str = "") -> str:
     """The one-paste instruction wiring the vendored CI backstop, selected by
-    the manifest's platform: key (both templates are always vendored)."""
+    the manifest's platform: key (both templates are always vendored).
+
+    For a project in a subdirectory (``subdir``, from _repo_subdir), the
+    commands would make a workflow GitHub never runs (it reads only the
+    root's .github/workflows/) and a GitLab include of a path that is not
+    there, and both templates run `.glados/glados.py` from the root, so
+    it says CI is not supported for it instead."""
+    if subdir:
+        guide = {"github": "docs/guides/github.md",
+                 "gitlab": "docs/guides/gitlab.md"}.get(
+                     platform, "docs/guides/github.md or gitlab.md")
+        return (f"glados: CI backstop vendored to .glados/ci/, but not "
+                f"wired here — {_ci_unsupported(subdir)} (see {guide})")
     gitlab = ("glados: CI backstop vendored to .glados/ci/ — enable it in "
               ".gitlab-ci.yml:\n"
               "    include:\n"
@@ -4702,8 +4737,15 @@ def cmd_doctor(args) -> int:
 
     print(_assembly_report_doctor_line(source, target, modes))
 
+    # For a project in a subdirectory, a CI file beside it is one GitHub and
+    # GitLab never read, and one at the root runs .glados/glados.py there:
+    # "yes" and "no" were both wrong answers.
+    subdir = _repo_subdir(target)
     try:
-        if _ci_check_wired(target):
+        if subdir:
+            print(f"  CI check wired: not supported — "
+                  f"{_ci_unsupported(subdir)}")
+        elif _ci_check_wired(target):
             print("  CI check wired: yes")
         else:
             print("  CI check wired: no — enable the vendored template under "
