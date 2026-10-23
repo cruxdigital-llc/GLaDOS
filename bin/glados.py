@@ -5686,6 +5686,17 @@ def _ledger_name_clash(entries: dict, updates: dict, path: str):
     return None
 
 
+def _dot_git_at(path: str):
+    """The part of ``path`` up to its first `.git` component (any case), or
+    None. git keeps no such path in a tree: written anyway, it was left out
+    with only an "Ignoring path" warning."""
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if part.lower() == ".git":
+            return "/".join(parts[:i + 1])
+    return None
+
+
 def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
     """What the working tree's files change on the ledger tree ``entries``.
 
@@ -5732,6 +5743,22 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
                 synced[p] = None
             if not gone:
                 notes.append(f"{rel}: neither here nor on the ledger")
+    # A repository kept among a run's step artifacts: git holds no path
+    # with a .git component, and save once named each such file saved and
+    # recorded it as synced, so restore then deleted it as compacted away.
+    dot_git: dict = {}
+    for p in files:
+        at = _dot_git_at(p)
+        if at:
+            dot_git.setdefault(at, []).append(p)
+    if dot_git:
+        files = [p for p in files if not _dot_git_at(p)]
+        for at, under in sorted(dot_git.items()):
+            shown = at if under == [at] else at + "/"
+            notes.append(f"{shown}: left off the ledger ({len(under)} "
+                         f"file(s)), as git holds no path with a .git "
+                         f"component — keep that repository as an archive "
+                         f"(`git bundle`, a tarball) instead")
     hashes = _hash_files(git, files)
     changed = []
     for p in files:
@@ -5804,7 +5831,12 @@ def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
     out: on Windows git leaves out of an index, with only a warning, any
     path Windows cannot hold as a file (? * : " < > |, a trailing period, a
     device name such as aux), so a save there dropped such a record that a
-    clone on Linux or macOS had put on the ledger."""
+    clone on Linux or macOS had put on the ledger. core.protectHFS (on by
+    default on macOS) is off for the same reason.
+
+    The tree written is checked against ``tree``: a path git leaves out
+    (a .git component, which _ledger_plan_local keeps out, or any other)
+    stops the save rather than leaving the ledger without a word."""
     for f, d in _tree_name_clashes(tree)[:1]:
         raise Fatal(f"{f} and {d} cannot both be on the ledger, where a file "
                     f"and a directory cannot share a name; nothing was saved "
@@ -5816,9 +5848,18 @@ def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
             info = b"".join(f"{mode} {sha}\t".encode("ascii")
                             + path.encode("utf-8", "surrogateescape") + b"\0"
                             for path, (mode, sha) in sorted(tree.items()))
-            git.run("-c", "core.protectNTFS=false", "update-index", "-z",
+            git.run("-c", "core.protectNTFS=false", "-c",
+                    "core.protectHFS=false", "update-index", "-z",
                     "--index-info", input=info, env=env)
-        return git.out("write-tree", env=env)
+        sha = git.out("write-tree", env=env)
+    listed = git.run("ls-tree", "-r", "-z", "--name-only", sha).stdout
+    lost = sorted(set(tree) - {p.decode("utf-8", "surrogateescape")
+                               for p in listed.split(b"\0") if p})
+    if lost:
+        more = f" and {len(lost) - 1} more" if len(lost) > 1 else ""
+        raise Fatal(f"git left {lost[0]}{more} out of the ledger's tree; "
+                    f"nothing was saved — rename it, then save again")
+    return sha
 
 
 def _ledger_apply_refresh(git: _LedgerGit, refresh: dict) -> dict:

@@ -9121,6 +9121,43 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn(".glados/runs/r1.evidence/log.txt",
                       self._ledger_files(repo))
 
+    def test_a_repository_kept_as_an_artifact_is_named_not_lost(self):
+        """git leaves out of a tree, with only an "Ignoring path" warning,
+        any path with a .git component, such as a repository a run keeps
+        among its step artifacts. Save reported each of its files saved,
+        with a ledger link, and recorded them as synced though the ledger
+        held none of them, so a restore in that clone deleted them as
+        compacted away (on Windows it stopped on git's read-only objects).
+        Save leaves such paths off with one note, and stops when a tree it
+        writes lacks any path it meant to hold."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        sample = runs / "r1.evidence" / "sample"
+        sample.mkdir(parents=True)
+        self._git(sample, "init", "-q")
+        nested = sorted(p for p in (sample / ".git").rglob("*") if p.is_file())
+        self.assertTrue(nested)
+        rc, out = self._save(a)
+        self.assertIn("saved 1 file(s)", out)
+        self.assertIn(".glados/runs/r1.evidence/sample/.git/: left off the "
+                      "ledger", out)
+        self.assertEqual(self._ledger_files(a), {".glados/runs/r1.md"})
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("removed", out)
+        for p in nested:
+            self.assertTrue(p.is_file(), p)
+        # the last line: a tree git wrote without a path it was given
+        git = glados._LedgerGit(a)
+        sha = self._git(a, "rev-parse", "HEAD:app.py")
+        with self.assertRaises(glados.Fatal) as caught:
+            glados._ledger_write_tree(
+                git, {".glados/runs/r2.md": ("100644", sha),
+                      ".glados/runs/r2.evidence/x/.git/HEAD": ("100644", sha)})
+        self.assertIn(".glados/runs/r2.evidence/x/.git/HEAD", str(caught.exception))
+
     def test_a_push_that_lost_the_ref_lock_is_retried(self):
         """Another push landed after the remote advertised its refs, so the
         remote could not lock the ledger ref ("[remote rejected] ... failed
