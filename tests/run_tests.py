@@ -7844,6 +7844,47 @@ class TestHookGuards(unittest.TestCase):
         write(runs / "stack", "r1.md\n")
         self._assert_allows(repo)
 
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin",
+                     "this platform holds only file names in Unicode")
+    def test_a_file_name_that_is_not_utf8_is_saved_and_guarded(self):
+        """Linux holds any bytes in a file name, and a step artifact can
+        carry one in Latin-1 (caf\\xe9.txt, from an archive or a tool).
+        `ledger save` stopped with a UnicodeEncodeError traceback, and the
+        guards, which decoded git's output with replacement, could not
+        match the saved name to the file: they would have blocked forever.
+        Save, restore and both guards carry the name's bytes through."""
+        repo, git = self._repo()
+        git("remote", "add", "origin", "https://example.com/team/proj.git")
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        (runs / "r1.evidence").mkdir()
+        odd = os.fsencode(runs / "r1.evidence") + b"/caf\xe9.txt"
+        with open(odd, "wb") as fh:
+            fh.write(b"menu\n")
+        write(runs / "stack", "r1.md\n")
+        write(runs / "current", "r1.md\n")
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertIn("/glados/ledger/.glados/runs/r1.evidence/caf%E9.txt",
+                      out)
+        listed = subprocess.run(
+            ["git", "-C", str(repo), "ls-tree", "-r", "-z", "--name-only",
+             "glados/ledger"], capture_output=True).stdout.split(b"\0")
+        self.assertIn(b".glados/runs/r1.evidence/caf\xe9.txt", listed)
+        self._assert_allows(repo)
+        (runs / "stack").unlink()       # current alone: every file counts
+        self._assert_allows(repo)
+        os.unlink(odd)
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        with open(odd, "rb") as fh:
+            self.assertEqual(fh.read(), b"menu\n")
+        self._assert_allows(repo)
+
     def test_block_message_names_both_markers_and_the_way_out(self):
         repo, _ = self._repo()
         runs = repo / ".glados" / "runs"
@@ -8978,6 +9019,60 @@ class TestRunLedger(unittest.TestCase):
             ["git", "-C", str(b), "ls-tree", "-r", "-z", "--name-only",
              "origin/glados/ledger"], capture_output=True).stdout
         self.assertIn(long.encode("utf-8") + b"\0", listed)
+
+    def test_a_name_that_is_not_utf8_stays_on_the_ledger_everywhere(self):
+        """A Linux clone can save a step artifact whose name is not UTF-8
+        (caf\\xe9.txt). Restore wrote it on Windows as a name with a lone
+        surrogate in it, one no other tool reads back as that file, and
+        macOS refuses such a name. Linux restores it under its own bytes;
+        Windows and macOS leave it on the ledger with a note, and a save
+        there keeps it."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        ok = ".glados/runs/2026-10-23-fix-bug-ok.md"
+        write(a / ok, "# ok\n")
+        self._save(a)
+
+        def git(*args, data=b""):
+            p = subprocess.run(["git", "-C", str(a), *args], input=data,
+                               capture_output=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return p.stdout.decode("ascii").strip()
+        blob = git("hash-object", "-w", "--stdin", data=b"menu\n")
+        evidence = git("mktree", "-z", data=b"100644 blob " + blob.encode()
+                       + b"\tcaf\xe9.txt\0")
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        runs = git("mktree", "-z", data=(
+            f"040000 tree {evidence}\t2026-10-23-fix-bug-ok.evidence\0"
+            f"100644 blob {self._git(a, 'rev-parse', f'{tip}:{ok}')}\t"
+            f"2026-10-23-fix-bug-ok.md\0").encode())
+        dot = git("mktree", "-z", data=f"040000 tree {runs}\truns\0".encode())
+        top = git("mktree", "-z", data=f"040000 tree {dot}\t.glados\0".encode())
+        commit = git("commit-tree", top, "-p", tip, "-m", "record runs")
+        git("push", "-q", "origin", f"{commit}:refs/heads/glados/ledger")
+        odd = b".glados/runs/2026-10-23-fix-bug-ok.evidence/caf\xe9.txt"
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(read(b / ok), "# ok\n")
+        evidence_dir = b / ".glados" / "runs" / "2026-10-23-fix-bug-ok.evidence"
+        if os.name == "nt" or sys.platform == "darwin":
+            self.assertIn(": not restored, as this platform cannot hold its "
+                          "name", out)
+            self.assertEqual(os.listdir(evidence_dir)
+                             if evidence_dir.is_dir() else [], [])
+        else:
+            with open(os.fsencode(b) + b"/" + odd, "rb") as fh:
+                self.assertEqual(fh.read(), b"menu\n")
+        write(b / ".glados" / "runs" / "2026-10-23-fix-bug-b.md", "# b\n")
+        rc, out = self._save(b)
+        self.assertNotIn("Traceback", out)
+        listed = subprocess.run(
+            ["git", "-C", str(b), "ls-tree", "-r", "-z", "--name-only",
+             "origin/glados/ledger"], capture_output=True).stdout.split(b"\0")
+        self.assertIn(odd, listed)
+        self.assertIn(b".glados/runs/2026-10-23-fix-bug-b.md", listed)
 
     def test_a_named_path_this_user_cannot_read_is_not_removed(self):
         """`ledger save <path>` removes a named path that is gone. It asked

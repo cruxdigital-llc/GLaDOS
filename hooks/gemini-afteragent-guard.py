@@ -60,12 +60,19 @@ FINISH = (f"Save it ({SAVE}) before finishing, or, if the run is "
 
 
 def _git(root: Path, *args, stdin: str = "") -> str:
+    # surrogateescape both ways: a file name that is not UTF-8 (Linux holds
+    # any bytes) reaches git as its own bytes and comes back as the same
+    # string, where replacement made a name git could not find and a
+    # ledger path that matched no file, so the guard blocked forever.
     try:
         out = subprocess.run(["git", "-C", str(root), *args], input=stdin,
                              capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=20)
+                             encoding="utf-8", errors="surrogateescape",
+                             timeout=20)
         return out.stdout if out.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # ValueError: a name no codec writes (a lone surrogate on Windows).
+        # Nothing is shown saved, so the guard blocks.
         return ""
 
 

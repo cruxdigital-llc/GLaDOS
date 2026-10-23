@@ -5215,7 +5215,13 @@ class _LedgerGit:
             full_env = dict(os.environ)
             full_env.update(env)
         if isinstance(input, str):
-            input = input.encode("utf-8")
+            # A path's bytes, as os.fsencode gives them: on Linux a file
+            # name need not be UTF-8 (caf\xe9.txt), and os.scandir hands
+            # such a byte back as a lone surrogate, which strict UTF-8
+            # refused with a traceback. On Windows, surrogatepass makes a
+            # name git cannot find, a clean error.
+            input = input.encode("utf-8", "surrogatepass" if os.name == "nt"
+                                 else "surrogateescape")
         try:
             proc = subprocess.run(["git", "-C", str(self.root), *args],
                                   input=input, capture_output=True,
@@ -5884,7 +5890,8 @@ def _ledger_link_base(git: _LedgerGit, remote):
 
 def _ledger_link(prefix, path: str) -> str:
     if prefix:
-        return prefix + urllib.parse.quote(path, safe="/")
+        return prefix + urllib.parse.quote(path, safe="/",
+                                           errors="surrogateescape")
     return f"{LEDGER_BRANCH}:{path}"
 
 
@@ -6080,11 +6087,18 @@ _WIN_DEVICES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
 
 def _unholdable_here(p: str) -> bool:
     """Whether this platform cannot hold the ledger path ``p`` under its own
-    name. Only Windows: a name with < > : " | ? * or a backslash or a
-    control character in it, one that ends in a space or a period, or a
-    device name, with or without an extension. Written anyway, one raised
-    and restore crashed, and a ':' wrote an alternate data stream of an
-    empty file, which the next save put on the ledger."""
+    name. Windows: a name with < > : " | ? * or a backslash or a control
+    character in it, one that ends in a space or a period, or a device
+    name, with or without an extension. Written anyway, one raised and
+    restore crashed, and a ':' wrote an alternate data stream of an empty
+    file, which the next save put on the ledger. Windows and macOS: a name
+    that is not UTF-8."""
+    if os.name != "nt" and sys.platform != "darwin":
+        return False
+    # A name saved on Linux that is not UTF-8 (_ledger_tree decodes it with
+    # surrogateescape): neither NTFS nor APFS holds it under that name.
+    if any("\ud800" <= c <= "\udfff" for c in p):
+        return True
     if os.name != "nt":
         return False
     for part in p.split("/"):
@@ -6193,7 +6207,7 @@ def cmd_ledger_restore(args) -> int:
             # It stays on the ledger: save removes only a path it is named.
             notes.append(f"{p}: not restored, as this platform cannot hold "
                          f"its name; it stays on the ledger — rename it in a "
-                         f"clone on Linux or macOS")
+                         f"clone on Linux, which holds any name")
             continue
         w = hashes.get(p)
         if w == sha:
