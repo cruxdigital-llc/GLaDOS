@@ -5264,8 +5264,8 @@ def _ledger_open(target, search: bool = True) -> _LedgerGit:
     parts = [p for p in (out[1] if len(out) > 1 else "").split("/") if p]
     if search:
         here = Path(target).resolve()
-        while parts and not ((here / "glados.yaml").is_file()
-                             or (here / ".glados").is_dir()):
+        while parts and not (os.path.isfile(here / "glados.yaml")
+                             or os.path.isdir(here / ".glados")):
             parts.pop()
             here = here.parent
     return _LedgerGit(Path(top), "".join(p + "/" for p in parts) + RUNS_DIR)
@@ -5647,7 +5647,7 @@ def _ledger_arg_paths(git: _LedgerGit, args_paths) -> list[str]:
                 continue
             if rel != git.runs and not rel.startswith(git.runs + "/"):
                 continue
-            if opt.exists():
+            if os.path.exists(opt):
                 chosen = rel
                 break
             chosen = chosen or rel
@@ -5704,7 +5704,19 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
         for rel in explicit:
             if _runs_local_only(rel, git.runs):
                 continue
-            if (root / rel).exists():
+            # Only a path that is not there is gone. Path.exists() raised
+            # on Python 3.10 to 3.12 for a path this user cannot reach, and
+            # from 3.13 answers False, so the file left the ledger.
+            try:
+                os.stat(root / rel)
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+            except (OSError, ValueError) as exc:
+                why = getattr(exc, "strerror", None) or exc
+                notes.append(f"{rel}: cannot be read here ({why}); left on "
+                             f"the ledger as it is")
+                continue
+            else:
                 files += _runs_files(root, rel, git.runs)
                 continue
             gone = [p for p in entries
@@ -5859,7 +5871,7 @@ def _ledger_link_base(git: _LedgerGit, remote):
         return None
     platform = None
     manifest = git.root / git.prefix / "glados.yaml"
-    if manifest.is_file():
+    if os.path.isfile(manifest):
         try:
             platform = load_manifest(manifest).get("platform")
         except Fatal:
@@ -6090,15 +6102,16 @@ def _ledger_name_taken(root: Path, p: str):
     or None: anything but a file at ``p`` (a directory), or anything but a
     directory at one of its parents (a file). Written over, either raised,
     and restore crashed (both ledgers' files, or a directory put where a
-    saved record was)."""
+    saved record was). os.path answers False where Path's methods raised
+    on Python 3.10 to 3.12 (a name too long for this file system)."""
     parts = p.split("/")
     for i in range(1, len(parts)):
         above = root / "/".join(parts[:i])
-        if os.path.lexists(above) and not above.is_dir():
+        if os.path.lexists(above) and not os.path.isdir(above):
             return f"{'/'.join(parts[:i])} is a file"
     f = root / p
-    if os.path.lexists(f) and not f.is_file():
-        return f"{p} is a directory" if f.is_dir() else \
+    if os.path.lexists(f) and not os.path.isfile(f):
+        return f"{p} is a directory" if os.path.isdir(f) else \
             f"{p} is not a regular file"
     return None
 
@@ -6149,9 +6162,13 @@ def cmd_ledger_restore(args) -> int:
         for name in unmatched:
             notes.append(f"{name}: no file on the ledger matches it")
     head = _ledger_tree(git, git.rev("HEAD"), git.runs)
-    present = [p for p in tree if (git.root / p).is_file()]
+    # os.path, never Path.is_file(): on Python 3.10 to 3.12 that raised for
+    # a ledger name this file system cannot hold (a component over 255
+    # bytes, which a Windows clone can save), and restore wrote nothing.
+    present = [p for p in tree if os.path.isfile(git.root / p)]
     hashes = _hash_files(git, present)
-    on_disk = [p for p in gone if p not in head and (git.root / p).is_file()]
+    on_disk = [p for p in gone
+               if p not in head and os.path.isfile(git.root / p)]
     removed = []
     for p, w in _hash_files(git, on_disk).items():
         if w == sync.get(p):
@@ -6167,7 +6184,7 @@ def cmd_ledger_restore(args) -> int:
                 continue
             removed.append(p)
     for p in gone:
-        if p in removed or not (git.root / p).exists():
+        if p in removed or not os.path.exists(git.root / p):
             sync.pop(p, None)
     history = [c for c in (local, remote_tip) if c]
     written, refreshed, kept, tracked = [], [], [], 0

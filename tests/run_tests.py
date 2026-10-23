@@ -7160,6 +7160,49 @@ class TestPortability(unittest.TestCase):
                  for f in self._locale_decoded(REPO / rel, rel)]
         self.assertEqual(found, [])
 
+    # Path (and DirEntry) methods that ask what is at a path.
+    PATH_QUERIES = frozenset({"exists", "is_file", "is_dir", "is_symlink"})
+
+    def _path_queries(self, path: Path, rel: str, first=None, last=None):
+        """Each call of a PATH_QUERIES method in the script at ``path`` (from
+        the top-level function ``first`` to ``last``, when given), as
+        `<rel>:<line>: .<method>()`; os.path's functions are not methods."""
+        tree = ast.parse(read(path), rel)
+        lines = range(1, 1 << 30)
+        if first:
+            defs = {n.name: n for n in tree.body
+                    if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+            lines = range(defs[first].lineno, defs[last].end_lineno + 1)
+        return [f"{rel}:{n.lineno}: .{n.func.attr}()" for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr in self.PATH_QUERIES and n.lineno in lines
+                and not (isinstance(n.func.value, ast.Attribute)
+                         and n.func.value.attr == "path"
+                         and isinstance(n.func.value.value, ast.Name)
+                         and n.func.value.value.id == "os")]
+
+    def test_the_guards_and_the_ledger_ask_os_path_what_is_there(self):
+        """Path.exists(), is_file() and is_dir() raise on Python 3.10 to
+        3.12 for any error but a missing path (permission denied, a name
+        too long for the file system), and from 3.13 answer False for any
+        error. The same tree crashed a guard on one version, which fails
+        open, and on another read a path this user cannot read as gone, so
+        `ledger save <path>` removed it from the ledger. The guards and the
+        ledger code ask os.path, which answers alike on every version, or
+        os.stat with each error handled."""
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import os\nfrom pathlib import Path\np = Path('.')\n"
+              "a = p.exists()\nb = os.path.exists(p)\nc = p.is_file()\n"
+              "d = os.path.isdir(p)\n")
+        self.assertEqual(self._path_queries(probe / "probe.py", "probe.py"),
+                         ["probe.py:4: .exists()", "probe.py:6: .is_file()"])
+        found = [f for rel in self.SCRIPTS[1:]
+                 for f in self._path_queries(REPO / rel, rel)]
+        found += self._path_queries(GLADOS_PY, "bin/glados.py",
+                                    "_first_line", "cmd_ledger_link")
+        self.assertEqual(found, [])
+
     def test_verify_ledger_reads_git_as_utf8(self):
         """A commit subject or a branch name holding a byte cp1252 cannot
         decode (📝, Á, č) stopped verify-ledger, whose report never fails,
@@ -8897,6 +8940,63 @@ class TestRunLedger(unittest.TestCase):
         self.assertNotIn("Traceback", out)
         self.assertIn(f"could not add {glados.RUNS_EXCLUDE}", out)
         self.assertIn(".glados/runs/r1.md", self._ledger_files(a))
+
+    def test_a_name_too_long_for_this_file_system_stays_on_the_ledger(self):
+        """NTFS holds 255 UTF-16 units in a name, Linux and macOS 255 bytes,
+        so a Windows clone can save a name in CJK script that a POSIX clone
+        cannot hold. Restore asked Path.is_file() of it, which raises
+        ENAMETOOLONG on Python 3.12 and earlier: restore stopped before it
+        wrote anything, the other records included, so every run's first
+        step failed in that clone. The name is left on the ledger with a
+        note, and the rest is restored."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        ok = ".glados/runs/2026-10-23-fix-bug-ok.md"
+        write(a / ok, "# ok\n")
+        self._save(a)
+        long = ".glados/runs/2026-10-23-fix-bug-" + "記" * 100 + ".md"
+        tree = self._mktree(a, {ok: b"# ok\n", long: "# 記録\n".encode()})
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        commit = self._git(a, "commit-tree", tree, "-p", tip, "-m",
+                           "chore(glados): record runs")
+        self._git(a, "push", "-q", "origin",
+                  f"{commit}:refs/heads/glados/ledger")
+        b = self._clone(remote)
+        # a clone that has run before: a missing .glados/runs/ ends the
+        # lookup before the name's length is checked
+        write(b / ".glados" / "runs" / "2026-10-22-fix-bug-b.md", "# b\n")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(read(b / ok), "# ok\n")
+        if sys.platform.startswith("linux"):
+            self.assertIn(f"{long}: not restored", out)
+        elif not os.path.isfile(b / long):
+            self.assertIn(f"{long}: not restored", out)
+        self._save(b)
+        listed = subprocess.run(
+            ["git", "-C", str(b), "ls-tree", "-r", "-z", "--name-only",
+             "origin/glados/ledger"], capture_output=True).stdout
+        self.assertIn(long.encode("utf-8") + b"\0", listed)
+
+    def test_a_named_path_this_user_cannot_read_is_not_removed(self):
+        """`ledger save <path>` removes a named path that is gone. It asked
+        Path.exists(), which from Python 3.13 answers False for a path in a
+        directory this user cannot search, so the file left the ledger, and
+        which on 3.10 to 3.12 raised: a traceback. Only a path that is not
+        there is removed; one that cannot be read stays, with a note."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.evidence" / "log.txt", "ok\n")
+        self._save(repo, "--no-push")
+        TestHookGuards._deny(self, runs / "r1.evidence")
+        rc, out = self._save(repo, "--no-push",
+                             ".glados/runs/r1.evidence/log.txt", ok=False)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt: cannot be read", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt",
+                      self._ledger_files(repo))
 
     def test_a_push_that_lost_the_ref_lock_is_retried(self):
         """Another push landed after the remote advertised its refs, so the
