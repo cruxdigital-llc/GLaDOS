@@ -7277,6 +7277,88 @@ class TestPortability(unittest.TestCase):
         self.assertIn("feature/other branches: 1", out)
         self.assertIn("review: Ágnes signed off", out)
 
+    @unittest.skipUnless(os.name == "nt", "the 260-character limit is "
+                         "Windows'")
+    def test_a_run_file_past_the_windows_path_limit_is_guarded_and_saved(self):
+        """A step artifact deep under `<stem>.evidence/` whose full path is
+        260 characters or more. With LongPathsEnabled at 0, Windows' default,
+        a lookup of such a path reports no such file and git says "Filename
+        too long": both guards walked past it and let the session end with
+        it unsaved, and `ledger save` never saved it, without a word, nor an
+        edit to it named on the command line. The guards and save reach it
+        by its \\\\?\\ form, and run git with core.longpaths. (Where long
+        paths are enabled, this passes either way.)"""
+        repo = self._repo_at(tmpdir("glados-port-long-") / "r")
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "stack", "r.md\n")
+        rel_dir = (".glados/runs/r.evidence/test-results/" + "d" * 100 + "/"
+                   + "e" * 100)
+        rel = rel_dir + "/result.txt"
+        full = os.path.join(str(repo), *rel.split("/"))
+        self.assertGreaterEqual(len(full), 260)
+
+        def extended(path):
+            return "\\\\?\\" + os.path.abspath(path)
+
+        here = str(repo)
+        for part in rel_dir.split("/"):
+            here = os.path.join(here, part)
+            if not os.path.isdir(extended(here)):
+                os.mkdir(extended(here))
+        self.addCleanup(shutil.rmtree, extended(runs / "r.evidence"),
+                        ignore_errors=True)
+
+        def put(text):
+            with open(extended(full), "w", encoding="utf-8",
+                      newline="\n") as f:
+                f.write(text)
+
+        def guards():
+            c = subprocess.run(
+                [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+                input=json.dumps({"cwd": str(repo)}), capture_output=True,
+                text=True, timeout=60)
+            g = subprocess.run(
+                [sys.executable,
+                 str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+                input="{}", capture_output=True, text=True, cwd=str(repo),
+                timeout=60)
+            self.assertEqual(c.returncode, 0, c.stderr)
+            self.assertNotIn("Traceback", c.stderr + g.stderr)
+            reason = (json.loads(c.stdout)["reason"] if c.stdout.strip()
+                      else "")
+            return reason, g.returncode, g.stderr
+
+        def on_ledger():
+            return subprocess.run(
+                ["git", "-C", str(repo), "-c", "core.longpaths=true", "show",
+                 "glados/ledger:" + rel], capture_output=True, text=True,
+                encoding="utf-8", errors="replace").stdout
+
+        put("v1\n")
+        reason, gemini, err = guards()
+        self.assertIn(rel, reason)
+        self.assertEqual(gemini, 2)
+        self.assertIn(rel, err)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertEqual(on_ledger(), "v1\n")
+        self.assertEqual(guards()[:2], ("", 0))
+        put("v2\n")
+        reason, gemini, err = guards()
+        self.assertIn(rel, reason)
+        self.assertEqual(gemini, 2)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo,
+                          full)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 1 file(s)", out)
+        self.assertNotIn("removed", out)
+        self.assertEqual(on_ledger(), "v2\n")
+        self.assertEqual(guards()[:2], ("", 0))
+
 
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their

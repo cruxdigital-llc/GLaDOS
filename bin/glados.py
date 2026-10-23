@@ -5225,8 +5225,12 @@ class _LedgerGit:
             # refused with a traceback. (A Windows name with an unpaired
             # surrogate never gets here: _ledger_plan_local leaves it off.)
             input = input.encode("utf-8", "surrogateescape")
+        # core.longpaths: Git for Windows opens a path of 260 characters or
+        # more only with it ("Filename too long" otherwise); elsewhere git
+        # ignores it.
         try:
-            proc = subprocess.run(["git", "-C", str(self.root), *args],
+            proc = subprocess.run(["git", "-C", str(self.root), "-c",
+                                   "core.longpaths=true", *args],
                                   input=input, capture_output=True,
                                   env=full_env, timeout=300)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -5427,7 +5431,27 @@ def _is_link(st: os.stat_result) -> bool:
             or getattr(st, "st_reparse_tag", 0) == _JUNCTION)
 
 
-def _runs_walk(entry: Path, top: bool = False) -> list[Path]:
+def _os_path(path) -> str:
+    """``path`` as the ledger commands hand it to the OS. On Windows that is
+    its \\\\?\\ form: with LongPathsEnabled at 0, Windows' default, a path of
+    260 characters or more (a step artifact deep under `<stem>.evidence/`)
+    is reported as no such file, so `ledger save` never saved it, and a
+    save that named it took it for gone. The \\\\?\\ form has no such
+    limit."""
+    text = os.fspath(path)
+    if os.name != "nt" or text.startswith(("\\\\?\\", "\\\\.\\")):
+        return text
+    try:
+        text = os.path.abspath(text)
+    except ValueError:      # a NUL in it: no file has that name
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
+
+
+def _runs_walk(entry: Path, top: bool = False,
+               unreadable: list | None = None) -> list[Path]:
     """The regular files at or under ``entry``, walked by hand. A link or a
     junction under it is neither saved nor walked into, as the guards walk
     .glados/runs/: rglob took a junction for a directory, so one back to
@@ -5435,10 +5459,19 @@ def _runs_walk(entry: Path, top: bool = False) -> list[Path]:
     directory outside the repository saved its files. With ``top``,
     ``entry`` itself is followed, as the guards list .glados/runs/ through
     a link (a named path arrives resolved, so only the runs directory can
-    be one)."""
+    be one).
+
+    An entry its directory listed that cannot then be looked at, and a
+    directory that cannot be listed, go in ``unreadable`` as (path, why),
+    for save to name: skipped without a word, such a file was never saved
+    while save reported success."""
     try:
-        st = os.stat(entry) if top else os.lstat(entry)
-    except OSError:
+        st = os.stat(_os_path(entry)) if top else os.lstat(_os_path(entry))
+    except OSError as exc:
+        if unreadable is not None and not (
+                top and isinstance(exc, (FileNotFoundError,
+                                         NotADirectoryError))):
+            unreadable.append((entry, exc.strerror or str(exc)))
         return []
     if not top and _is_link(st):
         return []
@@ -5447,22 +5480,33 @@ def _runs_walk(entry: Path, top: bool = False) -> list[Path]:
     if not stat.S_ISDIR(st.st_mode):
         return []
     try:
-        with os.scandir(entry) as it:
-            children = sorted(Path(e.path) for e in it)
-    except OSError:
+        with os.scandir(_os_path(entry)) as it:
+            children = sorted(entry / e.name for e in it)
+    except OSError as exc:
+        if unreadable is not None:
+            unreadable.append((entry, exc.strerror or str(exc)))
         return []
-    return [f for child in children for f in _runs_walk(child)]
+    return [f for child in children
+            for f in _runs_walk(child, unreadable=unreadable)]
 
 
-def _runs_files(root: Path, sub: str = RUNS_DIR,
-                runs: str = RUNS_DIR) -> list[str]:
+def _runs_files(root: Path, sub: str = RUNS_DIR, runs: str = RUNS_DIR,
+                unreadable: list | None = None) -> list[str]:
     """Repo-relative paths of the regular files under ``sub`` (a path under
-    the project's runs directory ``runs``), the local-only ones left out."""
+    the project's runs directory ``runs``), the local-only ones left out.
+    Each entry under it that cannot be looked at or listed goes in
+    ``unreadable`` as (repo-relative path, why)."""
     out = []
-    for f in _runs_walk(root / sub, top=True):
+    failed: list = []
+    for f in _runs_walk(root / sub, top=True, unreadable=failed):
         rel = f.relative_to(root).as_posix()
         if not _runs_local_only(rel, runs):
             out.append(rel)
+    if unreadable is not None:
+        for f, why in failed:
+            rel = f.relative_to(root).as_posix()
+            if not _runs_local_only(rel, runs):
+                unreadable.append((rel, why))
     return out
 
 
@@ -5656,7 +5700,7 @@ def _ledger_arg_paths(git: _LedgerGit, args_paths) -> list[str]:
                 continue
             if rel != git.runs and not rel.startswith(git.runs + "/"):
                 continue
-            if os.path.exists(opt):
+            if os.path.exists(_os_path(opt)):
                 chosen = rel
                 break
             chosen = chosen or rel
@@ -5717,8 +5761,9 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
     updates: dict = {}
     refresh: dict = {}
     synced: dict = {}
+    unreadable: list = []
     if explicit is None:
-        files = _runs_files(root, git.runs, git.runs)
+        files = _runs_files(root, git.runs, git.runs, unreadable)
     else:
         files = []
         for rel in explicit:
@@ -5728,7 +5773,7 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
             # on Python 3.10 to 3.12 for a path this user cannot reach, and
             # from 3.13 answers False, so the file left the ledger.
             try:
-                os.stat(root / rel)
+                os.stat(_os_path(root / rel))
             except (FileNotFoundError, NotADirectoryError):
                 pass
             except (OSError, ValueError) as exc:
@@ -5737,7 +5782,7 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
                              f"the ledger as it is")
                 continue
             else:
-                files += _runs_files(root, rel, git.runs)
+                files += _runs_files(root, rel, git.runs, unreadable)
                 continue
             gone = [p for p in entries
                     if p == rel or p.startswith(rel.rstrip("/") + "/")]
@@ -5746,6 +5791,9 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
                 synced[p] = None
             if not gone:
                 notes.append(f"{rel}: neither here nor on the ledger")
+    for rel, why in unreadable:
+        notes.append(f"{rel}: cannot be read here ({why}); not saved — "
+                     f"make it readable, then save again")
     # A repository kept among a run's step artifacts: git holds no path
     # with a .git component, and save once named each such file saved and
     # recorded it as synced, so restore then deleted it as compacted away.
@@ -5890,8 +5938,9 @@ def _ledger_apply_refresh(git: _LedgerGit, refresh: dict) -> dict:
     for p, sha in refresh.items():
         f = git.root / p
         try:
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_bytes(_blob_bytes(git, sha))
+            os.makedirs(_os_path(f.parent), exist_ok=True)
+            with open(_os_path(f), "wb") as out:
+                out.write(_blob_bytes(git, sha))
         except OSError as exc:
             failed[p] = exc.strerror or str(exc)
     return failed

@@ -65,7 +65,11 @@ def _git(root: Path, *args, stdin: str = "") -> str:
     # string, where replacement made a name git could not find and a
     # ledger path that matched no file, so the guard blocked forever.
     try:
-        out = subprocess.run(["git", "-C", str(root), *args], input=stdin,
+        # core.longpaths: Git for Windows opens a path of 260 characters
+        # or more only with it ("Filename too long" otherwise), and
+        # hash-object then failed for every file; elsewhere it is ignored.
+        out = subprocess.run(["git", "-C", str(root), "-c",
+                              "core.longpaths=true", *args], input=stdin,
                              capture_output=True, text=True,
                              encoding="utf-8", errors="surrogateescape",
                              timeout=20)
@@ -84,12 +88,31 @@ def _present(path: Path) -> bool:
     error as absent, and a guard that crashes fails OPEN; either way the
     session would end."""
     try:
-        os.lstat(path)
+        os.lstat(_os_path(path))
     except (FileNotFoundError, NotADirectoryError):
         return False
     except (OSError, ValueError):
         return True
     return True
+
+
+def _os_path(path) -> str:
+    """``path`` as the guard hands it to the OS. On Windows that is its
+    \\\\?\\ form: with LongPathsEnabled at 0, Windows' default, a path of
+    260 characters or more (a step artifact deep under `<stem>.evidence/`)
+    is reported as no such file, so the guard walked past it and let the
+    session end with it unsaved. The \\\\?\\ form has no such limit, and
+    names each entry exactly as its directory lists it."""
+    text = os.fspath(path)
+    if os.name != "nt" or text.startswith(("\\\\?\\", "\\\\.\\")):
+        return text
+    try:
+        text = os.path.abspath(text)
+    except ValueError:      # a NUL in it: no file has that name
+        return text
+    if text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + text[2:]
+    return "\\\\?\\" + text
 
 
 def _marker_lines(path: Path):
@@ -105,9 +128,10 @@ def _marker_lines(path: Path):
     host kills a guard that does not answer, a non-blocking error, so the
     session ended. Anything else cannot be read, and blocks."""
     try:
-        if not stat.S_ISREG(os.stat(path).st_mode):
+        if not stat.S_ISREG(os.stat(_os_path(path)).st_mode):
             return None
-        data = path.read_bytes()
+        with open(_os_path(path), "rb") as f:
+            data = f.read()
     except (OSError, ValueError):
         return None
     codec = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
@@ -202,8 +226,8 @@ def _listing(path: Path, unlistable: list) -> list:
     the error used to crash the guard (a non-blocking error to both
     hosts)."""
     try:
-        with os.scandir(path) as it:
-            return sorted(Path(entry.path) for entry in it)
+        with os.scandir(_os_path(path)) as it:
+            return sorted(path / entry.name for entry in it)
     except (FileNotFoundError, NotADirectoryError):
         return []
     except OSError:
@@ -235,16 +259,19 @@ def _walk(entry: Path, unlistable: list) -> list:
     False for one whose target cannot be reached, where Path.is_file()
     raised on Python 3.10 to 3.12 (a link into a directory this user may
     not search; on Windows a junction to a directory it was denied) and
-    the guard crashed open."""
+    the guard crashed open.
+
+    ``entry`` was just listed by its directory, so one that cannot be
+    looked at now, even as no such file (on Windows, what a path too long
+    for the OS reads as), goes in ``unlistable`` and blocks: skipped, it
+    let the session end with that file unsaved."""
     try:
-        st = os.lstat(entry)
-    except FileNotFoundError:
-        return []
-    except OSError:
+        st = os.lstat(_os_path(entry))
+    except (OSError, ValueError):
         unlistable.append(entry)
         return []
     if _is_link(st):
-        return [entry] if os.path.isfile(entry) else []
+        return [entry] if os.path.isfile(_os_path(entry)) else []
     if stat.S_ISDIR(st.st_mode):
         return [f for child in _listing(entry, unlistable)
                 for f in _walk(child, unlistable)]
@@ -257,7 +284,7 @@ def _not_a_record(entry: Path):
     a link to one or to nothing, holds no record to check, and counting it
     as the record let a run end with none."""
     try:
-        mode = os.stat(entry).st_mode
+        mode = os.stat(_os_path(entry)).st_mode
     except (FileNotFoundError, NotADirectoryError):
         return "a link to nothing"
     except (OSError, ValueError):
@@ -267,7 +294,7 @@ def _not_a_record(entry: Path):
     if not stat.S_ISDIR(mode):
         return "not a regular file"
     try:
-        linked = _is_link(os.lstat(entry))
+        linked = _is_link(os.lstat(_os_path(entry)))
     except OSError:
         linked = False
     return "a link to a directory" if linked else "a directory"
@@ -320,6 +347,29 @@ def _files_to_check(root: Path, refs, sweep: bool):
             shown)
 
 
+def _hashes(root: Path, prefix: str, files: list, unreadable: list) -> dict:
+    """path -> the blob `git add` would make of each file. git stops at the
+    first file it cannot read (a permission error, a lock, a path too long
+    for it), which answered nothing for any file, and every file was then
+    listed as not saved: each is then asked alone, and one git cannot read
+    goes in ``unreadable``, to be named."""
+    if not files:
+        return {}
+    shas = _git(root, "hash-object", "--stdin-paths",
+                stdin="".join(prefix + f + "\n" for f in files)).split()
+    if len(shas) == len(files):
+        return dict(zip(files, shas))
+    hashes = {}
+    for f in files:
+        sha = _git(root, "hash-object", "--stdin-paths",
+                   stdin=prefix + f + "\n").split()
+        if len(sha) == 1:
+            hashes[f] = sha[0]
+        else:
+            unreadable.append(f)
+    return hashes
+
+
 def in_flight_without_record(root: Path):
     """Return a reason string if a run is unfinished, else None (allow)."""
     found = in_flight_records(root)
@@ -335,10 +385,7 @@ def in_flight_without_record(root: Path):
         root, refs, sweep or bool(unreadable))
     prefix = _prefix(root)
     ledger = _ledger_blobs(root, prefix)
-    shas = _git(root, "hash-object", "--stdin-paths",
-                stdin="".join(prefix + f + "\n" for f in files)
-                ).split() if files else []
-    hashes = dict(zip(files, shas))
+    hashes = _hashes(root, prefix, files, unlistable)
     absent = list(dict.fromkeys(m for m in missing if m not in ledger))
     # A record name whose entry is no record is unsaved, whatever the
     # ledger holds under it: the run has no record on disk to save.
@@ -348,7 +395,7 @@ def in_flight_without_record(root: Path):
     if unreadable or unlistable:
         problems = ([" and ".join(unreadable) + " cannot be read or "
                      "decoded as UTF-8 or UTF-16 text"] if unreadable else [])
-        problems += ([" and ".join(unlistable) + " cannot be listed"]
+        problems += ([" and ".join(unlistable) + " cannot be listed or read"]
                      if unlistable else [])
         fixes = ([f"rewrite {'them' if len(unreadable) > 1 else 'it'} "
                   "as text (stack: each run's record filename, "
