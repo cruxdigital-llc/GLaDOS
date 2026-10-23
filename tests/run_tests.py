@@ -9,8 +9,10 @@ stops shipping modules — v1's flagship bug — fails this build.
 """
 
 import argparse
+import ast
 import contextlib
 import datetime
+import importlib
 import importlib.util
 import io
 import json
@@ -21,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import types
 import unicodedata
 import unittest
 from pathlib import Path
@@ -6729,6 +6732,283 @@ class TestPluginSkills(unittest.TestCase):
                       read(t / "skills" / "intent" / "SKILL.md"))
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/compiled/claude-plugin/",
                       read(t / "skills" / "mission" / "SKILL.md"))
+
+
+class TestPortability(unittest.TestCase):
+    """GLaDOS runs mostly on Linux and macOS (agents, CI), and until 2.5's
+    portability round every test ran on Windows. CPython's stat module
+    defines the IO_REPARSE_TAG_* constants on Windows alone, and both
+    guards' junction test and `ledger save`'s, all three vendored into
+    .glados/, read stat.IO_REPARSE_TAG_MOUNT_POINT unguarded. On POSIX
+    every walk under .glados/runs/ raised AttributeError: each guard
+    exited 1, a non-blocking error to both hosts, and let the session end
+    with the record unsaved, and save crashed before saving anything."""
+
+    SCRIPTS = ("bin/glados.py", "hooks/claude-stop-hook.py",
+               "hooks/gemini-afteragent-guard.py")
+    # Modules one OS family's CPython lacks.
+    PLATFORM_MODULES = frozenset({
+        "msvcrt", "winreg", "winsound", "_winapi", "_overlapped", "nt",
+        "msilib", "_msi", "fcntl", "pwd", "grp", "termios", "tty", "pty",
+        "resource", "posix", "syslog", "crypt", "spwd", "_posixsubprocess",
+        "curses", "readline"})
+    # Module attributes one family has and the other lacks, by module
+    # (matched from the start of the name). stat.FILE_ATTRIBUTE_* exist
+    # everywhere, but mean nothing without st_file_attributes, below.
+    PLATFORM_ATTRS = {
+        "stat": r"IO_REPARSE_TAG_",
+        "os": (r"O_(BINARY|NOINHERIT|SHORT_LIVED|TEMPORARY|RANDOM|SEQUENTIAL"
+               r"|TEXT|NOFOLLOW|DIRECTORY|CLOEXEC|NONBLOCK|NOCTTY|SYNC|DSYNC"
+               r"|ASYNC|NDELAY)$|startfile$|add_dll_directory$"
+               r"|[gs]et_handle_inheritable$|P_(DETACH|OVERLAY)$"
+               r"|list(drives|mounts|volumes)$"
+               r"|[gs]et(e?[ug]id|groups|res[ug]id|pgid|pgrp|sid|priority)$"
+               r"|fork(pty)?$|killpg$|wait[34]?$|waitid$|W[A-Z]+$"
+               r"|[fl]?chown$|chroot$|mkfifo$|mknod$|sync$|getloadavg$"
+               r"|uname$|ttyname$|openpty$|nice$|pipe2$|sched_|f?statvfs$"
+               r"|posix_spawnp?$|lchmod$|ctermid$|f?pathconf$|sysconf$"
+               r"|confstr$|makedev$|major$|minor$|initgroups$"),
+        "subprocess": (r"CREATE_|DETACHED_PROCESS$|STARTUPINFO$|STARTF_"
+                       r"|STD_(INPUT|OUTPUT|ERROR)_HANDLE$|SW_HIDE$"
+                       r"|[A-Z_]+_PRIORITY_CLASS$"),
+        "signal": (r"CTRL_(C|BREAK)_EVENT$|SIGBREAK$"
+                   r"|SIG(KILL|HUP|QUIT|ALRM|CHLD|PIPE|USR[12]|CONT|STOP"
+                   r"|TSTP|TTIN|TTOU|WINCH|IO|PROF|VTALRM|XCPU|XFSZ|SYS|TRAP"
+                   r"|BUS|URG|PWR|RTMIN|RTMAX)$|alarm$|[gs]etitimer$"
+                   r"|ITIMER_|pthread_|siginterrupt$|sigpending$|sigwait"
+                   r"|pause$"),
+        "sys": (r"getwindowsversion$|winver$|dllhandle$|[gs]etdlopenflags$"
+                r"|abiflags$"),
+        "time": r"tzset$",
+        "shutil": r"chown$",
+        "select": r"poll$|epoll|kqueue|kevent|devpoll",
+        "socket": r"AF_UNIX$|SO_REUSEPORT$",
+    }
+    # stat_result fields some platforms lack.
+    PLATFORM_FIELDS = frozenset({
+        "st_file_attributes", "st_reparse_tag", "st_blocks", "st_blksize",
+        "st_rdev", "st_flags", "st_gen", "st_birthtime", "st_birthtime_ns",
+        "st_fstype", "st_rsize", "st_creator", "st_type"})
+
+    @staticmethod
+    def _asks_platform(expr) -> bool:
+        """Whether a test asks which platform this is (os.name,
+        sys.platform) or whether a name exists (hasattr)."""
+        for n in ast.walk(expr):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                    and n.func.id == "hasattr":
+                return True
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
+                    and (n.value.id, n.attr) in (("os", "name"),
+                                                 ("sys", "platform")):
+                return True
+        return False
+
+    def _guarded(self, node, parents, errors) -> bool:
+        """Whether only a platform that has what ``node`` names reaches it:
+        under an if that asks, after such a test in an `and`, or in a try
+        that catches one of ``errors``."""
+        child = node
+        while child in parents:
+            p = parents[child]
+            if isinstance(p, (ast.If, ast.IfExp, ast.While)) \
+                    and child is not p.test and self._asks_platform(p.test):
+                return True
+            if isinstance(p, ast.BoolOp) and isinstance(p.op, ast.And):
+                before = p.values[:[id(v) for v in p.values].index(id(child))]
+                if any(self._asks_platform(v) for v in before):
+                    return True
+            if isinstance(p, ast.Try) and any(child is s for s in p.body):
+                caught = {n.id for h in p.handlers if h.type is not None
+                          for n in ast.walk(h.type) if isinstance(n, ast.Name)}
+                if caught & errors:
+                    return True
+            child = p
+        return False
+
+    def _platform_only(self, module, name: str) -> bool:
+        pattern = self.PLATFORM_ATTRS.get(module.__name__)
+        return bool(pattern and re.match(pattern, name)) \
+            or not hasattr(module, name)
+
+    def _unguarded(self, path: Path, rel: str) -> list:
+        """Every platform-only module, module attribute or stat field the
+        script at ``path`` uses where a platform without it would reach
+        it, each as `<rel>:<line>: <what>`."""
+        tree = ast.parse(read(path), rel)
+        parents = {c: p for p in ast.walk(tree)
+                   for c in ast.iter_child_nodes(p)}
+        modules: dict = {}
+        found = []
+        attr_errors = {"AttributeError", "Exception"}
+        for n in ast.walk(tree):
+            if not isinstance(n, (ast.Import, ast.ImportFrom)):
+                continue
+            names = ([a.name for a in n.names] if isinstance(n, ast.Import)
+                     else [n.module or ""])
+            for name in names:
+                guarded = self._guarded(
+                    n, parents, {"ImportError", "ModuleNotFoundError",
+                                 "Exception"})
+                try:
+                    importlib.import_module(name)
+                    importable = True
+                except (ImportError, ValueError):
+                    importable = False
+                if (name.split(".")[0] in self.PLATFORM_MODULES
+                        or not importable) and not guarded:
+                    found.append(f"{rel}:{n.lineno}: import {name}")
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    try:
+                        modules[a.asname or a.name.split(".")[0]] = \
+                            importlib.import_module(
+                                a.name if a.asname else a.name.split(".")[0])
+                    except ImportError:
+                        pass
+
+        def resolve(node):
+            if isinstance(node, ast.Name):
+                return modules.get(node.id)
+            if isinstance(node, ast.Attribute):
+                base = resolve(node.value)
+                if isinstance(base, types.ModuleType):
+                    return getattr(base, node.attr, None)
+            return None
+
+        for n in ast.walk(tree):
+            bad = None
+            if isinstance(n, ast.Attribute):
+                base = resolve(n.value)
+                if n.attr in self.PLATFORM_FIELDS:
+                    bad = "." + n.attr
+                elif isinstance(base, types.ModuleType) \
+                        and self._platform_only(base, n.attr):
+                    bad = f"{base.__name__}.{n.attr}"
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                    and n.func.id == "getattr" and len(n.args) == 2 \
+                    and isinstance(n.args[1], ast.Constant) \
+                    and isinstance(n.args[1].value, str):
+                # getattr with no default raises just the same
+                base, name = resolve(n.args[0]), n.args[1].value
+                if name in self.PLATFORM_FIELDS or (
+                        isinstance(base, types.ModuleType)
+                        and self._platform_only(base, name)):
+                    bad = f"getattr(..., {name!r}) with no default"
+            if bad and not self._guarded(n, parents, attr_errors):
+                found.append(f"{rel}:{n.lineno}: {bad}")
+        return found
+
+    def test_no_platform_only_name_is_used_unguarded(self):
+        """A module, module attribute or stat field that one OS family's
+        CPython lacks is used in bin/ or hooks/ only where a platform
+        without it cannot reach it: read with getattr and a default, under
+        a test of os.name, sys.platform or hasattr, or in a try that
+        catches the error. The lists name both families' names, and any
+        name this interpreter lacks counts too, so a run on either family
+        catches the other's."""
+        # the scan sees what it is meant to see
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import os\nimport stat\nimport msvcrt\n"
+              "try:\n    import winreg\nexcept ImportError:\n"
+              "    winreg = None\n"
+              "a = stat.IO_REPARSE_TAG_MOUNT_POINT\n"
+              "b = getattr(stat, 'IO_REPARSE_TAG_MOUNT_POINT', 0)\n"
+              "c = os.lstat('.').st_reparse_tag\n"
+              "d = os.getuid() if hasattr(os, 'getuid') else 0\n"
+              "e = os.O_BINARY\n"
+              "f = getattr(os.lstat('.'), 'st_file_attributes')\n")
+        found = [f.split(": ", 1)[1]
+                 for f in self._unguarded(probe / "probe.py", "probe.py")]
+        self.assertEqual(sorted(found), sorted([
+            "import msvcrt", "stat.IO_REPARSE_TAG_MOUNT_POINT",
+            ".st_reparse_tag", "os.O_BINARY",
+            "getattr(..., 'st_file_attributes') with no default"]))
+        found = [f for rel in self.SCRIPTS
+                 for f in self._unguarded(REPO / rel, rel)]
+        self.assertEqual(found, [])
+
+    def _load(self, rel: str):
+        path = REPO / rel
+        spec = importlib.util.spec_from_file_location(
+            "glados_port_" + re.sub(r"\W", "_", path.stem), path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_link_test_answers_on_this_platform(self):
+        """_is_link in both guards and in glados.py: a file and a directory
+        are no link, a symbolic link is one, and so is a Windows junction,
+        which lstat reports as a directory."""
+        d = tmpdir("glados-port-links-")
+        write(d / "record.md", "# r\n")
+        (d / "dir").mkdir()
+        links = []
+        try:
+            os.symlink(d / "dir", d / "dir-link", target_is_directory=True)
+            links.append("dir-link")
+            os.symlink(d / "record.md", d / "file-link")
+            links.append("file-link")
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(d / "dir"), str(d / "junction"))
+            links.append("junction")
+        for rel in self.SCRIPTS:
+            mod = self._load(rel)
+            with self.subTest(script=rel):
+                self.assertFalse(mod._is_link(os.lstat(d / "record.md")))
+                self.assertFalse(mod._is_link(os.lstat(d / "dir")))
+                for name in links:
+                    self.assertTrue(mod._is_link(os.lstat(d / name)), name)
+
+    def test_the_guards_and_save_run_on_this_platform(self):
+        """A run in flight with an unsaved record and a step-artifact
+        directory: each guard blocks, `ledger save` saves both files, and
+        then each guard allows. On POSIX the guards crashed open and save
+        crashed."""
+        repo = tmpdir("glados-port-repo-")
+        for args in (("init", "-q"), ("config", "user.email", "t@example.com"),
+                     ("config", "user.name", "t"),
+                     ("config", "commit.gpgsign", "false"),
+                     ("checkout", "-q", "-b", "main")):
+            subprocess.run(["git", "-C", str(repo), *args],
+                           capture_output=True)
+        write(repo / "a.txt", "x\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"],
+                       capture_output=True)
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "r.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "stack", "r.md\n")
+
+        def guards():
+            c = subprocess.run(
+                [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+                input=json.dumps({"cwd": str(repo)}), capture_output=True,
+                text=True)
+            g = subprocess.run(
+                [sys.executable,
+                 str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+                input="{}", capture_output=True, text=True, cwd=str(repo))
+            self.assertEqual(c.returncode, 0, c.stderr)
+            self.assertNotIn("Traceback", c.stderr + g.stderr)
+            reason = (json.loads(c.stdout)["reason"] if c.stdout.strip()
+                      else "")
+            return reason, g.returncode
+
+        reason, gemini = guards()
+        self.assertIn(".glados/runs/r.evidence/log.txt", reason)
+        self.assertEqual(gemini, 2)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertEqual(guards(), ("", 0))
 
 
 class TestHookGuards(unittest.TestCase):

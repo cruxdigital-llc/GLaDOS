@@ -5373,11 +5373,19 @@ def _runs_local_only(path: str, runs: str = RUNS_DIR) -> bool:
     return "/" not in rel and rel in RUNS_LOCAL_ONLY
 
 
+# A junction's reparse tag (winnt.h). CPython's stat module defines
+# IO_REPARSE_TAG_MOUNT_POINT on Windows alone, and only a Windows stat result
+# has st_reparse_tag, so both are read with a default: read bare, the
+# constant raised AttributeError on Linux and macOS, and save crashed at the
+# first file it walked.
+_JUNCTION = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+
+
 def _is_link(st: os.stat_result) -> bool:
     """A symbolic link, or a Windows junction, which is_symlink() does not
     report and lstat calls a directory."""
-    return (stat.S_ISLNK(st.st_mode) or getattr(st, "st_reparse_tag", 0)
-            == stat.IO_REPARSE_TAG_MOUNT_POINT)
+    return (stat.S_ISLNK(st.st_mode)
+            or getattr(st, "st_reparse_tag", 0) == _JUNCTION)
 
 
 def _runs_walk(entry: Path, top: bool = False) -> list[Path]:

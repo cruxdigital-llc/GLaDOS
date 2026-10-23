@@ -200,13 +200,21 @@ def _listing(path: Path, unlistable: list) -> list:
         return []
 
 
+# A junction's reparse tag (winnt.h). CPython's stat module defines
+# IO_REPARSE_TAG_MOUNT_POINT on Windows alone, and only a Windows stat result
+# has st_reparse_tag, so both are read with a default: read bare, the
+# constant raised AttributeError on Linux and macOS at the first entry
+# walked, and the guard crashed open.
+JUNCTION = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+
+
 def _is_link(st) -> bool:
     """A symbolic link, or a Windows junction, which lstat reports as a
     directory: walked into, a junction back to .glados/runs/ looped until
     the path grew too long or, with long paths on, until Python's recursion
     limit crashed the guard open."""
     return stat.S_ISLNK(st.st_mode) or \
-        getattr(st, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+        getattr(st, "st_reparse_tag", 0) == JUNCTION
 
 
 def _walk(entry: Path, unlistable: list) -> list:
