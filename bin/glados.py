@@ -5766,7 +5766,13 @@ def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
     index, leaving the repository's own index alone. A file and a directory
     under one name stop the save: git would keep the directory and drop the
     file without a word (the merge and the plan keep such pairs out; this
-    is the last line)."""
+    is the last line).
+
+    core.protectNTFS is off for this index alone, which is never checked
+    out: on Windows git leaves out of an index, with only a warning, any
+    path Windows cannot hold as a file (? * : " < > |, a trailing period, a
+    device name such as aux), so a save there dropped such a record that a
+    clone on Linux or macOS had put on the ledger."""
     for f, d in _tree_name_clashes(tree)[:1]:
         raise Fatal(f"{f} and {d} cannot both be on the ledger, where a file "
                     f"and a directory cannot share a name; nothing was saved "
@@ -5778,7 +5784,8 @@ def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
             info = b"".join(f"{mode} {sha}\t".encode("ascii")
                             + path.encode("utf-8", "surrogateescape") + b"\0"
                             for path, (mode, sha) in sorted(tree.items()))
-            git.run("update-index", "-z", "--index-info", input=info, env=env)
+            git.run("-c", "core.protectNTFS=false", "update-index", "-z",
+                    "--index-info", input=info, env=env)
         return git.out("write-tree", env=env)
 
 
@@ -6015,6 +6022,33 @@ def _ledger_select(tree: dict, names,
     return keep, unmatched
 
 
+# What Windows cannot hold in a file name, as Git for Windows judges it: a
+# ledger saved on Linux or macOS can have such names.
+_WIN_BAD_CHARS = frozenset('<>:"|?*\\') | {chr(c) for c in range(32)}
+_WIN_DEVICES = frozenset({"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                          *(f"COM{i}" for i in range(1, 10)),
+                          *(f"LPT{i}" for i in range(1, 10))})
+
+
+def _unholdable_here(p: str) -> bool:
+    """Whether this platform cannot hold the ledger path ``p`` under its own
+    name. Only Windows: a name with < > : " | ? * or a backslash or a
+    control character in it, one that ends in a space or a period, or a
+    device name, with or without an extension. Written anyway, one raised
+    and restore crashed, and a ':' wrote an alternate data stream of an
+    empty file, which the next save put on the ledger."""
+    if os.name != "nt":
+        return False
+    for part in p.split("/"):
+        if any(c in _WIN_BAD_CHARS for c in part):
+            return True
+        if part.endswith((" ", ".")):
+            return True
+        if part.split(".")[0].rstrip(" ").upper() in _WIN_DEVICES:
+            return True
+    return False
+
+
 def _ledger_name_taken(root: Path, p: str):
     """What in the working tree takes the name the ledger file ``p`` needs,
     or None: anything but a file at ``p`` (a directory), or anything but a
@@ -6093,6 +6127,12 @@ def cmd_ledger_restore(args) -> int:
     history = [c for c in (local, remote_tip) if c]
     written, refreshed, kept, tracked = [], [], [], 0
     for p, (_mode, sha) in sorted(tree.items()):
+        if _unholdable_here(p):
+            # It stays on the ledger: save removes only a path it is named.
+            notes.append(f"{p}: not restored, as this platform cannot hold "
+                         f"its name; it stays on the ledger — rename it in a "
+                         f"clone on Linux or macOS")
+            continue
         w = hashes.get(p)
         if w == sha:
             sync[p] = sha
@@ -6117,8 +6157,17 @@ def cmd_ledger_restore(args) -> int:
             kept.append(p)
             continue
         f = git.root / p
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_bytes(_blob_bytes(git, sha))
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(_blob_bytes(git, sha))
+        except OSError as exc:
+            # A path too long for this platform, say: the rest still come.
+            for listed in (written, refreshed):
+                if p in listed:
+                    listed.remove(p)
+            notes.append(f"{p}: not restored ({exc.strerror or exc}); it "
+                         f"stays on the ledger")
+            continue
         sync[p] = sha
     _ledger_sync_store(git, sync)
     print(f"glados ledger: restored {len(written)} file(s) from "

@@ -8298,6 +8298,82 @@ class TestRunLedger(unittest.TestCase):
                       ".glados/runs/outer.evidence is a file here", out)
         self.assertEqual(read(runs / "outer.evidence"), "a file now\n")
 
+    def _mktree(self, repo, files: dict) -> str:
+        """A tree object holding ``files`` (path -> bytes), built with git
+        mktree, which takes any name: an index on Windows leaves out the
+        names Windows cannot hold."""
+        def run(*a, data=b""):
+            p = subprocess.run(["git", "-C", str(repo), *a], input=data,
+                               capture_output=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return p.stdout.decode("ascii").strip()
+        subdirs: dict = {}
+        entries = []
+        for path, data in files.items():
+            head, sep, rest = path.partition("/")
+            if sep:
+                subdirs.setdefault(head, {})[rest] = data
+            else:
+                sha = run("hash-object", "-w", "--stdin", data=data)
+                entries.append(f"100644 blob {sha}\t{head}")
+        for name, sub in subdirs.items():
+            entries.append(f"040000 tree {self._mktree(repo, sub)}\t{name}")
+        return run("mktree", "-z",
+                   data="".join(e + "\0" for e in entries).encode("utf-8"))
+
+    def test_a_name_windows_cannot_hold_stays_on_the_ledger(self):
+        """A record or step artifact saved on Linux or macOS can have a name
+        Windows cannot hold: one with ? * : " < > |, one ending in a period,
+        a device name such as aux. Save wrote its tree through an index,
+        and git on Windows leaves such a path out of an index with only a
+        warning, so a Windows clone's next save, even one with nothing new,
+        dropped each of them from the ledger without a word. Restore stopped
+        at the first '?' with an OSError traceback, and wrote a ':' name as
+        an alternate data stream of an empty file, which the next save put
+        on the ledger. Save now keeps every name, and restore on Windows
+        leaves those it cannot write on the ledger, with a note."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "2026-10-23-fix-bug-ok.md", "# ok\n")
+        self._save(a)
+        odd = [".glados/runs/2026-10-23-fix-bug-why?.md",
+               ".glados/runs/2026-10-23-fix-bug-api:auth.md",
+               ".glados/runs/2026-10-23-fix-bug-ok.evidence/aux.txt",
+               ".glados/runs/2026-10-23-fix-bug-ok.evidence/v2."]
+        # a POSIX clone's save, made by plumbing so it runs anywhere
+        files = {".glados/runs/2026-10-23-fix-bug-ok.md": b"# ok\n",
+                 **{p: b"# saved on Linux\n" for p in odd}}
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        commit = self._git(a, "commit-tree", self._mktree(a, files),
+                           "-p", tip, "-m", "chore(glados): record runs")
+        self._git(a, "push", "-q", "origin", f"{commit}:refs/heads/glados/ledger")
+        b = self._clone(remote)
+        runs = b / ".glados" / "runs"
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertTrue((runs / "2026-10-23-fix-bug-ok.md").is_file())
+        if os.name == "nt":
+            for p in odd:
+                self.assertIn(f"{p}: not restored", out)
+            self.assertFalse(os.path.lexists(runs / "2026-10-23-fix-bug-api"),
+                             "':' wrote an alternate data stream")
+        else:
+            for p in odd:
+                self.assertEqual(read(b / p), "# saved on Linux\n")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self._save(b)                       # nothing new
+        write(runs / "2026-10-23-fix-bug-b.md", "# b\n")
+        self._save(b)
+        self._git(b, "fetch", "-q", "origin")
+        on_origin = self._ledger_files(b, "origin/glados/ledger")
+        for p in odd + [".glados/runs/2026-10-23-fix-bug-ok.md",
+                        ".glados/runs/2026-10-23-fix-bug-b.md"]:
+            self.assertIn(p, on_origin)
+        self.assertNotIn(".glados/runs/2026-10-23-fix-bug-api", on_origin)
+
     def test_a_merge_never_drops_a_file_for_a_directory_of_its_name(self):
         """B saved r.md/x.md without pushing, A pushed a record r.md, and
         B's next save merged both ledgers into one tree, where git keeps
