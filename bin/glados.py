@@ -5320,15 +5320,18 @@ def _exclude_runs_at(target: Path, write: bool = True) -> str:
 
 
 def _ledger_held_by(git: _LedgerGit):
-    """The worktree that has the ledger branch checked out, if any: moving
-    the branch under it would leave that checkout showing the save as an
-    undone change."""
-    path = None
+    """(path, main) of the worktree that has the ledger branch checked out,
+    if any, ``main`` true for the repository's main working tree (listed
+    first), which `git worktree remove` cannot remove: moving the branch
+    under it would leave that checkout showing the save as an undone
+    change."""
+    path, seen = None, 0
     for line in git.out("worktree", "list", "--porcelain").splitlines():
         if line.startswith("worktree "):
             path = line[len("worktree "):]
+            seen += 1
         elif line.strip() == "branch " + LEDGER_REF:
-            return path or "a worktree"
+            return path or "a worktree", seen == 1
     return None
 
 
@@ -5842,9 +5845,13 @@ def cmd_ledger_save(args) -> int:
     _ensure_runs_ignored(git)
     held = _ledger_held_by(git)
     if held:
-        raise Fatal(f"{LEDGER_BRANCH} is checked out at {held}, and saving "
-                    f"would move it under that checkout — commit there, or "
-                    f"remove that worktree (`git worktree remove`), then save "
+        where, main = held
+        fix = (f"switch it to another branch (`git -C \"{where}\" switch "
+               f"<branch>`); it is the repository's main working tree, which "
+               f"`git worktree remove` cannot remove" if main else
+               f"remove that worktree (`git worktree remove \"{where}\"`)")
+        raise Fatal(f"{LEDGER_BRANCH} is checked out at {where}, and saving "
+                    f"would move it under that checkout — {fix}, then save "
                     f"again")
     remote = None
     if not args.no_push:

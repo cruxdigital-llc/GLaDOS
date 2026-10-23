@@ -8037,7 +8037,21 @@ class TestRunLedger(unittest.TestCase):
         rc, out = self._save(repo, "--no-push", ok=False)
         self.assertEqual(rc, 1)
         self.assertIn("is checked out at", out)
+        self.assertIn("remove that worktree (`git worktree remove", out)
         self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+        # checked out in the main working tree, which `git worktree remove`
+        # cannot remove: the way out is to switch it to another branch
+        self._git(repo, "worktree", "remove", str(wt))
+        self._git(repo, "checkout", "-q", "glados/ledger")
+        rc, out = self._save(repo, "--no-push", ok=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("switch it to another branch", out)
+        self.assertIn("main working tree", out)
+        self.assertNotIn("remove that worktree", out)
+        self._git(repo, "checkout", "-q", "main")
+        self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo),
+                         {".glados/runs/r1.md", ".glados/runs/r2.md"})
 
     def _dir_link_or_skip(self, target, link):
         """A directory symlink at ``link``, or on Windows without the
