@@ -7245,18 +7245,23 @@ class TestHookGuards(unittest.TestCase):
         git("commit", "-q", "-m", "feat: initial")
         return t, git
 
+    # A guard that never answers is killed by its host as timed out, a
+    # non-blocking error: the session ends, as if the guard had allowed.
+    HOOK_TIMEOUT = 30
+
     def _run_claude(self, repo):
         # claude-stop-hook takes the repo root from the event's "cwd" field
         return subprocess.run(
             [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
             input=json.dumps({"cwd": str(repo)}),
-            capture_output=True, text=True)
+            capture_output=True, text=True, timeout=self.HOOK_TIMEOUT)
 
     def _run_gemini(self, repo):
         # gemini-afteragent-guard uses the process cwd
         return subprocess.run(
             [sys.executable, str(REPO / "hooks" / "gemini-afteragent-guard.py")],
-            input="{}", capture_output=True, text=True, cwd=str(repo))
+            input="{}", capture_output=True, text=True, cwd=str(repo),
+            timeout=self.HOOK_TIMEOUT)
 
     def test_no_marker_allows(self):
         repo, _ = self._repo()
@@ -7843,6 +7848,29 @@ class TestHookGuards(unittest.TestCase):
         self._assert_allows(repo)
         write(runs / "stack", "r1.md\n")
         self._assert_allows(repo)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "this platform has no FIFO")
+    def test_a_marker_that_is_no_regular_file_blocks(self):
+        """A marker that is a FIFO made the guard's read wait for a writer
+        that never came (a link to /dev/zero, for one that never ends): the
+        host killed it as timed out, a non-blocking error, and the session
+        ended. A marker that is a device read as empty. A marker is a
+        regular file, or it cannot be read, and blocks."""
+        for name in ("current", "stack"):
+            for kind in ("FIFO", "device"):
+                with self.subTest(marker=name, kind=kind):
+                    repo, git = self._repo()
+                    runs = repo / ".glados" / "runs"
+                    self._commit_records(repo, git, "r1.md")
+                    if kind == "FIFO":
+                        os.mkfifo(runs / name)
+                    else:
+                        os.symlink(os.devnull, runs / name)
+                    try:
+                        self._assert_blocks(
+                            repo, f".glados/runs/{name} cannot be read")
+                    except subprocess.TimeoutExpired:
+                        self.fail(f"a guard waited on the {kind} {name}")
 
     @unittest.skipIf(os.name == "nt" or sys.platform == "darwin",
                      "this platform holds only file names in Unicode")

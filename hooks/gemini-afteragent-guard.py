@@ -98,10 +98,17 @@ def _marker_lines(path: Path):
     Never raises: a guard that crashes fails OPEN. The agent writes these
     files with whatever its shell does, so a UTF-8 BOM (and, from Windows
     PowerShell 5.1 redirection, UTF-16) is normal, and a BOM left on a line
-    would make a saved record look unsaved forever."""
+    would make a saved record look unsaved forever.
+
+    A marker is a regular file. Reading a FIFO waits for a writer that may
+    never come, and a link to a device such as /dev/zero never ends: the
+    host kills a guard that does not answer, a non-blocking error, so the
+    session ended. Anything else cannot be read, and blocks."""
     try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return None
         data = path.read_bytes()
-    except OSError:
+    except (OSError, ValueError):
         return None
     codec = "utf-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8-sig"
     try:
