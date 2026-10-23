@@ -5789,11 +5789,22 @@ def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
         return git.out("write-tree", env=env)
 
 
-def _ledger_apply_refresh(git: _LedgerGit, refresh: dict) -> None:
+def _ledger_apply_refresh(git: _LedgerGit, refresh: dict) -> dict:
+    """Write each refreshed blob over the local copy. Returns path -> why
+    for each copy that could not be written: one read-only, or in a
+    directory this user cannot write (a container running as root made
+    it, say). That write had no try, and it runs after the save's commit
+    and before its push: every save stopped there with a traceback, so
+    nothing reached the remote."""
+    failed = {}
     for p, sha in refresh.items():
         f = git.root / p
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_bytes(_blob_bytes(git, sha))
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(_blob_bytes(git, sha))
+        except OSError as exc:
+            failed[p] = exc.strerror or str(exc)
+    return failed
 
 
 def _remote_web_base(url: str):
@@ -5916,7 +5927,18 @@ def cmd_ledger_save(args) -> int:
         committed = True
         saved |= {p for p, v in updates.items() if v is not None}
         removed |= {p for p, v in updates.items() if v is None}
-        _ledger_apply_refresh(git, refresh)
+        for p, why in _ledger_apply_refresh(git, refresh).items():
+            # The copy keeps its sync entry, the version it still holds, so
+            # the next save tries again and never takes it for an edit to
+            # put back over the ledger's.
+            synced.pop(p, None)
+            refreshed = (f"{p}: this copy was an earlier version of the "
+                         f"ledger's; refreshed from the ledger")
+            notes[:] = [n for n in notes if n != refreshed]
+            notes.append(f"{p}: the ledger's newer copy could not be written "
+                         f"here ({why}); this copy is left as it was — make "
+                         f"it writable, then run `ledger restore` or save "
+                         f"again")
         for p, sha in synced.items():
             if sha is None:
                 sync.pop(p, None)
@@ -6119,7 +6141,16 @@ def cmd_ledger_restore(args) -> int:
     removed = []
     for p, w in _hash_files(git, on_disk).items():
         if w == sync.get(p):
-            (git.root / p).unlink()
+            try:
+                (git.root / p).unlink()
+            except OSError as exc:
+                # It keeps its sync entry: the next restore tries again.
+                why = exc.strerror or exc
+                notes.append(f"{p}: the ledger no longer has it, but this "
+                             f"copy could not be removed ({why}); remove it "
+                             f"by hand, or make it writable and restore "
+                             f"again")
+                continue
             removed.append(p)
     for p in gone:
         if p in removed or not (git.root / p).exists():

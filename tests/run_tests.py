@@ -8750,6 +8750,103 @@ class TestRunLedger(unittest.TestCase):
         self.assertEqual(read(cruns / "edited.md"),
                          "# settled too\nlocal note\n")
 
+    def _unwritable(self, path):
+        """Take this user's right to change ``path``: a file becomes
+        read-only (on Windows, the read-only attribute), a directory takes
+        no new entry and gives none up. Returns a function that gives it
+        back. Skips where the account ignores it (root)."""
+        mode = path.stat().st_mode
+        is_dir = path.is_dir()
+        os.chmod(path, 0o555 if is_dir else 0o444)
+
+        def undo():
+            if os.path.lexists(path):       # a test may since remove it
+                os.chmod(path, mode)
+        self.addCleanup(undo)
+        probe = path / ".glados-probe" if is_dir else path
+        try:
+            with open(probe, "ab"):
+                pass
+        except PermissionError:
+            return undo
+        undo()
+        if is_dir:
+            os.unlink(probe)
+        self.skipTest("this account changes what it was denied")
+
+    def test_a_copy_save_cannot_refresh_is_left_and_the_rest_pushed(self):
+        """Save refreshes a copy that is an earlier version of the ledger's,
+        and wrote it with no try, after its commit and before its push: a
+        read-only copy (one a container running as root wrote, say) stopped
+        every save with a traceback, so nothing reached origin, while the
+        guard counted the local ledger as saved. The copy is left with a
+        note, the rest is pushed, and the stale copy still never goes back
+        over the ledger: its sync entry stays at the version it holds."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\nv2\n")
+        self._save(a)
+        stale = b / ".glados" / "runs" / "r1.md"
+        undo = self._unwritable(stale)
+        write(b / ".glados" / "runs" / "r2.md", "# r2\n")
+        for attempt in ("first", "second"):
+            with self.subTest(save=attempt):
+                rc, out = self._save(b, ok=False)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(".glados/runs/r1.md: the ledger's newer copy "
+                              "could not be written here", out)
+                self.assertNotIn("refreshed from the ledger", out)
+                self._git(b, "fetch", "-q", "origin")
+                self.assertIn(".glados/runs/r2.md",
+                              self._ledger_files(b, "origin/glados/ledger"))
+                self.assertEqual(self._show(b, "origin/glados/ledger",
+                                            ".glados/runs/r1.md"),
+                                 "# r1\nv1\nv2")
+        undo()
+        rc, out = self._save(b)
+        self.assertIn("refreshed from the ledger", out)
+        self.assertEqual(read(stale), "# r1\nv1\nv2\n")
+
+    def test_a_copy_restore_cannot_remove_is_left_with_a_note(self):
+        """Restore removes a synced copy the ledger no longer has, and did
+        so outside any try: a copy it could not delete (read-only on
+        Windows; on Linux, in a directory this user cannot write, one a
+        container running as root made, say) stopped restore with a
+        traceback before it restored anything."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        write(runs / "r1.evidence" / "log.txt", "ok\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        shutil.rmtree(runs / "r1.evidence")
+        self._save(a, ".glados/runs/r1.evidence")
+        write(runs / "r2.md", "# r2\n")
+        self._save(a)
+        log = b / ".glados" / "runs" / "r1.evidence" / "log.txt"
+        undo = self._unwritable(log if os.name == "nt" else log.parent)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt: the ledger no longer "
+                      "has it, but this copy could not be removed", out)
+        self.assertTrue((b / ".glados" / "runs" / "r2.md").is_file())
+        self.assertTrue(log.is_file())
+        undo()
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("removed 1 the ledger no longer has", out)
+        self.assertFalse(log.exists())
+
     def test_a_push_that_lost_the_ref_lock_is_retried(self):
         """Another push landed after the remote advertised its refs, so the
         remote could not lock the ledger ref ("[remote rejected] ... failed
