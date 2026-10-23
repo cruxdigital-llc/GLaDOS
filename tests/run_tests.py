@@ -707,6 +707,38 @@ class TestVendor(unittest.TestCase):
         self.assertIn(".glados/ci/glados-check.gitlab-ci.yml", out)
         self.assertIn("include:", out)
 
+    def test_the_github_enable_commands_run_as_printed(self):
+        """The GitHub stanza copied the workflow into .github/workflows/,
+        which a repository with no workflow yet lacks, so `cp` failed as
+        printed. It makes the directory first, on a line of its own (Windows
+        PowerShell 5.1 has no `&&`)."""
+        t = make_target(read(EXAMPLE).replace("platform: gitlab",
+                                              "platform: github", 1))
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        lines = out.splitlines()
+        start = next(i for i, ln in enumerate(lines)
+                     if "CI backstop vendored" in ln) + 1
+        commands = []
+        for ln in lines[start:]:
+            if not ln.startswith("    "):
+                break
+            commands.append(ln.strip())
+        self.assertEqual(commands, [
+            "mkdir -p .github/workflows",
+            "cp .glados/ci/glados-check.github-actions.yml "
+            ".github/workflows/glados-check.yml"])
+        self.assertFalse((t / ".github").exists())
+        sh = shutil.which("sh")
+        if sh is None:
+            return
+        p = subprocess.run([sh, "-e", "-c", "\n".join(commands)], cwd=str(t),
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(
+            (t / ".github" / "workflows" / "glados-check.yml").read_bytes(),
+            (REPO / "ci" / "glados-check.github-actions.yml").read_bytes())
+
     def test_agy_hooks_single_source(self):
         """hooks/agy-hooks.json is the one source of the agy hooks block: it
         stays dumps(indent=2)-normalized, the README fenced block matches it,

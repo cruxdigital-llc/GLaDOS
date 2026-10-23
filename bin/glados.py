@@ -4274,7 +4274,11 @@ def _ci_enable_stanza(platform) -> str:
               ".gitlab-ci.yml:\n"
               "    include:\n"
               "      - local: '.glados/ci/glados-check.gitlab-ci.yml'")
+    # .github/workflows/ first: a repository with no workflow yet lacks it,
+    # and `cp` failed as printed. Two lines, as Windows PowerShell 5.1 has
+    # no `&&`.
     github = ("glados: CI backstop vendored to .glados/ci/ — enable it with:\n"
+              "    mkdir -p .github/workflows\n"
               "    cp .glados/ci/glados-check.github-actions.yml "
               ".github/workflows/glados-check.yml")
     if platform == "github":
