@@ -558,7 +558,8 @@ record the branch commits. Two things to do by hand:
 - Plugin-only repos that copied the guard hooks copy them again: they now
   check that a run's record is saved to the ledger, not committed, and a
   run marker they cannot read (or `.glados/runs/` they cannot list) blocks
-  the session end instead of counting as no record.
+  the session end instead of counting as no record, as does a directory or
+  a link where a record should be.
 
 **GLaDOS marks what it posts on a merge request.** From 2.5, everything a
 run posts on a merge request starts with `(GLaDOS <workflow>)`, and

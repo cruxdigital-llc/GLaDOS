@@ -575,6 +575,36 @@ class TestVendor(unittest.TestCase):
         self.assertEqual((t / ".glados" / "glados.yaml.example").read_bytes(),
                          EXAMPLE.read_bytes())
 
+    def test_vendored_hooks_byte_match_and_share_one_guard(self):
+        """Every install mode vendors the guard hooks to .glados/hooks/, which
+        is where a project's settings run them from, byte for byte: a copy
+        that drifted would guard by older rules. The two guards share one
+        core, byte for byte, from _present through in_flight_without_record;
+        only the FINISH wording and main() differ."""
+        hooks = sorted((REPO / "hooks").glob("*.py"))
+        self.assertEqual([p.name for p in hooks],
+                         ["claude-stop-hook.py", "gemini-afteragent-guard.py"])
+        for mode in ("claude", "claude-plugin", "direct", "gemini",
+                     "antigravity", "aistudio", "pi"):
+            with self.subTest(mode=mode):
+                t = (make_plugin_target() if mode == "claude-plugin"
+                     else make_target())
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                vendored = sorted((t / ".glados" / "hooks").glob("*.py"))
+                self.assertEqual([p.name for p in vendored],
+                                 [p.name for p in hooks])
+                for s, v in zip(hooks, vendored):
+                    self.assertEqual(v.read_bytes(), s.read_bytes(),
+                                     f"{mode}: vendored {v.name} differs")
+
+        def core(path):
+            text = path.read_bytes()
+            return text[text.index(b"\ndef _present("):
+                        text.index(b"\ndef main(")]
+        self.assertEqual(core(hooks[0]), core(hooks[1]),
+                         "the guard core differs between the two hooks")
+
     def test_vendored_checker_self_contained(self):
         """`python .glados/glados.py check --target .` works with NO --source:
         the vendored src/ tree makes the CI backstop self-contained, and a
@@ -7160,6 +7190,116 @@ class TestHookGuards(unittest.TestCase):
         except (OSError, NotImplementedError):
             self.skipTest("this account cannot make a symbolic link")
         self._assert_blocks(repo, ".glados/runs/current cannot be read")
+
+    def test_an_unreadable_current_names_files_no_run_on_the_stack_owns(self):
+        """With the stack readable and current not, current may name a run
+        the stack does not list, so every unsaved file under .glados/runs/
+        is the run's to save, and the message names each one, not only the
+        records the stack lists."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        (runs / "current").write_bytes(b"\x80\x81newest.md\n")
+        write(runs / "newest.md", "# a run current named\n")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
+        self._assert_blocks(repo, "not saved to the glados/ledger branch: "
+                                  ".glados/runs/newest.md")
+
+    # -- a record is a regular file -------------------------------------------
+
+    def _record_in_flight(self):
+        """outer.md and inner.md saved, the stack listing both: the session
+        may end. Returns (repo, runs)."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_allows(repo)
+        return repo, runs
+
+    def test_a_directory_in_place_of_a_record_blocks(self):
+        """An entry with a record's exact name counted as the record, but a
+        directory yields no file to check: the guard allowed the stop with
+        no record on disk, whether or not the ledger held one. A record
+        exists only as a regular file."""
+        repo, runs = self._record_in_flight()
+        (runs / "outer.md").unlink()
+        (runs / "outer.md").mkdir()
+        not_a_record = ".glados/runs/outer.md is a directory, not a record"
+        self._assert_blocks(repo, not_a_record)
+        # a file inside it is no record either
+        write(runs / "outer.md" / "notes.md", "# notes\n")
+        self._assert_blocks(repo, not_a_record)
+        # with current alone (no stack line), and with a record never saved
+        (runs / "stack").unlink()
+        write(runs / "current", "outer.md\n")
+        self._assert_blocks(repo, not_a_record)
+        (runs / "never.md").mkdir()
+        write(runs / "current", "never.md\n")
+        self._assert_blocks(repo, ".glados/runs/never.md is a directory")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertIn("put the record file there", reason)
+
+    def _link_or_skip(self, target, link):
+        """A symbolic link at ``link``, or on Windows, where an account
+        without the privilege cannot make one, a junction (to a directory
+        only). Skips when neither can be made."""
+        try:
+            os.symlink(target, link, target_is_directory=target.is_dir())
+            return
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt" and target.is_dir():
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        self.skipTest("this account cannot make a symbolic link")
+
+    def test_a_record_that_is_a_dangling_link_blocks(self):
+        """A record's name that is a link to nothing listed as an entry, so
+        the record was not missing, and _walk found no file under it: the
+        stop was allowed with the record gone."""
+        repo, runs = self._record_in_flight()
+        (runs / "outer.md").unlink()
+        try:
+            os.symlink(runs / "nowhere.md", runs / "outer.md")
+        except (OSError, NotImplementedError):
+            self.skipTest("this account cannot make a symbolic link")
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to "
+                                  "nothing, not a record")
+
+    def test_a_record_that_links_to_a_directory_blocks(self):
+        """A link (on Windows, a junction) to a directory under a record's
+        name is no record, and one whose directory is gone is a link to
+        nothing. Both were allowed. A junction is not walked into either:
+        one back to .glados/runs/ looped, listing outer.md/outer.md/...
+        until the path was too long (with long paths on, until the
+        recursion limit crashed the guard open)."""
+        repo, runs = self._record_in_flight()
+        elsewhere = tmpdir("glados-hooks-elsewhere-")
+        (runs / "outer.md").unlink()
+        self._link_or_skip(elsewhere, runs / "outer.md")
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to a "
+                                  "directory, not a record")
+        shutil.rmtree(elsewhere)
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to "
+                                  "nothing, not a record")
+        if os.name == "nt":
+            os.rmdir(runs / "outer.md")  # a junction or a directory link
+        else:
+            (runs / "outer.md").unlink()
+        self._link_or_skip(runs, runs / "outer.md")
+        for state in ("stack", "no stack"):
+            with self.subTest(state=state):
+                if state == "no stack":
+                    (runs / "stack").unlink()
+                    write(runs / "current", "outer.md\n")
+                self._assert_blocks(repo, ".glados/runs/outer.md is a link "
+                                          "to a directory")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertNotIn("outer.md/", reason)
 
     def test_block_message_names_both_markers_and_the_way_out(self):
         repo, _ = self._repo()

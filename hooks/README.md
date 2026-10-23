@@ -23,7 +23,10 @@ The guards check every record the stack lists, with its step artifacts
 of it) blocks the session end, and the message names it and the command that
 saves it, `python .glados/glados.py ledger save`. A marker names a record by
 its exact file name: one that differs in case, which still opens the file
-on Windows and macOS, blocks and says so. With `current` set and no line in
+on Windows and macOS, blocks and says so. A record is a regular file: a
+directory under its name, or a link (on Windows, a junction too) to a
+directory or to nothing, blocks and says what it is, whatever the ledger
+holds under that name. With `current` set and no line in
 `stack` (no stack file, from an install compiled before it existed or
 deleted by hand, or an empty one), nothing says which runs enclose
 `current`, so they check its files and every file under `.glados/runs/`

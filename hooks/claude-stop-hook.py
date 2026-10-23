@@ -7,8 +7,9 @@ mechanical backstop. It refuses session end while a run is in flight
 saved to the `glados/ledger` branch, where every run's record and step
 artifacts live (never on a work branch). `stack` lists every run in flight,
 and each listed record, with its step artifacts, must be on the ledger as it
-is on disk, under exactly the name the marker gives. With `current` set and
-no stack line (no stack file, or an empty one), nothing says which runs
+is on disk, under exactly the name the marker gives, as a regular file (a
+directory or a link to one or to nothing is no record). With `current` set
+and no stack line (no stack file, or an empty one), nothing says which runs
 enclose it, so any file under .glados/runs/ not saved blocks too. A marker
 or a directory there that cannot be read blocks, since it hides which runs
 are in flight. An abandoned run is released by deleting both markers.
@@ -187,31 +188,65 @@ def _listing(path: Path, unlistable: list) -> list:
         return []
 
 
+def _is_link(st) -> bool:
+    """A symbolic link, or a Windows junction, which lstat reports as a
+    directory: walked into, a junction back to .glados/runs/ looped until
+    the path grew too long or, with long paths on, until Python's recursion
+    limit crashed the guard open."""
+    return stat.S_ISLNK(st.st_mode) or \
+        getattr(st, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+
+
 def _walk(entry: Path, unlistable: list) -> list:
     """Every file at or under ``entry``, walked by hand: rglob skips a
-    directory it cannot read without a word."""
+    directory it cannot read without a word. A link is never followed into
+    a directory."""
     try:
-        mode = os.lstat(entry).st_mode
+        st = os.lstat(entry)
     except FileNotFoundError:
         return []
     except OSError:
         unlistable.append(entry)
         return []
-    if stat.S_ISDIR(mode):
+    if _is_link(st):
+        return [entry] if entry.is_file() else []
+    if stat.S_ISDIR(st.st_mode):
         return [f for child in _listing(entry, unlistable)
                 for f in _walk(child, unlistable)]
-    if stat.S_ISLNK(mode):
-        return [entry] if entry.is_file() else []
-    return [entry] if stat.S_ISREG(mode) else []
+    return [entry] if stat.S_ISREG(st.st_mode) else []
+
+
+def _not_a_record(entry: Path):
+    """What the entry under a record's name is instead of a record, or None
+    when it is one: a regular file, once links are followed. A directory, or
+    a link to one or to nothing, holds no record to check, and counting it
+    as the record let a run end with none."""
+    try:
+        mode = os.stat(entry).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return "a link to nothing"
+    except (OSError, ValueError):
+        return "an entry that cannot be read"
+    if stat.S_ISREG(mode):
+        return None
+    if not stat.S_ISDIR(mode):
+        return "not a regular file"
+    try:
+        linked = _is_link(os.lstat(entry))
+    except OSError:
+        linked = False
+    return "a link to a directory" if linked else "a directory"
 
 
 def _files_to_check(root: Path, refs, sweep: bool):
-    """(files, missing, unlistable): the repo-relative files each in-flight
-    run owns (its record and its step artifacts, `<record-stem>.*`), and
-    with ``sweep`` every file under .glados/runs/ except the markers and the
-    files this branch tracks unchanged (records committed before they moved
-    to the ledger); the records a marker names that are not on disk under
-    exactly that name; and the directories that could not be listed."""
+    """(files, missing, not_records, unlistable): the repo-relative files
+    each in-flight run owns (its record and its step artifacts,
+    `<record-stem>.*`), and with ``sweep`` every file under .glados/runs/
+    except the markers and the files this branch tracks unchanged (records
+    committed before they moved to the ledger); the records a marker names
+    that are not on disk under exactly that name; (path, what it is) for
+    each record name whose entry is no record (_not_a_record); and the
+    directories that could not be listed."""
     runs = root / RUNS
     unlistable: list = []
     entries = _listing(runs, unlistable)
@@ -227,7 +262,8 @@ def _files_to_check(root: Path, refs, sweep: bool):
                 rel = f.relative_to(root).as_posix()
                 if rel not in tracked or rel in changed:
                     files.append(rel)
-    names = {entry.name for entry in entries}
+    names = {entry.name: entry for entry in entries}
+    not_records: list = []
     for ref in refs:
         name = Path(ref).name
         stem = name[:-3] if name.endswith(".md") else name
@@ -236,12 +272,15 @@ def _files_to_check(root: Path, refs, sweep: bool):
         # so the run would be checked as having no files at all.
         if name not in names:
             missing.append(f"{RUNS}/{name}")
+        elif (what := _not_a_record(names[name])) is not None:
+            not_records.append((f"{RUNS}/{name}", what))
         for entry in entries:
             if entry.name == name or entry.name.startswith(stem + "."):
                 files += [f.relative_to(root).as_posix()
                           for f in _walk(entry, unlistable)]
     shown = sorted({p.relative_to(root).as_posix() for p in unlistable})
-    return sorted(set(files)), missing, shown
+    return (sorted(set(files)), missing, list(dict.fromkeys(not_records)),
+            shown)
 
 
 def in_flight_without_record(root: Path):
@@ -255,16 +294,18 @@ def in_flight_without_record(root: Path):
     # is on disk, compared by the blob `git add` would make of it. Behind an
     # unreadable marker every file under .glados/runs/ is listed.
     unreadable = unreadable_markers(root)
-    files, missing, unlistable = _files_to_check(root, refs,
-                                                 sweep or bool(unreadable))
+    files, missing, not_records, unlistable = _files_to_check(
+        root, refs, sweep or bool(unreadable))
     ledger = _ledger_blobs(root)
     shas = _git(root, "hash-object", "--stdin-paths",
                 stdin="".join(f + "\n" for f in files)).split() if files else []
     hashes = dict(zip(files, shas))
     absent = list(dict.fromkeys(m for m in missing if m not in ledger))
+    # A record name whose entry is no record is unsaved, whatever the
+    # ledger holds under it: the run has no record on disk to save.
     unsaved = sorted(set(f for f in files
                          if hashes.get(f) not in ledger.get(f, ()))
-                     | set(absent))
+                     | set(absent) | {path for path, _ in not_records})
     if unreadable or unlistable:
         problems = ([" and ".join(unreadable) + " cannot be read or "
                      "decoded as UTF-8 or UTF-16 text"] if unreadable else [])
@@ -296,6 +337,10 @@ def in_flight_without_record(root: Path):
         reason += (" A marker names " + ", ".join(absent) + ", but no file "
                    "has exactly the name: write that record, or correct "
                    "the marker line to the file's name, case included.")
+    for path, what in not_records:
+        reason += (f" {path} is {what}, not a record file: put the record "
+                   "file there under that name, or correct the marker line "
+                   "to the record's name.")
     return reason + " " + FINISH + ABANDON
 
 
