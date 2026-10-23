@@ -8862,6 +8862,34 @@ class TestRunLedger(unittest.TestCase):
         self.assertEqual(read(cruns / "edited.md"),
                          "# settled too\nlocal note\n")
 
+    def test_restore_removes_only_what_a_ledger_removed(self):
+        """Restore deleted a synced copy whenever the ledger it read lacked
+        the path, even when no ledger had ever removed it: after a save kept
+        local (--no-push) and `git branch -D glados/ledger`, a record's only
+        working copy went. Save read the same sync entry as a removal and
+        left the record off the ledger for good. Both ask the ledger's
+        history first."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r0.md", "# r0\n")
+        self._save(a)
+        for step in ("restore", "save"):
+            with self.subTest(after_the_branch_is_deleted=step):
+                name = f"{step}-first.md"
+                write(runs / name, "# kept local, never pushed\n")
+                self._save(a, "--no-push")
+                self._git(a, "branch", "-D", "glados/ledger")
+                if step == "restore":
+                    rc, out = run_cli("ledger", "restore", "--target", a)
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("removed", out)
+                    self.assertEqual(read(runs / name),
+                                     "# kept local, never pushed\n")
+                rc, out = self._save(a)
+                self.assertIn(f".glados/runs/{name}",
+                              self._ledger_files(a, "origin/glados/ledger"))
+
     def _unwritable(self, path):
         """Take this user's right to change ``path``: a file becomes
         read-only (on Windows, the read-only attribute), a directory takes

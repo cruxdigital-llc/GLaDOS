@@ -5775,6 +5775,11 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
         w = hashes[p]
         t = entries.get(p, (None, None))[1]
         known = sync.get(p)
+        if t is None and known == w and not _path_history(git, history, p):
+            # Synced with a ledger this clone no longer has (`git branch -D
+            # glados/ledger` after a --no-push save, a reset): no ledger
+            # here removed it, so it is new, not "removed there".
+            known = None
         # An earlier version: the ledger moved on and this copy did not.
         # Once this tree has synced the path, only that version is stale:
         # any other content, an earlier text put back included, is an edit.
@@ -6224,8 +6229,16 @@ def cmd_ledger_restore(args) -> int:
     hashes = _hash_files(git, present)
     on_disk = [p for p in gone
                if p not in head and os.path.isfile(git.root / p)]
+    history = [c for c in (local, remote_tip) if c]
     removed = []
     for p, w in _hash_files(git, on_disk).items():
+        if w == sync.get(p) and not _path_history(git, history, p):
+            # Synced with a ledger this clone no longer has (`git branch -D
+            # glados/ledger` after a --no-push save, a reset): no ledger
+            # here removed it. Deleted, it was the record's only copy. It
+            # stays, and the next save puts it back on the ledger.
+            sync.pop(p, None)
+            continue
         if w == sync.get(p):
             try:
                 (git.root / p).unlink()
@@ -6241,7 +6254,6 @@ def cmd_ledger_restore(args) -> int:
     for p in gone:
         if p in removed or not os.path.exists(git.root / p):
             sync.pop(p, None)
-    history = [c for c in (local, remote_tip) if c]
     written, refreshed, kept, tracked = [], [], [], 0
     for p, (_mode, sha) in sorted(tree.items()):
         if _unholdable_here(p):
