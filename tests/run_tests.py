@@ -7042,6 +7042,74 @@ class TestPortability(unittest.TestCase):
         self.assertIn("saved 2 file(s)", out)
         self.assertEqual(guards(), ("", 0))
 
+    @staticmethod
+    def _repo_at(path: Path) -> Path:
+        path.mkdir(parents=True)
+        for args in (("init", "-q"), ("config", "user.email", "t@example.com"),
+                     ("config", "user.name", "t"),
+                     ("config", "commit.gpgsign", "false"),
+                     ("checkout", "-q", "-b", "main")):
+            subprocess.run(["git", "-C", str(path), *args],
+                           capture_output=True)
+        write(path / "a.txt", "x\n")
+        subprocess.run(["git", "-C", str(path), "add", "-A"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"],
+                       capture_output=True)
+        return path
+
+    def test_the_claude_guard_reads_its_event_as_utf8(self):
+        """Claude Code writes the Stop event in UTF-8. The hook read it with
+        json.load(sys.stdin), in the locale's codec: the ANSI code page on
+        Windows until Python 3.15 (cp1252, or cp1251 under a Cyrillic
+        locale). A project path with an ë or a Cyrillic letter decoded to
+        another path, one that does not exist; both markers read as absent
+        and the guard let the session end with the record unsaved. Here
+        PYTHONIOENCODING stands in for the code page on every platform,
+        and the process runs elsewhere, so falling back to its directory
+        saves nothing. A UTF-8 BOM is read too, and a cwd that is no
+        directory falls back to the process's, as a missing one does."""
+        base = tmpdir("glados-port-utf8-")
+        elsewhere = tmpdir("glados-port-elsewhere-")
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        hook = str(REPO / "hooks" / "claude-stop-hook.py")
+
+        def guard(event: bytes, cwd: Path, codec=None) -> str:
+            p = subprocess.run(
+                [sys.executable, hook], input=event, capture_output=True,
+                cwd=str(cwd),
+                env=dict(env, **({"PYTHONIOENCODING": codec} if codec
+                                 else {})))
+            out = p.stdout.decode("utf-8", "replace")
+            err = p.stderr.decode("utf-8", "replace")
+            self.assertEqual(p.returncode, 0, err)
+            self.assertNotIn("Traceback", err)
+            return json.loads(out)["decision"] if out.strip() else "allow"
+
+        for i, (name, codec) in enumerate((("Zoë-proj", None),
+                                           ("Zoë-proj", "cp1252"),
+                                           ("Проект", "cp1251"))):
+            repo = self._repo_at(base / f"{i}-{name}")
+            runs = repo / ".glados" / "runs"
+            write(runs / "r1.md", "# r1\n")
+            write(runs / "current", "r1.md\n")
+            event = json.dumps({"cwd": str(repo)},
+                               ensure_ascii=False).encode("utf-8")
+            with self.subTest(name=name, codec=codec or "this platform's"):
+                self.assertEqual(guard(event, elsewhere, codec), "block")
+                self.assertEqual(guard(b"\xef\xbb\xbf" + event, elsewhere,
+                                       codec), "block")
+                rc, out = run_cli("ledger", "save", "--no-push",
+                                  "--target", repo)
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(guard(event, elsewhere, codec), "allow")
+        repo = self._repo_at(base / "plain")
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        write(repo / ".glados" / "runs" / "current", "r1.md\n")
+        gone = json.dumps({"cwd": str(base / "no-such-dir")}).encode("utf-8")
+        self.assertEqual(guard(gone, repo), "block")
+
 
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their

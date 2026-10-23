@@ -57,7 +57,10 @@ FINISH = (f"Finish the epilogue — save it ({SAVE}) — or, if the run is "
 
 
 def _repo_root(cwd: str) -> Path:
-    if cwd:
+    # A cwd that is no directory (one decoded wrongly, or since removed)
+    # would read both markers as absent and let the session end: fall back
+    # to the process's working directory, where Claude Code runs the hook.
+    if cwd and os.path.isdir(cwd):
         return Path(cwd)
     return Path.cwd()
 
@@ -369,9 +372,14 @@ def in_flight_without_record(root: Path):
 
 
 def main() -> int:
+    # Claude Code writes the event in UTF-8. Read as text, stdin decodes in
+    # the locale's codec, the ANSI code page on Windows until Python 3.15:
+    # a cwd with an ë in it became a path that does not exist, and the
+    # guard allowed. json.loads finds UTF-8 (BOM or not), -16 or -32 in
+    # the bytes themselves.
     try:
-        event = json.load(sys.stdin)
-    except (ValueError, OSError):
+        event = json.loads(sys.stdin.buffer.read())
+    except (ValueError, OSError, AttributeError):
         event = {}
     # Valid JSON that is not an object (null, a list), or a cwd that is
     # not text, crashed here: exit 1 is a non-blocking error, so the
