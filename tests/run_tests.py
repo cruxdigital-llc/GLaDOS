@@ -7727,6 +7727,44 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn("is checked out at", out)
         self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
 
+    def _dir_link_or_skip(self, target, link):
+        """A directory symlink at ``link``, or on Windows without the
+        privilege a junction, which needs none; removed at cleanup without
+        touching what it points at. Skips when neither can be made."""
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                self.skipTest("this account cannot make a symbolic link")
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        self.addCleanup(lambda: os.rmdir(link) if os.name == "nt"
+                        else os.unlink(link))
+
+    def test_save_follows_no_link_or_junction_under_runs(self):
+        """save walked .glados/runs/ with rglob, which takes a Windows
+        junction for a directory: one back to .glados/runs/ saved
+        outer.loop/outer.loop/.../r.md copies to the ledger (the local-only
+        markers among them), and one to a directory outside the repository
+        saved that directory's files. The guards never walk a link or a
+        junction; save no longer does either."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "r.evidence" / "log.txt", "ok\n")
+        outside = tmpdir("glados-ledger-outside-")
+        write(outside / "secret.md", "secret\n")
+        self._dir_link_or_skip(runs, runs / "outer.loop")
+        self._dir_link_or_skip(outside, runs / "r.evidence" / "elsewhere")
+        expected = {".glados/runs/r.md", ".glados/runs/r.evidence/log.txt"}
+        for named in ((), (".glados/runs",), (".glados/runs/r.evidence",)):
+            with self.subTest(named=named):
+                rc, out = self._save(repo, "--no-push", *named)
+                self.assertEqual(self._ledger_files(repo), expected)
+                self.assertNotIn("outer.loop", out)
+                self.assertNotIn("secret", out)
+
     def test_links_by_platform(self):
         base = glados._remote_web_base
         self.assertEqual(base("git@gitlab.com:inc/research.git"),

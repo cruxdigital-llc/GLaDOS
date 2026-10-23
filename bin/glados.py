@@ -47,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -5372,21 +5373,43 @@ def _runs_local_only(path: str, runs: str = RUNS_DIR) -> bool:
     return "/" not in rel and rel in RUNS_LOCAL_ONLY
 
 
+def _is_link(st: os.stat_result) -> bool:
+    """A symbolic link, or a Windows junction, which is_symlink() does not
+    report and lstat calls a directory."""
+    return (stat.S_ISLNK(st.st_mode) or getattr(st, "st_reparse_tag", 0)
+            == stat.IO_REPARSE_TAG_MOUNT_POINT)
+
+
+def _runs_walk(entry: Path) -> list[Path]:
+    """The regular files at or under ``entry``, walked by hand. A link or a
+    junction is neither saved nor walked into, as the guards walk it:
+    rglob took a junction for a directory, so one back to .glados/runs/
+    saved outer.loop/outer.loop/... copies, and one to a directory outside
+    the repository saved its files."""
+    try:
+        st = os.lstat(entry)
+    except OSError:
+        return []
+    if _is_link(st):
+        return []
+    if stat.S_ISREG(st.st_mode):
+        return [entry]
+    if not stat.S_ISDIR(st.st_mode):
+        return []
+    try:
+        with os.scandir(entry) as it:
+            children = sorted(Path(e.path) for e in it)
+    except OSError:
+        return []
+    return [f for child in children for f in _runs_walk(child)]
+
+
 def _runs_files(root: Path, sub: str = RUNS_DIR,
                 runs: str = RUNS_DIR) -> list[str]:
-    """Repo-relative paths of the files under ``sub`` (a path under the
-    project's runs directory ``runs``), the local-only ones left out."""
-    start = root / sub
-    if start.is_file():
-        found = [start]
-    elif start.is_dir():
-        found = sorted(f for f in start.rglob("*") if f.is_file())
-    else:
-        found = []
+    """Repo-relative paths of the regular files under ``sub`` (a path under
+    the project's runs directory ``runs``), the local-only ones left out."""
     out = []
-    for f in found:
-        if f.is_symlink():
-            continue
+    for f in _runs_walk(root / sub):
         rel = f.relative_to(root).as_posix()
         if not _runs_local_only(rel, runs):
             out.append(rel)
