@@ -8088,6 +8088,12 @@ class TestRunLedger(unittest.TestCase):
                 self.assertNotIn("saved 1", out)
                 self.assertEqual(self._ledger_files(repo), saved)
         self.assertIn("outer.md is a directory", self._guard(repo)[0])
+        # restore wrote the ledger's record over the directory, and crashed
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(".glados/runs/outer.md: not restored, as "
+                      ".glados/runs/outer.md is a directory here", out)
+        self.assertEqual(read(runs / "outer.md" / "x.md"), "# x\n")
         # the record put back unchanged is the saved one
         shutil.rmtree(runs / "outer.md")
         write(runs / "outer.md", "# outer\n")
@@ -8101,6 +8107,70 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn(".glados/runs/outer.evidence: the ledger has a "
                       "directory there; left off the ledger", out)
         self.assertEqual(self._ledger_files(repo), saved)
+        # restore made the ledger's directory under the file, and crashed
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(".glados/runs/outer.evidence/log.txt: not restored, as "
+                      ".glados/runs/outer.evidence is a file here", out)
+        self.assertEqual(read(runs / "outer.evidence"), "a file now\n")
+
+    def test_a_merge_never_drops_a_file_for_a_directory_of_its_name(self):
+        """B saved r.md/x.md without pushing, A pushed a record r.md, and
+        B's next save merged both ledgers into one tree, where git keeps
+        the directory and drops the file: A's record left the ledger
+        without a word (_ledger_name_clash looks only at paths this clone
+        adds), and B's restore, which writes both ledgers' files, crashed
+        on the name. The merge is now refused, naming both paths: B's saves
+        stay on its own ledger and A's record on the remote, B's restore
+        writes around the clash, and once B renames its copy the next save
+        merges and pushes both. A file here and a directory there is the
+        same clash."""
+        for here, there in ((".glados/runs/r.md/x.md", ".glados/runs/r.md"),
+                            (".glados/runs/r.md", ".glados/runs/r.md/x.md")):
+            with self.subTest(here=here, there=there):
+                remote = self._remote()
+                a = self._clone(remote, seed=True)
+                b = self._clone(remote)
+                write(b / here, "# b\n")
+                self._save(b, "--no-push")
+                write(a / there, "# a\n")
+                self._save(a)
+                write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+                rc, out = self._save(b, ok=False)
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn("NOT pushed to origin", out)
+                self.assertIn(f"{here} here and {there} on origin cannot "
+                              f"both be on the ledger", out)
+                self.assertIn("Rename .glados/runs/r.md in this clone", out)
+                # neither is dropped: A's record stays on the remote, and
+                # B's, with the record this save brought, on B's ledger
+                self.assertEqual(self._ledger_files(remote), {there})
+                self.assertEqual(self._ledger_files(b),
+                                 {here, ".glados/runs/rb.md"})
+                # restore writes around the clash and never crashes
+                rc, out = run_cli("ledger", "restore", "--target", b)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"{there}: not restored", out)
+                self.assertEqual(read(b / here), "# b\n")
+                # B renames its copy, and the next save merges and pushes
+                runs = b / ".glados" / "runs"
+                (runs / "r.md").rename(runs / "r-b.md")
+                self._save(b, "--no-push", ".glados/runs/r.md",
+                           ".glados/runs/r-b.md")
+                rc, out = self._save(b)
+                self.assertIn("pushed glados/ledger to origin", out)
+                self.assertEqual(
+                    self._ledger_files(remote),
+                    {there, here.replace("r.md", "r-b.md", 1),
+                     ".glados/runs/rb.md"})
+        # the last line: no tree with such a pair is ever written
+        blob = ("100644", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+        with self.assertRaisesRegex(glados.Fatal, "cannot both be on the "
+                                                  "ledger"):
+            glados._ledger_write_tree(glados._LedgerGit(REPO),
+                                      {"r.md": blob, "r.md/x.md": blob})
 
     def test_links_by_platform(self):
         base = glados._remote_web_base

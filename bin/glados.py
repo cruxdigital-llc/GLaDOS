@@ -5509,10 +5509,43 @@ def _union_merge(git: _LedgerGit, base, ours: str, theirs: str):
     return git.out("hash-object", "-w", "--stdin", input=merged)
 
 
-def _ledger_integrate(git: _LedgerGit, local, remote_tip, notes: list):
+def _tree_name_clashes(tree) -> list:
+    """(file, path) for each path in ``tree`` under a directory that a file
+    in ``tree`` names. One git tree cannot hold both: written together, git
+    keeps the directory and drops the file without a word."""
+    out = []
+    for p in sorted(tree):
+        parts = p.split("/")
+        for i in range(1, len(parts)):
+            above = "/".join(parts[:i])
+            if above in tree:
+                out.append((above, p))
+    return out
+
+
+def _ledger_clash_note(pairs, remote) -> str:
+    """Why two ledgers were not merged, and the way out, for each (path in
+    this clone, path on ``remote``) that a file and a directory share."""
+    names = ", ".join(sorted({min(pair, key=len) for pair in pairs}))
+    return ("; ".join(f"{here} here and {there} on {remote}"
+                      for here, there in pairs)
+            + f" cannot both be on the ledger, where a file and a directory "
+              f"cannot share a name, so this clone's {LEDGER_BRANCH} is not "
+              f"merged with {remote}'s, and neither copy is dropped. Rename "
+              f"{names} in this clone to a name the ledger does not use, put "
+              f"the rename on this clone's ledger (`ledger save --no-push "
+              f"<old> <new>`), then run `ledger save` to merge and push")
+
+
+def _ledger_integrate(git: _LedgerGit, local, remote_tip, notes: list,
+                      refused: list):
     """(parents, tree) of the ledger a save builds on: this clone's ledger
     and the remote's, merged when they diverged, so that neither side's
-    saves are lost."""
+    saves are lost. A merge that would hold a file and a directory under
+    one name is refused, and this clone's ledger is built on alone: each
+    (path here, path there) goes in ``refused``. Merged into one dict, git
+    kept the directory and dropped the file, so one side's record left the
+    ledger without a word."""
     if local and remote_tip and local != remote_tip \
             and not git.is_ancestor(local, remote_tip):
         if git.is_ancestor(remote_tip, local):
@@ -5523,6 +5556,7 @@ def _ledger_integrate(git: _LedgerGit, local, remote_tip, notes: list):
         ours_t = _ledger_tree(git, local)
         theirs_t = _ledger_tree(git, remote_tip)
         merged = dict(theirs_t)
+        merge_notes: list = []
         for p in sorted(set(base_t) | set(ours_t)):
             b, o, t = base_t.get(p), ours_t.get(p), theirs_t.get(p)
             if o == b or o == t:
@@ -5540,11 +5574,19 @@ def _ledger_integrate(git: _LedgerGit, local, remote_tip, notes: list):
                 continue
             sha = _union_merge(git, b[1] if b else None, o[1], t[1])
             merged[p] = (o[0], sha or o[1])
-            notes.append(f"{p}: changed here and by another session; "
-                         + ("merged keeping both sides' lines — check it "
-                            "reads right" if sha else
-                            "binary, so this clone's copy is kept and the "
-                            "other is in the ledger's history"))
+            merge_notes.append(
+                f"{p}: changed here and by another session; "
+                + ("merged keeping both sides' lines — check it reads right"
+                   if sha else "binary, so this clone's copy is kept and the "
+                   "other is in the ledger's history"))
+        clashes = _tree_name_clashes(merged)
+        if clashes:
+            # Exactly one of each pair is the remote's: each tree alone is
+            # a git tree, which holds no such pair.
+            refused += [(f, d) if f not in theirs_t else (d, f)
+                        for f, d in clashes]
+            return [local], ours_t
+        notes += merge_notes
         notes.append("this clone's earlier saves were merged with saves "
                      "another session pushed")
         return [remote_tip, local], merged
@@ -5705,7 +5747,14 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
 
 def _ledger_write_tree(git: _LedgerGit, tree: dict) -> str:
     """Write ``tree`` (path -> (mode, sha)) as a git tree through a temporary
-    index, leaving the repository's own index alone."""
+    index, leaving the repository's own index alone. A file and a directory
+    under one name stop the save: git would keep the directory and drop the
+    file without a word (the merge and the plan keep such pairs out; this
+    is the last line)."""
+    for f, d in _tree_name_clashes(tree)[:1]:
+        raise Fatal(f"{f} and {d} cannot both be on the ledger, where a file "
+                    f"and a directory cannot share a name; nothing was saved "
+                    f"— rename one of them, then save again")
     with tempfile.TemporaryDirectory(prefix="glados-ledger-") as td:
         env = {"GIT_INDEX_FILE": str(Path(td) / "index")}
         git.run("read-tree", "--empty", env=env)
@@ -5803,10 +5852,13 @@ def cmd_ledger_save(args) -> int:
     committed = pushed = False
     push_error = None
     new = None
+    refused: list = []
     for _attempt in range(LEDGER_PUSH_ATTEMPTS):
         local = git.rev(LEDGER_REF)
         remote_tip = git.rev(_ledger_tracking(remote)) if remote else None
-        parents, entries = _ledger_integrate(git, local, remote_tip, notes)
+        refused.clear()
+        parents, entries = _ledger_integrate(git, local, remote_tip, notes,
+                                             refused)
         history = [c for c in (*parents, local) if c]
         updates, refresh, synced = _ledger_plan_local(
             git, git.root, entries, sync, explicit, history, notes)
@@ -5844,6 +5896,16 @@ def cmd_ledger_save(args) -> int:
             else:
                 sync[p] = sha
         _ledger_sync_store(git, sync)
+        if refused:
+            # The merge was refused, so this commit is on this clone's
+            # ledger alone. If it moved that ledger (a rename of the
+            # clashing name among it), merge again, saving nothing more:
+            # a named path that is gone would remove the remote's file of
+            # that name from the merge.
+            if new != local and explicit != []:
+                explicit = []
+                continue
+            break
         if not remote or not new or new == remote_tip:
             break
         proc = git.run("push", "--quiet", remote, f"{new}:{LEDGER_REF}",
@@ -5898,6 +5960,11 @@ def cmd_ledger_save(args) -> int:
         print(f"glados ledger: {note}")
     if pushed:
         print(f"glados ledger: pushed {LEDGER_BRANCH} to {remote}")
+    elif refused:
+        print(f"glados ledger: saved locally, NOT pushed to {remote}: "
+              f"{_ledger_clash_note(refused, remote)}. Record this in the "
+              f"run record.", file=sys.stderr)
+        return 1
     elif remote and push_error:
         print(f"glados ledger: saved locally, NOT pushed to {remote}: "
               f"{push_error}. Record this in the run record; the next "
@@ -5928,6 +5995,24 @@ def _ledger_select(tree: dict, names,
     return keep, unmatched
 
 
+def _ledger_name_taken(root: Path, p: str):
+    """What in the working tree takes the name the ledger file ``p`` needs,
+    or None: anything but a file at ``p`` (a directory), or anything but a
+    directory at one of its parents (a file). Written over, either raised,
+    and restore crashed (both ledgers' files, or a directory put where a
+    saved record was)."""
+    parts = p.split("/")
+    for i in range(1, len(parts)):
+        above = root / "/".join(parts[:i])
+        if os.path.lexists(above) and not above.is_dir():
+            return f"{'/'.join(parts[:i])} is a file"
+    f = root / p
+    if os.path.lexists(f) and not f.is_file():
+        return f"{p} is a directory" if f.is_dir() else \
+            f"{p} is not a regular file"
+    return None
+
+
 def cmd_ledger_restore(args) -> int:
     git = _ledger_open(args.target)
     _ensure_runs_ignored(git)
@@ -5947,10 +6032,15 @@ def cmd_ledger_restore(args) -> int:
     if local and remote_tip and local != remote_tip \
             and not git.is_ancestor(local, remote_tip) \
             and not git.is_ancestor(remote_tip, local):
-        tree = {**_ledger_tree(git, remote_tip, git.runs),
-                **_ledger_tree(git, local, git.runs)}
-        notes.append("this clone's ledger has saves the remote lacks; the "
-                     "next `ledger save` merges and pushes them")
+        ours_t = _ledger_tree(git, local, git.runs)
+        tree = {**_ledger_tree(git, remote_tip, git.runs), **ours_t}
+        clashes = [(f, d) if f in ours_t else (d, f)
+                   for f, d in _tree_name_clashes(tree)]
+        if clashes:
+            notes.append(_ledger_clash_note(clashes, remote))
+        else:
+            notes.append("this clone's ledger has saves the remote lacks; "
+                         "the next `ledger save` merges and pushes them")
     else:
         src = remote_tip if remote_tip and (
             not local or git.is_ancestor(local, remote_tip)) else local
@@ -5993,6 +6083,12 @@ def cmd_ledger_restore(args) -> int:
             tracked += 1
             continue
         if w is None:
+            taken = _ledger_name_taken(git.root, p)
+            if taken:
+                notes.append(f"{p}: not restored, as {taken} here, where a "
+                             f"file and a directory cannot share a name — "
+                             f"rename one of them")
+                continue
             written.append(p)
         elif w == sync.get(p) or (p not in sync and
                                   w in _path_history(git, history, p)):
