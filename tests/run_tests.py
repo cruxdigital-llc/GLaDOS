@@ -7776,6 +7776,31 @@ class TestHookGuards(unittest.TestCase):
                 reason = json.loads(self._run_claude(repo).stdout)["reason"]
                 self.assertNotIn("outer.md/", reason)
 
+    def test_a_link_the_guard_cannot_follow_blocks(self):
+        """A link under .glados/runs/ whose target this user cannot reach: on
+        POSIX one into a directory it may not search, on Windows a junction
+        to a directory it was denied. The walk asked Path.is_file() of each
+        link, which on Python 3.10 to 3.12 raises every error but a missing
+        target: both guards exited 1, a non-blocking error to both hosts,
+        and the session ended with the record unsaved. A link is neither
+        saved nor walked into, so it counts as no file either way."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        outer = tmpdir("glados-hooks-denied-")
+        write(outer / "inner" / "notes.txt", "# notes\n")
+        write(runs / "r1.md", "# r1\n")
+        self._link_or_skip(outer / "inner", runs / "r1.evidence")
+        self._deny(outer / "inner" if os.name == "nt" else outer)
+        write(runs / "stack", "r1.md\n")
+        write(runs / "current", "r1.md\n")
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        (runs / "stack").unlink()       # current alone: every file counts
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        write(runs / "stack", "r1.md\n")
+        self._assert_allows(repo)
+
     def test_block_message_names_both_markers_and_the_way_out(self):
         repo, _ = self._repo()
         runs = repo / ".glados" / "runs"

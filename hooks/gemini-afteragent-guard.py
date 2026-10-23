@@ -217,7 +217,11 @@ def _is_link(st) -> bool:
 def _walk(entry: Path, unlistable: list) -> list:
     """Every file at or under ``entry``, walked by hand: rglob skips a
     directory it cannot read without a word. A link is never followed into
-    a directory."""
+    a directory. A link to a file counts as one; os.path.isfile answers
+    False for one whose target cannot be reached, where Path.is_file()
+    raised on Python 3.10 to 3.12 (a link into a directory this user may
+    not search; on Windows a junction to a directory it was denied) and
+    the guard crashed open."""
     try:
         st = os.lstat(entry)
     except FileNotFoundError:
@@ -226,7 +230,7 @@ def _walk(entry: Path, unlistable: list) -> list:
         unlistable.append(entry)
         return []
     if _is_link(st):
-        return [entry] if entry.is_file() else []
+        return [entry] if os.path.isfile(entry) else []
     if stat.S_ISDIR(st.st_mode):
         return [f for child in _listing(entry, unlistable)
                 for f in _walk(child, unlistable)]
