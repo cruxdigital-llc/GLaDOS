@@ -7359,6 +7359,38 @@ class TestPortability(unittest.TestCase):
         self.assertEqual(on_ledger(), "v2\n")
         self.assertEqual(guards()[:2], ("", 0))
 
+    def test_a_guard_started_with_stdin_closed_still_blocks(self):
+        """A host may start a hook with no stdin at all, and Python then
+        sets sys.stdin to None. The Gemini/agy guard's json.load raised
+        AttributeError: exit 1, a non-blocking error to both hosts, so the
+        session ended with the run's record unsaved. Both guards read no
+        event then, and block."""
+        repo = self._repo_at(tmpdir("glados-port-stdin-") / "r")
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        write(repo / ".glados" / "runs" / "current", "r1.md\n")
+        # sys.stdin as Python leaves it when the host passes no stdin.
+        none = ("import runpy, sys; p = sys.argv[1]; sys.argv = [p]; "
+                "sys.stdin = None; runpy.run_path(p, run_name='__main__')")
+        starts = [("sys.stdin None", lambda hook: dict(
+            args=[sys.executable, "-c", none, hook]))]
+        if os.name == "posix":
+            # And for real: file descriptor 0 closed before Python starts.
+            starts.append(("fd 0 closed", lambda hook: dict(
+                args=[sys.executable, hook], stdin=None,
+                preexec_fn=lambda: os.close(0))))
+        for label, how in starts:
+            for rel, blocked in (("hooks/claude-stop-hook.py", 0),
+                                 ("hooks/gemini-afteragent-guard.py", 2)):
+                with self.subTest(start=label, hook=rel):
+                    p = subprocess.run(
+                        **how(str(REPO / rel)), cwd=str(repo),
+                        capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=60)
+                    self.assertNotIn("Traceback", p.stderr)
+                    self.assertEqual(p.returncode, blocked, p.stderr)
+                    shown = p.stdout if blocked == 0 else p.stderr
+                    self.assertIn(".glados/runs/r1.md", shown)
+
 
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their

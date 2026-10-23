@@ -431,9 +431,14 @@ def in_flight_without_record(root: Path):
 
 
 def main() -> int:
+    # The event is read and not used. A host may start the hook with no
+    # stdin at all, and Python then sets sys.stdin to None: json.load
+    # raised AttributeError, exit 1, a non-blocking error to both hosts,
+    # so the session ended with the record unsaved. As the Claude guard
+    # does, read no event then, and check.
     try:
         json.load(sys.stdin)
-    except (ValueError, OSError):
+    except (ValueError, OSError, AttributeError):
         pass
     root = Path.cwd()
     reason = in_flight_without_record(root)
