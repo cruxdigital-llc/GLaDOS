@@ -24,7 +24,16 @@ supported v2 customization surface is:
   name wins.
 - **Project standards and philosophies** under `product-knowledge/` — read by
   the standards gate and review panels at run time.
+- **Project workflows** under `pipelines:` and `steps:` in `glados.yaml`, with
+  step bodies in `product-knowledge/steps/` — an ordered list of GLaDOS's
+  steps and your own, run by `run-pipeline`. This is the v2 answer to "we
+  want a different process": add a workflow instead of overriding one. See
+  [guides/pipelines.md](guides/pipelines.md).
+- **Canon** under `canon:` in `glados.yaml`, with digests in
+  `product-knowledge/canon/` — the reference works your team holds as
+  authoritative, consulted and cited at planning, speccing, verification and
+  review. See [guides/canon.md](guides/canon.md).
 
-A structural change to a core's text still means editing the source (in a
-fork or checkout) and re-running `python bin/glados.py install --mode <mode>
---target /path/to/your/project`.
+A structural change to a shipped core's text still means editing the source
+(in a fork or checkout) and re-running `python bin/glados.py install --mode
+<mode> --target /path/to/your/project`.

@@ -2,9 +2,9 @@
 name: verify-feature
 kind: core
 description: Verify the implemented feature with a fresh evaluator that has no implementation context
-reads: [standards.index]
-writes: []
-emits: [progress, verdict, escalation]
+reads: [standards.index, manifest.canon, canon.digests]
+writes: [observations.pending]
+emits: [progress, verdict, escalation, observation]
 mutates: none
 requires: [evaluator-spawn]
 ---
@@ -23,10 +23,14 @@ surfaces is applied by the implementing context, then re-verified.
 ### 1. Assemble the evaluation brief
 Build a self-contained brief for an agent that knows nothing about how the
 code was written: what was requested, what was agreed (acceptance criteria in
-the spec's own words), the changed-file list, the commands to test, lint, and
-run the app, the applicable standards documents (paths, not summaries), and
-the review personas to consult. The brief plus the repo is the evaluator's
-entire world — anything the verdict should rest on must be in one of them.
+their own words, each with its source), the changed-file list, the shape's
+path when the run has one, the commands to test, lint, and run the app, the
+applicable standards documents and canon digests (paths, not summaries; canon
+as *Consulting canon* sets out for `verify-feature`), and the review personas
+to consult. The brief plus the repo is the evaluator's entire world —
+anything the verdict should rest on must be in one of them.
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 2. Spawn the fresh evaluator
 The evaluator starts with a clean context — no conversation history, no
@@ -37,7 +41,8 @@ artifacts only. It must:
 - exercise the running app where tools allow — never judge behavior from
   code reading alone;
 - judge each acceptance criterion on observed evidence;
-- check the diff against each standard listed in the brief;
+- check the diff against each standard listed in the brief, and against the
+  principles in each canon digest it lists, at canon's weight;
 - critique from each persona listed in the brief;
 - verify the tests reflect the final implementation:
 
@@ -50,7 +55,9 @@ artifacts only. It must:
 
 <!-- glados:include vocabulary/verdicts.md -->
 
-The evaluator's verdict is emitted as a `verdict` outcome.
+The evaluator's verdict is emitted as a `verdict` outcome. File each canon
+conflict the evaluation lists, as *Consulting canon* sets out; a conflict
+is never a finding.
 
 ### 3. The verify/fix loop
 On blocking findings, hand them to the implementing context for fixes — this

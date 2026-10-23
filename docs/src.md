@@ -17,10 +17,11 @@ checks against.
 
 | File | Role |
 |---|---|
-| `preamble.md` | Prepended to every core: create the run record and set the `.glados/runs/current` in-flight marker first, record `work.base-sha` before mutating, resolve decision rights. Carries the `{{OPTIMIZE_FOR}}` slot the phase preset fills. |
-| `epilogue.md` | Appended to every core: finalize the run record, yield check, commit, publish outcomes to bound channels, release holds and delete the in-flight marker. A core defining its own ending fails lint. |
+| `preamble.md` | Prepended to every core: copy in the ledger's records (`ledger restore`) and create the run record before any other work, set the in-flight markers (`.glados/runs/current` and `.glados/runs/stack`, which nested runs push onto), record `work.base-sha` before mutating, record the SDA claim when `sda: true`, read prior records; take an absent key's default from the preset table; resolve decision rights. Carries the `{{OPTIMIZE_FOR}}` slot the phase preset fills. |
+| `epilogue.md` | Appended to every core: finalize the run record, yield check, append the SDA work-unit row and clear the claim when `sda: true`, save the record and its step artifacts to the `glados/ledger` branch (the row, the claim and pending observations are committed on the working branch), publish outcomes to bound channels (everything posted on an MR starts with `(GLaDOS <workflow>)`), release holds and pop this run off the in-flight markers. A core must not define its own ending; no compiler check catches one, so review a core change for it. |
 | `state-registry.yaml` | The flat state-key registry — every legal `reads:`/`writes:` token with its declared home, plus the outcome-type list. Install fails if an enabled read has no enabled writer. |
-| `presets/phases.yaml` | The vendored phase preset table (`nascent`/`evolving`/`production`/`sunset`), the precedence rules, and the phase-untouchable invariants. |
+| `presets/phases.yaml` | The vendored phase preset table (`nascent`/`evolving`/`production`/`sunset`), the precedence rules, and the phase-untouchable invariants. Install vendors it as `.glados/presets.yaml`, the table a run reads. |
+| `aliases.yaml` | The ten retired v1 command names and the core each routes to, emitted as one-line shims by every adapter. |
 
 ## `src/vocabulary/`
 
@@ -30,13 +31,21 @@ Single-source rule partials, inlined where a core includes them via
 - `verdicts.md` — the one severity scale and verdict vocabulary, with composition rules.
 - `panel-roster.md` — how the review panel is seated (standing lenses + manifest + feature personas).
 - `root-cause.md` — the mandatory post-tally synthesis: did the change remove the cause, and do the findings converge on one?
-- `loop-bounds.md` — the bounded-loop rule; bound values resolve from manifest params.
+- `loop-bounds.md` — the bounded-loop rule; bound values resolve from manifest params, and one that is not a whole number of 1 or more is no bound: the loop does not start and the run escalates, naming the key.
 - `git-conventions.md` — commit/git defaults, subordinate to the project's own agent instructions.
-- `branch-naming.md` — branch names and MR targets resolve from `glados.yaml` → `branching:`.
+- `branch-naming.md` — branch names and MR targets resolve from `glados.yaml` → `branching:`. No core includes it today: each core that cuts a branch reads `branching:` itself.
+- `shape.md`, `open-mr.md`, `self-review.md` — the library steps `run-pipeline` runs itself (the shape step, opening the MR, the self-review).
+- `persona-pass.md`, `design-review.md` — the two ways `run-pipeline` reviews a step's artifact: an in-context persona pass, or a fresh agent with no memory of writing it.
+- `review-inputs.md` — what a fresh reviewer's brief may carry and who wrote each input. Included by `design-review.md` and the `evaluator-spawn` and `mr-review-panel` modules.
+- `person-words.md` — how a person's words are read: each clause tagged Directive, Preference, Hunch or Assent and binding only as firmly as it was said, and the open challenge ("your words say X; the code shows Y; I propose Z"). Included by `review-inputs.md` and address-review.
+- `questions.md` — a question for a person (what someone meant, where the readings differ materially): its form, and its door. Only a person answers a one-way door, which parks run-pipeline's step; a two-way door goes ahead on its default for the person to confirm or overturn. A question never stands in for a finding. Included by `design-review.md`.
+- `mr-notes.md` — people on the merge request: a note not starting `(GLaDOS <workflow>)`, from someone with a role on the project who did not write the change, is that person's review, each point a finding labelled as theirs and theirs to close. Included by review-mr and address-review.
+- `comment-shape.md` — the default shape of a published verdict: order, voice and length of the MR comment, which leads with `(GLaDOS <workflow>)`; a configured `mr-comment` sink overrides only what it speaks to. Included by the `mr-review-panel` and `evaluator-spawn` modules and by `self-review.md`.
+- `canon.md` — how a consult point reads the project's canon (`canon:` in `glados.yaml`): the digest, never the URL; seats; weight below decisions, standards and philosophies; the citation form. Included only by the cores that consult canon: plan-feature, spec-feature, verify-feature, review-mr, review-codebase, brunch and run-pipeline.
 
 ## `src/workflows/`
 
-The 15 cores (`kind: core` frontmatter) — nothing else lives here. The
+The 16 cores (`kind: core` frontmatter) — nothing else lives here. The
 permanent v1 aliases are entries in `src/kernel/aliases.yaml`, emitted as
 one-line shims by every adapter. See [workflows.md](workflows.md) for the
 full tables.
@@ -63,20 +72,35 @@ Boilerplate the install scaffolds — `PROJECT_STATUS.md` always; `CLAIMS.md`
 and `SPEC_LOG.md` when the manifest sets `sda: true` (create-only; see
 [guides/sda.md](guides/sda.md)) — plus what the plugin `init` skill copies on
 demand (`SDA_ROADMAP.md` as an optional starter, the two `OBSERVED_*`
-observation stubs).
+observation stubs), and `CANON.md`, the template a team copies into
+`product-knowledge/canon/` for each work it declares under `canon:` (see
+[guides/canon.md](guides/canon.md)).
 
 ## Other top-level directories
 
 - **`bin/`** — the installer tooling; `python bin/glados.py install --mode
-  <claude|claude-plugin|direct|gemini|antigravity|aistudio> --target
-  /path/to/your/project` is the entry point. The compiler is under active
-  development; see `bin/README.md`.
+  <claude|claude-plugin|direct|gemini|antigravity|aistudio|pi> --target
+  /path/to/your/project` is the entry point, and `validate --target
+  /path/to/your/project` checks a project's `glados.yaml` (its pipelines
+  included) without installing anything. See `bin/README.md`.
+- **`hooks/`** — the run-record guard scripts and the Antigravity hooks
+  block, vendored into `.glados/hooks/` by install; see
+  [hooks/README.md](../hooks/README.md).
+- **`ci/`** — the CI templates that run `check` and `verify-ledger`,
+  vendored into `.glados/ci/` by install.
+- **`compiled/claude-plugin/`** — the checked-in compiled workflows of the
+  Claude Code plugin, which `compile-plugin` regenerates; `.claude-plugin/`
+  holds the plugin's manifest.
 - **`skills/`** — Claude Code skill wrappers (thin entrypoints delegating to
   workflows), regenerated by the claude-plugin adapter at compile time.
+- **`tests/`** — the self-test suite (`tests/run_tests.py`) and its fixture
+  projects.
+- **`package.json`** — packages GLaDOS so harnesses (such as cruxcode for
+  pi) can depend on it from git; it carries the release version.
 - **`docs/`** — the documentation tree; [docs/README.md](README.md) is the
   full index, from getting-started through [V2_STRATEGY.md](V2_STRATEGY.md)
   and `docs/standards/` (the SDA Standard v1.0 and the GLaDOS Profiles —
-  v2.0 current, v1.0 historical).
+  v2.1 current, amending v2.0; v1.0 historical).
 - **`glados.yaml.example`** — the manifest template projects copy to their
   repo root.
 - **`PLAYBOOK.md`** — team-adoption guidance.

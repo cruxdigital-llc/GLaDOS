@@ -21,7 +21,7 @@ Five ship declared, usable with no `sinks:` block at all:
 | `issue` | yes | escalations, bug reports a human will see |
 | `issue-comment` | yes | follow-ups on an existing issue |
 | `label` | yes | machine-readable state on the MR/issue |
-| `ledger` | no | the committed run record only (the quiet sink) |
+| `ledger` | no | the run record on the `glados/ledger` branch only (the quiet sink) |
 
 ## Declaring your own
 
@@ -31,6 +31,7 @@ it in `channels:`:
 ```yaml
 sinks:
   slack:
+    team-visible: true           # required on a sink you declare (see Visibility)
     channel: "#code-reviews"     # the agent posts here via its Slack tooling
     format: terse
 channels:
@@ -51,12 +52,22 @@ Two rules make this safe without freezing the vocabulary:
    or a confessed `visibility-acknowledged: ledger-only`). All of a run's
    delivery failures ride in **one** escalation, and that escalation is never
    itself escalated — otherwise one unreachable platform produces an unbounded
-   chain.
+   chain. One exception: an outcome bound to `mr-comment` before any MR exists
+   (a verification verdict inside build-feature, for example) is recorded
+   under `## Pending MR delivery` in the run record and posted by the run that
+   opens the MR, or marked not applicable if no MR ever opens for that work.
+   That is not a failed delivery and does not escalate.
 
 Bodies are yours. Everything under a sink name — `channel:`, `format:`,
 `grouping:`, `threads:`, anything — is freeform config the **agent** interprets
 at run time for that sink's medium and your team's conventions. The compiler
 never parses it; it only checks that the declaration is a mapping.
+
+One thing no body changes: everything a run posts on a merge request starts
+with `(GLaDOS <workflow>)`, whatever the sink's config says. review-mr and
+address-review read a note without it, written by someone with a role on the
+project who did not write the change, as that person's review, so the marker
+is how GLaDOS's own comments stay GLaDOS's.
 
 ## Visibility
 

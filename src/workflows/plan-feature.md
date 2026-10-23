@@ -2,9 +2,9 @@
 name: plan-feature
 kind: core
 description: Analyze requirements and produce a high-level plan and review-persona roster for one feature
-reads: [intent.mission, intent.roadmap, intent.status, manifest.panel-personas, manifest.decisions]
-writes: [run.active-personas]
-emits: [progress, decision]
+reads: [intent.mission, intent.roadmap, intent.status, manifest.panel-personas, manifest.decisions, manifest.canon, canon.digests]
+writes: [run.active-personas, observations.pending]
+emits: [progress, decision, observation]
 mutates: none
 requires: []
 ---
@@ -33,8 +33,9 @@ contract, implement-feature the code. It touches no branch.
   - **Goal** — what the feature does and for whom.
   - **Success criteria** — observable checks that would prove it works.
   - **Non-goals** — what this feature deliberately does not do.
-- Requirements you invented rather than received are assumptions: label them
-  as such so spec-feature can confirm or kill them.
+- Label each requirement with its source: the ticket, a person's words
+  (quoted, with where they were said), or "assumption" for one you invented
+  rather than received, so spec-feature can confirm or kill it.
 
 ### 3. Approach
 - Draft the high-level plan: components touched, sequencing, notable risks,
@@ -45,6 +46,12 @@ contract, implement-feature the code. It touches no branch.
     produces a `decision` outcome.
   - A choice classed `escalate` or `forbidden` is not made here — leave it as
     a named open question in the plan for the caller to resolve.
+- Check the approach against the canon that applies at `plan-feature`, as
+  *Consulting canon* sets out. The plan names by canon id each principle it
+  relies on or departs from, so the spec and the reviewers check against
+  the same text.
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 4. Seat the review panel
 - Scan the persona directories for available reviewer lenses: the project's
@@ -61,6 +68,7 @@ contract, implement-feature the code. It touches no branch.
 
 ### 5. Handoff
 - The deliverable is the plan itself: goal, success criteria, non-goals,
-  approach, open questions, and the seated roster with per-persona focus.
+  approach, the canon principles it relies on, open questions, and the
+  seated roster with per-persona focus.
 - This run produces a `progress` outcome carrying that plan.
 - Suggest running the spec-feature workflow next.

@@ -8,26 +8,43 @@
 #
 # `home:` values:
 #   run-record   — inside the current run's record file (.glados/runs/…)
-#   ledger       — the run-ledger directory/branch itself
+#   ledger       — the run ledger itself: .glados/runs/ in the working tree,
+#                  saved to the glados/ledger branch (never a work branch)
 #   manifest     — glados.yaml (lane-2 runtime read; writer is the human/MR)
 #   repo:<path>  — a versioned repo file
 #
 # Keys with home: manifest list `writer: human` — the compiler treats them as
 # always-written (the manifest schema requires them), so reading them never
-# fails the check; WRITING them from a workflow is forbidden.
+# fails the check; WRITING them from a workflow is forbidden. A repo key may
+# list `writer: human` too, when people write it: reading it then never fails
+# the check either, and a workflow that also writes it declares the write
+# (canon.digests, which steward refreshes).
 
 keys:
   run.record:
     home: ledger
-    doc: The current run's record file. Written by every core's compiled epilogue.
+    doc: >
+      The current run's record file, with its step artifacts beside it.
+      Created by every core's compiled preamble in .glados/runs/, which the
+      clone's git exclude file (every ledger command writes the line) keeps
+      out of every branch's commits, and saved to the glados/ledger branch
+      by `glados.py ledger save` at each commit point and in the compiled
+      epilogue; `ledger restore` reads it back in another session.
   run.current:
     home: ledger
     doc: >
-      The in-flight marker at .glados/runs/current, holding the current run
-      record's filename. Written by every core's compiled preamble at run
-      start; deleted unconditionally by the compiled epilogue's release step;
-      read by the host-agent run-record guard hooks (.glados/hooks/). Transient
-      run state — never committed.
+      The in-flight markers. .glados/runs/current holds the filename of the
+      innermost run in flight (one line, so older hooks keep working);
+      .glados/runs/stack lists every run in flight, one filename per line,
+      outermost first, its last line equal to current. A run nested inside
+      another (plan-feature inside build-feature) pushes onto the stack; a
+      run is nested only when a workflow running in the same session started
+      it, so any other leftover marker is stale and a fresh run replaces it.
+      Written by every core's compiled preamble at run start; popped by the
+      compiled epilogue's release step, which rewrites current to the
+      enclosing run or deletes both files when the stack empties; read by the
+      host-agent run-record guard hooks (.glados/hooks/), which check every
+      listed record. Transient run state — never committed.
   run.active-personas:
     home: run-record
     doc: >
@@ -69,9 +86,23 @@ keys:
   observations.pending:
     home: "repo:product-knowledge/observations/"
     doc: >
-      Observed-standard / observed-philosophy candidates awaiting promotion.
-      Written by retrospect, review-codebase, and brunch; read and cleared
-      (which is a write) by steward.
+      Observed-standard / observed-philosophy candidates awaiting promotion,
+      and canon conflicts (a canon principle a recorded decision, a standard
+      or a philosophy overrides). Written by retrospect, review-codebase and
+      brunch, and by the workflows that consult canon (plan-feature,
+      spec-feature, verify-feature, run-pipeline); read and cleared (which
+      is a write) by steward.
+  canon.digests:
+    home: "repo:product-knowledge/canon/"
+    writer: human
+    doc: >
+      The canon digests: one file per entry under manifest key `canon`, at
+      the entry's `digest:` path (conventionally
+      product-knowledge/canon/<name>.md). Written by people from the
+      CANON.md template, and refreshed by steward's canon step inside its
+      cleanup MR; read at each consult point (plan-feature, spec-feature,
+      verify-feature, review-mr, review-codebase, brunch, run-pipeline),
+      whose fresh agents get the paths. Never compiled.
   standards.index:
     home: "repo:product-knowledge/standards/"
     doc: >
@@ -103,18 +134,24 @@ keys:
     home: "repo:claims.md"
     doc: >
       The SDA claims file at the repo root (grammar: SDA standard v1.0,
-      Claims; mapping: docs/standards/sda-profile-glados-v2.md). Written by
+      Claims; mapping: docs/standards/sda-profile-glados-v2.1.md). Written by
       the compiled preamble's claim step and cleared by the compiled epilogue
-      when `sda: true`; read by run-epic for contention awareness and,
-      externally, by Wheatley's claims overlay. Inert when `sda:` is absent
-      or false.
+      when `sda: true` (by the outermost run only: nested runs work under
+      the enclosing run's claim; a ticket's build inside run-epic is a unit
+      of work of its own; review-mr and address-review, which act on
+      another's merge request, claim nothing); read by run-epic for
+      contention awareness and, externally, by Wheatley's claims overlay.
+      Inert when `sda:` is absent or false.
   sda.spec-log:
     home: "repo:product-knowledge/SPEC_LOG.md"
     doc: >
-      The SDA work-unit log — one appended row per run (date, workflow,
-      scope, outcome, links), newest first. Written by the compiled epilogue
-      when `sda: true`; consumed outside the compile graph by SDA tooling
-      and audits.
+      The SDA work-unit log — one appended row per unit of work (date,
+      workflow, scope, outcome, links), newest first: the outermost run
+      appends it, and runs nested inside it append none (a ticket's build
+      inside run-epic is a unit of work of its own), nor do review-mr and
+      address-review, which act on another's merge request. Written by the
+      compiled epilogue when `sda: true`; consumed outside the compile graph
+      by SDA tooling and audits.
 
   # ---- manifest keys (lane 2: runtime-read; writer is the human via MR) ----
   manifest.platform:
@@ -151,6 +188,35 @@ keys:
     doc: >
       Default review-panel roster when run.active-personas is absent. Maps to
       the manifest key params.review-panel.personas in glados.yaml.
+  manifest.pipelines:
+    home: manifest
+    writer: human
+    doc: >
+      The project's own workflows (glados.yaml `pipelines:`): per pipeline a
+      description, a `when:` selection hint, the step sequence and per-step
+      options. Read live by run-pipeline, which validates them before its
+      first step. Only the names and descriptions shape compiled output (one
+      shortcut command per pipeline in script installs), so only they are
+      in the manifest hash. Explicit-only: no phase preset may set it.
+  manifest.steps:
+    home: manifest
+    writer: human
+    doc: >
+      The project's own pipeline steps (glados.yaml `steps:`): description,
+      kind (produce | gate | change), stage, and what each produces or
+      audits. Each step's body lives at product-knowledge/steps/<id>.md with
+      no frontmatter. Read live by run-pipeline. Explicit-only.
+  manifest.canon:
+    home: manifest
+    writer: human
+    doc: >
+      The reference works the project holds as authoritative (glados.yaml
+      `canon:`): per entry a citation, an optional URL, the repo-relative
+      path of its digest (conventionally product-knowledge/canon/<name>.md),
+      the consult points it applies to and the seats that apply it. Read
+      live at each consult point, which reads the digest and never fetches
+      the URL; steward's refresh step is the one reader that fetches.
+      Nothing of it is compiled or hashed. Explicit-only.
 
 # Outcome types (emitted through channels; a type emitted by an enabled core
 # with zero sinks bound in manifest.channels is an install error):

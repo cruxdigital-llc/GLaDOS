@@ -8,8 +8,13 @@ cleanup, determinism, drift detection and the runtime artifacts. A mode that
 stops shipping modules — v1's flagship bug — fails this build.
 """
 
+import argparse
+import ast
+import contextlib
 import datetime
+import importlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -18,6 +23,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import types
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -326,11 +333,223 @@ class TestReporting(unittest.TestCase):
         t = make_target()
         self.assertEqual(install("direct", t)[0], 0)
         gy = t / "glados.yaml"
-        gy.write_text(read(gy) + "\n# structural edit\n",
+        gy.write_text(read(gy).replace("disabled-workflows: []",
+                                       "disabled-workflows: [brunch]"),
                       encoding="utf-8", newline="\n")
         rc, out = run_cli("check", "--target", t, "--source", REPO)
         self.assertEqual(rc, 1)
         self.assertIn("stale compile", out)
+
+
+class TestManifestHash(unittest.TestCase):
+    """The manifest hash covers the structural keys only (F1). Lane-2 keys are
+    read live at run time, so editing one must never make `check` fail; a
+    structural edit must; comments and whitespace change nothing."""
+
+    def _installed(self):
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        return t
+
+    def _edit(self, t, old, new):
+        gy = t / "glados.yaml"
+        text = read(gy)
+        self.assertIn(old, text, "doctoring failed")
+        gy.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+    def test_lane2_edits_keep_check_passing(self):
+        t = self._installed()
+        edits = [
+            # declare a sink and bind it
+            ("merge-authority: human",
+             "sinks:\n  slack:\n    channel: \"#reviews\"\n"
+             "    team-visible: true\nmerge-authority: human"),
+            ("  escalation:  [issue]", "  escalation:  [issue, slack]"),
+            # change a channel binding
+            ("  bug:         [issue]", "  bug:         [issue, issue-comment]"),
+            # change params
+            ("    max-cycles: 5", "    max-cycles: 4"),
+            # change a decision class (stricter than the preset: no confession)
+            ("  new-dependency: agent", "  new-dependency: escalate"),
+            # change branching
+            ("  default-target: main", "  default-target: develop"),
+        ]
+        for old, new in edits:
+            with self.subTest(edit=new.strip()[:40]):
+                self._edit(t, old, new)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, f"lane-2 edit failed check:\n{out}")
+                self.assertNotIn("stale compile", out)
+        # the vendored report now predates the edits — doctor says so, as
+        # information, and never as staleness
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest hash: current", out)
+        self.assertIn("the assembly report predates later glados.yaml edits",
+                      out)
+        self.assertIn("nothing is stale", out)
+        # a re-install refreshes it
+        self.assertEqual(install("direct", t)[0], 0)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("assembly report: current", out)
+
+    def test_structural_edits_make_check_stale(self):
+        edits = [
+            ("disabled-workflows: []", "disabled-workflows: [brunch]"),
+            ("default-modules: [standards-gate]", "default-modules: []"),
+            ("phase: evolving", "phase: nascent"),
+            ("sda: false", "sda: true"),
+            ("  brunch:         [mr-review-panel]",
+             "  brunch:         [mr-review-panel, standards-gate]"),
+        ]
+        for old, new in edits:
+            with self.subTest(edit=new):
+                t = self._installed()
+                self._edit(t, old, new)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, f"structural edit passed check:\n{out}")
+                self.assertIn("stale compile", out)
+                rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+                self.assertIn("STALE", out)
+
+    def test_comments_and_whitespace_change_nothing(self):
+        t = self._installed()
+        before = read(t / ".glados" / "manifest-hash").strip()
+        gy = t / "glados.yaml"
+        text = read(gy)
+        text = ("# a new leading comment\n\n" + text.replace(
+            "disabled-workflows: []", "disabled-workflows:   []   # aligned")
+            + "\n\n# trailing comment\n")
+        gy.write_text(text, encoding="utf-8", newline="\n")
+        self.assertEqual(glados.manifest_hash_of(gy), before)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+
+    def test_hash_is_the_structural_projection(self):
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertEqual(
+            sorted(glados.structural_projection(raw)),
+            sorted(k for k in glados.STRUCTURAL_KEYS if k in raw),
+            "the projection holds exactly the structural keys the manifest "
+            "sets")
+        base = glados.structural_hash(raw)
+        lane2 = dict(raw, channels={"progress": ["ledger"]},
+                     params={}, platform="github", sinks={"x": None})
+        self.assertEqual(glados.structural_hash(lane2), base,
+                         "lane-2 keys must not move the hash")
+        self.assertNotEqual(
+            glados.structural_hash(dict(raw, phase="production")), base)
+        # key order is irrelevant: the projection is canonicalised
+        self.assertEqual(
+            glados.structural_hash(dict(reversed(list(raw.items())))), base)
+        # the compiled header carries the same hash
+        t = self._installed()
+        core = read(t / "product-knowledge" / "glados" / "intent.md")
+        self.assertIn(f"manifest-sha256: {glados.manifest_hash_of(EXAMPLE)}",
+                      core)
+
+    def test_absent_and_null_structural_keys_hash_differently(self):
+        # An absent key takes the phase preset's value; an explicit null
+        # overrides it (`default-modules:` = no modules). The compiled cores
+        # differ, so the hash must too, or check reports drift instead of a
+        # stale compile and doctor calls the hash current.
+        raw = glados.load_manifest(EXAMPLE)
+        absent = {k: v for k, v in raw.items() if k != "default-modules"}
+        null = dict(absent, **{"default-modules": None})
+        self.assertNotEqual(glados.structural_hash(absent),
+                            glados.structural_hash(null))
+        line = "default-modules: [standards-gate]\n"
+        self.assertIn(line, read(EXAMPLE))
+        t = make_target(read(EXAMPLE).replace(line, ""))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        write(t / "glados.yaml",
+              read(EXAMPLE).replace(line, "default-modules:\n"))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("stale compile", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("manifest hash: STALE", out)
+        self.assertNotIn("nothing is stale", out)
+
+    def test_doctor_checks_before_saying_nothing_is_stale(self):
+        # The report also differs when GLaDOS itself changed (here: a newer
+        # VERSION). The manifest hash is still current, but every compiled
+        # file drifts, so doctor must not call the difference informational.
+        t = self._installed()
+        src = make_doctored_source()
+        script = src / "bin" / "glados.py"
+        old = f'VERSION = "{glados.VERSION}"'
+        text = read(script)
+        self.assertIn(old, text)
+        script.write_text(text.replace(old, 'VERSION = "99.0.0"', 1),
+                          encoding="utf-8", newline="\n")
+
+        def run(*args):
+            proc = subprocess.run(
+                [sys.executable, str(script), *args, "--target", str(t),
+                 "--source", str(src)], capture_output=True, text=True)
+            return proc.returncode, proc.stdout + proc.stderr
+
+        rc, out = run("doctor")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest hash: current", out)
+        self.assertNotIn("nothing is stale", out)
+        self.assertIn("installed file(s) drift", out)
+        self.assertIn("this install was built by GLaDOS "
+                      f"{glados.VERSION} and this is GLaDOS 99.0.0",
+                      " ".join(out.split()))
+        rc, out = run("check")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("drift in installed file", out)
+
+    def test_an_install_from_another_version_is_named_as_such(self):
+        """2.5 changed what the manifest hash covers, so a 2.5 check of an
+        untouched 2.4 install mismatches. Blaming "a structural key changed"
+        sent people hunting for an edit nobody made: the install was built
+        by another version, and check and doctor say so."""
+        t = self._installed()
+        vendored = t / ".glados" / "glados.py"
+        old = f'VERSION = "{glados.VERSION}"'
+        text = read(vendored)
+        self.assertIn(old, text)
+        vendored.write_text(text.replace(old, 'VERSION = "2.4.0"', 1),
+                            encoding="utf-8", newline="\n")
+        write(t / ".glados" / "manifest-hash", "0" * 64 + "\n")
+        report = t / ".glados" / "assembly-report.md"
+        write(report, read(report) + "\nrendered by an older GLaDOS\n")
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        flat = " ".join(out.split())
+        self.assertIn(f"stale compile: this install was built by GLaDOS 2.4.0 "
+                      f"and this is GLaDOS {glados.VERSION} — re-run install "
+                      f"with {glados.VERSION} to upgrade it", flat)
+        self.assertNotIn("a structural glados.yaml key", flat)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        flat = " ".join(out.split())
+        self.assertIn("manifest hash: STALE — this install was built by "
+                      "GLaDOS 2.4.0", flat)
+        self.assertIn("assembly report: this install was built by GLaDOS "
+                      "2.4.0", flat)
+        self.assertNotIn("a structural key changed", flat)
+        self.assertNotIn("including a structural one", flat)
+
+    def test_check_still_requires_the_assembly_report(self):
+        t = self._installed()
+        (t / ".glados" / "assembly-report.md").unlink()
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("missing installed file: .glados/assembly-report.md", out)
+
+    def test_parse_error_fails_clearly(self):
+        t = self._installed()
+        write(t / "glados.yaml", "phase: evolving\nbranching:\n\tfeature: x\n")
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("glados.yaml:3", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestVendor(unittest.TestCase):
@@ -358,6 +577,36 @@ class TestVendor(unittest.TestCase):
                              f"vendored {v.name} must byte-match")
         self.assertEqual((t / ".glados" / "glados.yaml.example").read_bytes(),
                          EXAMPLE.read_bytes())
+
+    def test_vendored_hooks_byte_match_and_share_one_guard(self):
+        """Every install mode vendors the guard hooks to .glados/hooks/, which
+        is where a project's settings run them from, byte for byte: a copy
+        that drifted would guard by older rules. The two guards share one
+        core, byte for byte, from _present through in_flight_without_record;
+        only the FINISH wording and main() differ."""
+        hooks = sorted((REPO / "hooks").glob("*.py"))
+        self.assertEqual([p.name for p in hooks],
+                         ["claude-stop-hook.py", "gemini-afteragent-guard.py"])
+        for mode in ("claude", "claude-plugin", "direct", "gemini",
+                     "antigravity", "aistudio", "pi"):
+            with self.subTest(mode=mode):
+                t = (make_plugin_target() if mode == "claude-plugin"
+                     else make_target())
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                vendored = sorted((t / ".glados" / "hooks").glob("*.py"))
+                self.assertEqual([p.name for p in vendored],
+                                 [p.name for p in hooks])
+                for s, v in zip(hooks, vendored):
+                    self.assertEqual(v.read_bytes(), s.read_bytes(),
+                                     f"{mode}: vendored {v.name} differs")
+
+        def core(path):
+            text = path.read_bytes()
+            return text[text.index(b"\ndef _present("):
+                        text.index(b"\ndef main(")]
+        self.assertEqual(core(hooks[0]), core(hooks[1]),
+                         "the guard core differs between the two hooks")
 
     def test_vendored_checker_self_contained(self):
         """`python .glados/glados.py check --target .` works with NO --source:
@@ -457,6 +706,60 @@ class TestVendor(unittest.TestCase):
         # example manifest says platform: gitlab -> the GitLab stanza prints
         self.assertIn(".glados/ci/glados-check.gitlab-ci.yml", out)
         self.assertIn("include:", out)
+
+    def test_gitlab_enforcement_survives_a_reinstall(self):
+        """The GitLab template said to drop --report-only inside it, but
+        every install vendors it again with the flag, and `check` reports
+        no difference: the upgrade's reinstall quietly turned enforcement
+        off. It says to override the job's script in .gitlab-ci.yml, which
+        no install touches."""
+        tmpl = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        self.assertNotIn("drop --report-only", tmpl)
+        self.assertIn("#   glados-check:\n#     script:\n"
+                      "#       - python .glados/glados.py check --target .\n",
+                      tmpl)
+        t = make_target()
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        vendored = t / ".glados" / "ci" / "glados-check.gitlab-ci.yml"
+        vendored.write_text(read(vendored).replace(" --report-only", ""),
+                            encoding="utf-8", newline="\n")
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("check --target . --report-only", read(vendored),
+                      "a reinstall vendors the flag again")
+
+    def test_the_github_enable_commands_run_as_printed(self):
+        """The GitHub stanza copied the workflow into .github/workflows/,
+        which a repository with no workflow yet lacks, so `cp` failed as
+        printed. It makes the directory first, on a line of its own (Windows
+        PowerShell 5.1 has no `&&`)."""
+        t = make_target(read(EXAMPLE).replace("platform: gitlab",
+                                              "platform: github", 1))
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        lines = out.splitlines()
+        start = next(i for i, ln in enumerate(lines)
+                     if "CI backstop vendored" in ln) + 1
+        commands = []
+        for ln in lines[start:]:
+            if not ln.startswith("    "):
+                break
+            commands.append(ln.strip())
+        self.assertEqual(commands, [
+            "mkdir -p .github/workflows",
+            "cp .glados/ci/glados-check.github-actions.yml "
+            ".github/workflows/glados-check.yml"])
+        self.assertFalse((t / ".github").exists())
+        sh = shutil.which("sh")
+        if sh is None:
+            return
+        p = subprocess.run([sh, "-e", "-c", "\n".join(commands)], cwd=str(t),
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(
+            (t / ".github" / "workflows" / "glados-check.yml").read_bytes(),
+            (REPO / "ci" / "glados-check.github-actions.yml").read_bytes())
 
     def test_agy_hooks_single_source(self):
         """hooks/agy-hooks.json is the one source of the agy hooks block: it
@@ -591,12 +894,13 @@ class TestDisabledWorkflows(unittest.TestCase):
         t = make_target(self.MINIMAL.format(phase="sunset"))
         rc, out = install("direct", t)
         self.assertEqual(rc, 0, out)
-        self.assertFalse(
-            (t / "product-knowledge" / "glados" / "build-feature.md").exists(),
-            "sunset must not install build-feature")
+        for core in ("build-feature", "run-pipeline"):
+            self.assertFalse(
+                (t / "product-knowledge" / "glados" / f"{core}.md").exists(),
+                f"sunset must not install {core}")
         report = read(t / ".glados" / "assembly-report.md")
-        self.assertIn("| disabled-workflows | [build-feature] | (phase:sunset) |",
-                      report, report)
+        self.assertIn("| disabled-workflows | [build-feature, run-pipeline] | "
+                      "(phase:sunset) |", report, report)
 
     def test_explicit_empty_list_overrides_preset(self):
         t = make_target(self.MINIMAL.format(phase="sunset")
@@ -695,6 +999,336 @@ class TestParamsResolution(unittest.TestCase):
         self.assertIn("intent", out)
         self.assertNotIn("Traceback", out)
 
+    # -- loop bounds are whole numbers (B1) ----------------------------------
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: evolving\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    def _type_errors(self, manifest):
+        """The type-check errors ``manifest`` fails with, in-process."""
+        try:
+            glados._prepare_compilation(glados.Source(REPO),
+                                        make_target(manifest), "claude")
+        except glados.CheckFailed as exc:
+            return exc.errors
+        return []
+
+    def test_every_loop_bound_is_a_whole_number_of_one_or_more(self):
+        """Every `params.<ns>.<key>` a compiled workflow relies on, the
+        persona roster aside, bounds a loop, so it must be a whole number of
+        1 or more. Text, true (an int to Python), a list and a number below
+        1 used to resolve and install, leaving the loop no count it could
+        stop at."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        bounds = set()
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            bounds |= set(glados.PARAMS_LITERAL_RE.findall(read(core)))
+        bounds.discard("params.review-panel.personas")
+        self.assertIn("params.pipeline.max-cycles", bounds)
+        self.assertEqual(len(bounds), 4, bounds)
+        bad = (('"8"', "got the text '8'"), ("lots", "got the text 'lots'"),
+               ("true", "got true"), ("[8]", "got [8]"), ("0", "got 0"),
+               ("-2", "got -2"))
+        for lit in sorted(bounds):
+            _, ns, key = lit.split(".")
+            for value, shown in bad:
+                with self.subTest(bound=lit, value=value):
+                    errors = self._type_errors(
+                        self.MINIMAL + f"params:\n  {ns}:\n    {key}: {value}\n")
+                    hit = [e for e in errors if e.startswith(lit + ":")]
+                    self.assertTrue(hit, errors)
+                    self.assertIn("must be a whole number of 1 or more", hit[0])
+                    self.assertIn(shown, hit[0])
+                    self.assertIn("(value from explicit)", hit[0])
+            with self.subTest(bound=lit, value="1"):
+                self.assertEqual(self._type_errors(
+                    self.MINIMAL + f"params:\n  {ns}:\n    {key}: 1\n"), [])
+
+    def test_a_preset_bound_and_a_bound_out_of_shape_fail_too(self):
+        """A bound the manifest inherits is checked like one it sets, and
+        validate (which run-pipeline runs before its first step) names it.
+        A namespace written as a number was dropped without a word, leaving
+        the baseline's bound in force."""
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        text = read(presets)
+        self.assertIn("      max-cycles: 8\n", text)
+        presets.write_text(text.replace("      max-cycles: 8\n",
+                                        "      max-cycles: \"8\"\n"),
+                           encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("params.pipeline.max-cycles: must be a whole number of "
+                      "1 or more", out)
+        self.assertIn("(value from baseline)", out)
+        self.assertNotIn("Traceback", out)
+        for params, needle in (
+                ("  pipeline:\n    max-cycles: true\n",
+                 "params.pipeline.max-cycles: must be a whole number"),
+                ("  pipeline: 5\n", "params.pipeline: must be a mapping")):
+            with self.subTest(params=params):
+                t = make_target(self.MINIMAL + "params:\n" + params)
+                rc, out = run_cli("validate", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("glados validate: FAIL", out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_a_quoted_key_is_the_key_it_quotes(self):
+        """`"max-cycles": true` is max-cycles: true in YAML, and to the agent
+        that reads glados.yaml at run time. The parser kept the quotes on
+        the key, so the bound checks never saw it (the assembly report even
+        listed it beside the baseline's bound), and a decision right
+        written `"schema-migration": agent` skipped the relaxation check."""
+        quoted = ('params:\n  pipeline:\n    "max-cycles": true\n'
+                  "  review-panel:\n    'max-cycles': lots\n")
+        self.assertEqual(glados.parse_yaml(quoted, "t"), {"params": {
+            "pipeline": {"max-cycles": True},
+            "review-panel": {"max-cycles": "lots"}}})
+        errors = self._type_errors(self.MINIMAL + quoted)
+        for lit, shown in (("params.pipeline.max-cycles", "got true"),
+                           ("params.review-panel.max-cycles",
+                            "got the text 'lots'")):
+            hit = [e for e in errors if e.startswith(lit + ":")]
+            self.assertTrue(hit, errors)
+            self.assertIn(shown, hit[0])
+        # one key, however it is spelt
+        with self.assertRaises(glados.YamlError) as ctx:
+            glados.parse_yaml('pipeline:\n  max-cycles: 3\n'
+                              '  "max-cycles": 9\n', "t")
+        self.assertIn("duplicate key 'max-cycles'", str(ctx.exception))
+        # a decision right is as lax quoted as plain
+        production = self.MINIMAL.replace("phase: evolving",
+                                          "phase: production")
+        plain = self._type_errors(
+            production + "decisions:\n  schema-migration: agent\n")
+        self.assertTrue([e for e in plain if "laxer" in e], plain)
+        self.assertEqual(self._type_errors(
+            production + 'decisions:\n  "schema-migration": agent\n'), plain)
+        # a `- "key": value` item is a mapping, as `- key: value` is
+        self.assertEqual(
+            glados.parse_yaml('items:\n  - "name": a\n    \'kind\': gate\n',
+                              "t"),
+            {"items": [{"name": "a", "kind": "gate"}]})
+        # and the refusal says how to write a bound
+        hit = self._type_errors(
+            self.MINIMAL + "params:\n  pipeline:\n    max-cycles: 3.0\n")
+        self.assertTrue(hit)
+        self.assertIn("write a plain integer such as 3, with no quotes or "
+                      "decimal point", hit[0])
+
+    def test_every_spelling_yaml_reads_as_the_bound_is_checked_or_refused(self):
+        """Quoting was one spelling of a key. The parser kept the rest of
+        YAML's key syntax as text: an escape it did not know (`\\x2D`,
+        `\\u002D`, `\\U0000002D`), an anchor (`&a`), a tag (`!!str`, on the
+        key or on `params:` above it), a merge key (`<<:`). A YAML reader,
+        the agent included, reads each of these as
+        params.pipeline.max-cycles: true, but every command that reads
+        the manifest saw a key nothing reads, warned, and passed with
+        the inherited 8. Each is now read as YAML reads it, so the bound
+        check names it, or refused with the line it is on."""
+        bs = "\\"
+        head = "glados: 2\nplatform: github\nphase: evolving\n"
+        pipe = head + "params:\n  pipeline:\n"
+        bound = ("params.pipeline.max-cycles: must be a whole number of 1 or "
+                 "more")
+        cases = {
+            # read as YAML reads it, so the bound check sees max-cycles
+            "x escape": (pipe + f'    "max{bs}x2Dcycles": true\n', bound),
+            "u escape": (pipe + f'    "max{bs}u002Dcycles": true\n', bound),
+            "U escape": (pipe + f'    "max{bs}U0000002Dcycles": true\n',
+                         bound),
+            # syntax the subset does not read: refused, naming the line
+            "anchor": (pipe + "    &a max-cycles: true\n",
+                       "glados.yaml:6: '&a max-cycles' starts with '&'"),
+            "tag": (pipe + "    !!str max-cycles: true\n",
+                    "glados.yaml:6: '!!str max-cycles' starts with '!'"),
+            "tag above": (head + "!!str params:\n  pipeline:\n"
+                          "    max-cycles: true\n",
+                          "glados.yaml:4: '!!str params' starts with '!'"),
+            "merge key": (pipe + "    <<:\n      max-cycles: true\n",
+                          "glados.yaml:6: '<<' is a YAML merge key"),
+        }
+        installed = make_target(head)
+        rc, out = install("claude", installed)
+        self.assertEqual(rc, 0, out)
+        for name, (manifest, needle) in cases.items():
+            t = make_target(manifest)
+            write(installed / "glados.yaml", manifest)
+            for args in (("validate", "--target", t),
+                         ("effective-config", "--target", t),
+                         ("install", "--mode", "claude", "--target", t),
+                         ("check", "--target", installed)):
+                with self.subTest(case=name, command=args[0]):
+                    rc, out = run_cli(*args, "--source", REPO)
+                    self.assertEqual(rc, 1, out)
+                    self.assertIn(needle, out)
+                    self.assertNotIn("Traceback", out)
+                    self.assertNotIn("passes every check", out)
+
+    def test_a_key_under_a_block_scalar_is_not_swallowed(self):
+        """A line indented less than a block scalar's text but more than
+        its key was read into the text with its first characters cut off,
+        so the keys on it vanished: `max-cycles: true` under it passed
+        validate, effective-config, install, check and doctor while the
+        inherited 8 stayed in force. YAML ends the scalar at that line and
+        refuses it; so does the parser, naming the line."""
+        cases = {
+            "optimize-for": (self.MINIMAL + "optimize-for: |\n"
+                             "    Optimize for doing no harm.\n"
+                             "  params:\n    pipeline:\n"
+                             "      max-cycles: true\n", 9),
+            "why": (self.MINIMAL + "params:\n  pipeline:\n    why: |\n"
+                    "        Fewer cycles.\n      max-cycles: true\n", 11),
+        }
+        installed = make_target(self.MINIMAL)
+        rc, out = install("claude", installed)
+        self.assertEqual(rc, 0, out)
+        for name, (manifest, line) in cases.items():
+            t = make_target(manifest)
+            write(installed / "glados.yaml", manifest)
+            needle = (f"glados.yaml:{line}: YAML refuses this line: the block "
+                      f"scalar that line {line - 2} opens ended at line "
+                      f"{line}")
+            for args, code in ((("validate", "--target", t), 1),
+                               (("effective-config", "--target", t), 1),
+                               (("install", "--mode", "claude", "--target",
+                                 t), 1),
+                               (("check", "--target", installed), 1),
+                               (("doctor", "--target", installed), 0)):
+                with self.subTest(case=name, command=args[0]):
+                    rc, out = run_cli(*args, "--source", REPO)
+                    self.assertEqual(rc, code, out)
+                    self.assertIn(needle, out)
+                    self.assertNotIn("Traceback", out)
+                    self.assertNotIn("passes every check", out)
+
+    def test_a_preset_table_out_of_shape_is_named_not_a_traceback(self):
+        """A preset layer that is not a mapping, or whose params, channels
+        or decisions are not, crashed resolution with an AttributeError or
+        TypeError traceback instead of a sentence naming the table."""
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        original = read(presets)
+
+        def block(name):
+            return re.search(rf"^{name}:\n(?:(?:[ #].*)?\n)*", original,
+                             re.M).group(0)
+
+        baseline = block("baseline")
+        params_at = baseline.index("  params:\n")
+        for label, edited, needle in (
+                ("baseline", original.replace(baseline, "baseline: 5\n\n"),
+                 "phases.yaml: 'baseline:' must be a mapping"),
+                ("phase", original.replace(block("evolving"),
+                                           "evolving: 5\n\n"),
+                 "phases.yaml: 'evolving:' must be a mapping"),
+                ("params", original.replace(
+                    baseline, baseline[:params_at] + "  params: 5\n\n"),
+                 "phases.yaml (baseline): params: must be a mapping"),
+                ("decisions", original.replace(
+                    block("evolving"), "evolving:\n  decisions: [agent]\n\n"),
+                 "phases.yaml (phase:evolving): decisions: must be a "
+                 "mapping")):
+            with self.subTest(layer=label):
+                self.assertNotEqual(edited, original)
+                write(presets, edited)
+                rc, out = install("direct", make_target(self.MINIMAL),
+                                  source=src)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_a_number_too_long_to_read_is_a_named_error(self):
+        """Python refuses to read an integer of more than 4300 digits, and
+        the ValueError escaped as a traceback from every command: install,
+        validate, `check --report-only` (which never fails) and doctor
+        (which never fails either)."""
+        t = make_target(self.MINIMAL)
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", self.MINIMAL
+              + "params:\n  pipeline:\n    max-cycles: " + "9" * 5000 + "\n")
+        limited = getattr(sys, "get_int_max_str_digits", lambda: 0)()
+        for args, code in ((("validate",), 1), (("install", "--mode",
+                                                 "direct"), 1),
+                           (("check", "--report-only"), 0), (("doctor",), 0)):
+            with self.subTest(command=args[0]):
+                rc, out = run_cli(*args, "--target", t, "--source", REPO)
+                self.assertNotIn("Traceback", out)
+                if args[0] in ("check", "doctor") or limited:
+                    self.assertEqual(rc, code, out)
+                if limited:
+                    self.assertIn("glados.yaml:9: the number", out)
+
+    def test_a_params_key_nothing_reads_is_named(self):
+        """`max_cycles: 1`, or a `run-pipeline:` namespace, installed
+        without a word while the inherited bound stayed in force, so a
+        team's intended tightening did nothing. It warns (and fails
+        nothing), naming the keys that are read."""
+        t = make_target(self.MINIMAL + "params:\n  pipeline:\n"
+                        "    max_cycles: 1\n  run-pipeline:\n"
+                        "    max-cycles: 1\n  review-panel:\n"
+                        "    max-cycles: 2\n")
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        for path in ("pipeline.max_cycles", "run-pipeline.max-cycles"):
+            needle = f"glados.yaml: params.{path} is read by nothing"
+            self.assertEqual(out.count(needle), 1, out)
+            self.assertIn("pipeline.max-cycles", out.split(needle)[1])
+        self.assertNotIn("params.review-panel.max-cycles is read by", out)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("params.pipeline.max_cycles is read by nothing", out)
+
+    def test_doctor_names_the_check_that_failed(self):
+        """doctor printed only "install checks failed:", the first line of
+        the error, so a bound that is not a whole number went unnamed."""
+        t = make_target(self.MINIMAL)
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml",
+              self.MINIMAL + "params:\n  pipeline:\n    max-cycles: lots\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("could not render a fresh copy to compare "
+                      "(params.pipeline.max-cycles: must be a whole number",
+                      out)
+
+    def test_a_bound_that_is_no_whole_number_stops_the_loop_at_run_time(self):
+        """Bounds are lane-2 values the agent reads live from glados.yaml,
+        so one edited after install (no reinstall; CI's check is
+        report-only) reaches the loop past every install-time check, and
+        only run-pipeline runs validate. Every workflow that bounds a loop
+        says what a value that is not a whole number of 1 or more is: no
+        bound, so the loop does not start and the run escalates naming the
+        key. run-pipeline's no-Python checklist checks its own bound."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        rule = ("A bound must resolve to a whole number of 1 or more. "
+                "Anything else (missing, text, `true` or `false`, a list, 0 "
+                "or less) is no bound: do not start the loop; emit an "
+                "`escalation` naming the key and its value, and end the run.")
+        bounded = set()
+        for core in (t / "product-knowledge" / "glados").glob("*.md"):
+            text = " ".join(read(core).split())
+            if any(lit.endswith(".max-cycles")
+                   for lit in glados.PARAMS_LITERAL_RE.findall(text)):
+                bounded.add(core.stem)
+                with self.subTest(core=core.stem):
+                    self.assertIn(rule, text)
+        self.assertTrue({"review-mr", "address-review", "build-feature",
+                         "verify-feature", "fix-bug", "run-pipeline"}
+                        <= bounded, bounded)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        self.assertIn("7. each pipeline's description is 250 characters or "
+                      "fewer; 8. `params.pipeline.max-cycles`, and every "
+                      "other `max-cycles` under `params:`, resolves "
+                      "(`glados.yaml` over the preset table) to a whole "
+                      "number of 1 or more: not text, `true` or `false`, a "
+                      "list, or 0 or less.", text)
+
 
 class TestVerifyLedger(unittest.TestCase):
 
@@ -779,6 +1413,466 @@ class TestYamlParserAttacks(unittest.TestCase):
         self.assertIn("glados.yaml", out)
         self.assertIn("UTF-8", out)
         self.assertNotIn("Traceback", out)
+
+    # -- the subset reads what YAML reads, or refuses -----------------------
+
+    def _refused(self, text, line, needle=""):
+        with self.assertRaises(glados.YamlError) as ctx:
+            glados.parse_yaml(text, "t")
+        self.assertIn(f"t:{line}:", str(ctx.exception))
+        self.assertIn(needle, str(ctx.exception))
+
+    def test_escapes_read_as_yaml_reads_them(self):
+        """A double-quoted scalar takes YAML's escapes, all of them, and no
+        others. The parser decoded five and kept the backslash on the rest,
+        so `"max\\x2Dcycles"` was a key nothing checks while YAML reads it
+        as max-cycles."""
+        bs = "\\"
+        table = {
+            "x2D": "-", "u002D": "-", "U0000002D": "-", "u00e9": "\u00e9",
+            "U0001F600": "\U0001F600", "0": "\x00", "a": "\x07", "b": "\x08",
+            "t": "\t", "\t": "\t", "n": "\n", "v": "\x0b", "f": "\x0c",
+            "r": "\r", "e": "\x1b", " ": " ", '"': '"', "/": "/", bs: bs,
+            "N": "\x85", "_": "\xa0", "L": "\u2028", "P": "\u2029",
+        }
+        for esc, char in table.items():
+            with self.subTest(escape=esc):
+                self.assertEqual(
+                    glados.parse_yaml(f'k: "a{bs}{esc}b"\n', "t"),
+                    {"k": f"a{char}b"})
+                if unicodedata.category(char) in ("Cc", "Cf"):
+                    # a key that differs from a visible one by a character
+                    # that does not show is refused (below)
+                    self._refused(f'"a{bs}{esc}b": 1\n', 1, "does not show")
+                    continue
+                self.assertEqual(
+                    glados.parse_yaml(f'"a{bs}{esc}b": 1\n', "t"),
+                    {f"a{char}b": 1})
+                self.assertEqual(
+                    glados.parse_yaml(f'k: ["a{bs}{esc}b"]\n', "t"),
+                    {"k": [f"a{char}b"]})
+        for esc, needle in (("q", f"'{bs}q' is not a YAML escape"),
+                            ("x4", "needs 2 hex digits"),
+                            ("xZZ", "needs 2 hex digits"),
+                            ("u12", "needs 4 hex digits"),
+                            ("uD800", "is not a character"),
+                            ("U00110000", "is not a character")):
+            with self.subTest(escape=esc):
+                self._refused(f'k: "a{bs}{esc}"\n', 1, needle)
+                self._refused(f'x: 1\n"a{bs}{esc}": 1\n', 2, needle)
+                self._refused(f'x: 1\nk: [b, "a{bs}{esc}"]\n', 2, needle)
+        self._refused(f'k: "a{bs}"\n', 1, "unterminated")
+
+    def test_yaml_syntax_the_subset_does_not_read_is_refused(self):
+        """Anchors, aliases, tags, merge keys, explicit keys and YAML's
+        reserved indicators were kept as text, so the parser read another
+        key or value than any YAML reader does: `&a max-cycles: true` was
+        a key nothing checks. Each is refused, naming the line, wherever it
+        stands: a key, a value, a list item, a flow-list item."""
+        for key in ("&a k", "*a", "!!str k", "!k", "? k", "?k", "|k", ">k",
+                    "%k", "@k", "`k", "[k]", "{k", ",k", ":k"):
+            with self.subTest(key=key):
+                self._refused(f"m:\n  {key}: 1\n", 2,
+                              f"'{key}' starts with '{key[0]}'")
+                self._refused(f"l:\n  - {key}: 1\n", 2)
+        self._refused("l:\n  - - k: 1\n", 2, "'- k' starts with '-'")
+        for key in ("<<", '"<<"'):
+            self._refused(f"m:\n  {key}:\n    max-cycles: true\n", 2,
+                          "'<<' is a YAML merge key")
+        for value in ("&a 1", "*a", "!!int 3", "!x v", "%v", "@v", "`v`",
+                      "- v", "? v", "?v", ":v", ",v", "]", "}"):
+            with self.subTest(value=value):
+                self._refused(f"m:\n  k: {value}\n", 2,
+                              f"'{value}' starts with '{value[0]}'")
+                self._refused(f"l:\n  - z\n  - {value}\n", 3)
+                self._refused(f"x: 1\nl: [a, {value}]\n", 2)
+        for text, line, needle in (
+                ("k: |2\n   x\n", 1, "block scalar"),
+                ("k: >-1\n x\n", 1, "block scalar"),
+                ("k: |x\n", 1, "block scalar"),
+                ('k: "a" b\n', 1, "after the closing quote"),
+                ("k: 'a'b'\n", 1, "after the closing quote"),
+                ('"k" x: 1\n', 1, "after the closing quote"),
+                ('k: "abc\n', 1, "unterminated"),
+                ("k: 'abc\n", 1, "unterminated"),
+                ("m:\n  k:v\n", 2, "expected 'key: value', got 'k:v'"),
+                ("k: a: b\n", 1, "': '"),
+                ("k: a:\n", 1, "': '"),
+                ("k: 010\n", 1, "leading zero"),
+                ("k: -08\n", 1, "leading zero"),
+                ("k: [a: b]\n", 1, "': '"),
+                ("k: [?x]\n", 1, "'?'"),
+                ("k: [a?b]\n", 1, "'?'"),
+                ("k: [a, , b]\n", 1, "empty item"),
+                ("k: [a, b] c\n", 1, "after ']'"),
+                ('k: ["a" x, b]\n', 1, "after the closing quote"),
+                ("k: [a, {b: c}]\n", 1, "nested flow"),
+                ("k: [a, b\n", 1, "unterminated inline list"),
+                ("k: [a, b # c]\n", 1, "unterminated inline list"),
+                ("x: 1\n<<: *a\n", 2, "merge key"),
+                ("k: <<\n", 1, "merge key"),
+                ("k: [a, <<]\n", 1, "merge key"),
+                ("k: =\n", 1, "value key"),
+                # a key YAML reads as null, a bool, a number or a date: two
+                # keys here were one to YAML (null and ~, 1 and 01)
+                ("m:\n  null: a\n  ~: b\n", 2, "the key 'null' is a null"),
+                ("m:\n  1: a\n", 2, "the key '1' is"),
+                ("m:\n  yes: a\n", 2, "the key 'yes' is"),
+                ("m:\n  1.5: a\n", 2, "the key '1.5' is"),
+                ("m:\n  2026-10-22: a\n", 2, "the key '2026-10-22' is"),
+                # a tab outside quotes, which YAML readers do not agree on
+                ("k: a\tb\n", 1, "tab outside quotes"),
+                ("k\t: v\n", 1, "tab outside quotes"),
+                ("k: v\t# c\n", 1, "tab outside quotes"),
+                ("k: [a,\tb]\n", 1, "tab outside quotes"),
+                ('k: "v"\t# c\n', 1, "after the closing quote"),
+                ("k: v\n\t\n", 2, "tab character on a blank line"),
+                # characters YAML refuses, or reads as a line break in 1.1
+                ("k: a\x00b\n", 1, "U+0000"),
+                ("k: a\x85b\n", 1, "U+0085"),
+                ("k: a\u2028b\n", 1, "U+2028"),
+                # a key another key in disguise: YAML reads a different key,
+                # the agent looking at the text sees the visible one
+                ('m:\n  "schema-migration\\0": agent\n', 2, "U+0000"),
+                ("m:\n  max-cycles\u200b: 3\n", 2, "U+200B"),
+                ('m:\n  "max-cycles\\u200B": 3\n', 2, "U+200B"),
+                # lines the parser used to drop: YAML refuses the document
+                ("  a: 1\nb: 2\n", 2, "does not continue the document"),
+                ("- a\nb: 2\n", 2, "does not continue the document")):
+            with self.subTest(text=text):
+                self._refused(text, line, needle)
+        # a quoted key is text to YAML, whatever it spells
+        self.assertEqual(glados.parse_yaml('"1": a\n"null": b\n', "t"),
+                         {"1": "a", "null": "b"})
+
+    def test_the_subset_reads_yaml_as_yaml_does(self):
+        """What the parser accepts, it reads as YAML does: a quote only
+        opens a quoted scalar at the start of one (an apostrophe in a plain
+        value no longer swallows the comment after it), an escaped quote
+        does not close one, and a key ends at the first ': '."""
+        bs = "\\"
+        for text, expected in (
+                (f'k: "a{bs}" # b" # c\n', {"k": 'a" # b'}),
+                ("k: don't # c\n", {"k": "don't"}),
+                ("k: it's 'quoted' # c\n", {"k": "it's 'quoted'"}),
+                ("k: a:b\n", {"k": "a:b"}),
+                ("a:b: c\n", {"a:b": "c"}),
+                ("k: http://x/#f\n", {"k": "http://x/#f"}),
+                ("k: [a, b,]\n", {"k": ["a", "b"]}),
+                ("k: [a:b, http://x]\n", {"k": ["a:b", "http://x"]}),
+                ("k: [\"a\" , 'b'] # c\n", {"k": ["a", "b"]}),
+                ("k: []  # none\n", {"k": []}),
+                ("k: -3\n", {"k": -3}),
+                ("k: 0\n", {"k": 0}),
+                ("k: -x\n", {"k": "-x"}),
+                # digits of another script are text to YAML, not a number
+                ("k: \u0663\n", {"k": "\u0663"}),
+                ("'it''s': x\n", {"it's": "x"}),
+                ('"k" : 1  # c\n', {"k": 1}),
+                ("k:  # c\n  m: 1\n", {"k": {"m": 1}}),
+                ("l:\n  - |\n    one\n    two\n  - x\n",
+                 {"l": ["one\ntwo", "x"]}),
+                ("l:\n  - >-\n    one\n    two\n", {"l": ["one two"]}),
+                ("l:\n  - # c\n    k: 1\n", {"l": [{"k": 1}]})):
+            with self.subTest(text=text):
+                self.assertEqual(glados.parse_yaml(text, "t"), expected)
+
+    def test_a_block_scalar_ends_at_its_first_shallower_line(self):
+        """A block scalar's text is every line indented at least as far as
+        its first text line, and the first line indented less ends it, as
+        in YAML: a comment there is a comment, a key or item at the outer
+        indent is the next entry, and a line deeper than the scalar's key
+        is an error to YAML and here. Such a line used to be read into the
+        text with its first characters cut off: `  # note` became `note`,
+        and the keys on `  params:` vanished, bound and all."""
+        for text, expected in (
+                # a comment indented less than the text is a comment
+                ("k: |\n    text\n  # note\nz: 1\n", {"k": "text", "z": 1}),
+                ("k: |\n    text\n  # note\n      # more\nz: 1\n",
+                 {"k": "text", "z": 1}),
+                ("k: >-\n    a\n    b\n # note\nz: 1\n", {"k": "a b", "z": 1}),
+                ("l:\n  - |\n      text\n    # note\n  - x\n",
+                 {"l": ["text", "x"]}),
+                ("m:\n  - k: |\n        text\n      # note\n    z: 1\n",
+                 {"m": [{"k": "text", "z": 1}]}),
+                # a comment at the text's indent is text, as before
+                ("k: |\n    text\n    # kept\nz: 1\n",
+                 {"k": "text\n# kept", "z": 1}),
+                # a line deeper than the text stays in it, as before
+                ("k: |\n    text\n      more\nz: 1\n",
+                 {"k": "text\n  more", "z": 1}),
+                # blank lines inside the text, a shallow one included
+                ("k: |\n    a\n\n  \n    b\nz: 1\n",
+                 {"k": "a\n\n\nb", "z": 1}),
+                # a blank line above the text, no deeper than it
+                ("k: |\n  \n    text\nz: 1\n", {"k": "\ntext", "z": 1})):
+            with self.subTest(text=text):
+                self.assertEqual(glados.parse_yaml(text, "t"), expected)
+        opens = "YAML refuses this line: the block scalar that line"
+        for text, line, needle in (
+                # a bound under a scalar's text, at the top level and in a
+                # namespace
+                ("optimize-for: |\n    Optimize for doing no harm.\n"
+                 "  params:\n    pipeline:\n      max-cycles: true\n", 3,
+                 f"{opens} 1 opens ended at line 3, indented less than its "
+                 f"text (4 spaces)"),
+                ("params:\n  pipeline:\n    why: |\n        Fewer cycles.\n"
+                 "      max-cycles: true\n", 5,
+                 f"{opens} 3 opens ended at line 5"),
+                ("k: >-\n    a\n  b: 1\n", 3, f"{opens} 1 opens"),
+                ("l:\n  - |\n      text\n    - x\n", 4, f"{opens} 2 opens"),
+                ("- k: |\n      text\n    z: 1\n", 3, f"{opens} 1 opens"),
+                # text again after a comment that ended the scalar
+                ("k: |\n    text\n  # note\n    more\nz: 1\n", 4,
+                 "ended at line 3, a comment indented less than its text"),
+                # a blank line above the text, deeper than it: YAML takes
+                # the scalar's indent from that line
+                ("k: |\n      \n  text\nz: 1\n", 3,
+                 "a blank line above its text has 6 spaces"),
+                ("optimize-for: |\n        \n  params:\n    x: 1\n", 3,
+                 "a blank line above its text has 8 spaces")):
+            with self.subTest(text=text):
+                self._refused(text, line, needle)
+
+    def test_shipped_block_scalars_read_whole(self):
+        """Ending a block scalar at its first shallower line changes
+        nothing for a well-formed one: every block scalar in the preset
+        table, the state registry, glados.yaml.example's commented examples
+        and the pipelines guide is indented evenly and reads as its whole
+        text."""
+        sources = {p.name: read(p) for p in (
+            REPO / "src" / "kernel" / "presets" / "phases.yaml",
+            REPO / "src" / "kernel" / "state-registry.yaml")}
+        example = read(EXAMPLE).splitlines()
+        for opener in ("# sinks:", "# steps:"):
+            block = []
+            for line in example[example.index(opener):]:
+                if not line.startswith("#"):
+                    break
+                block.append(line[2:] if line.startswith("# ") else line[1:])
+            sources[f"example {opener[2:]}"] = "\n".join(block) + "\n"
+        guide = read(REPO / "docs" / "guides" / "pipelines.md")
+        for j, block in enumerate(re.findall(r"```yaml\n(.*?)```", guide,
+                                             re.S)):
+            sources[f"pipelines.md block {j}"] = block
+        header = re.compile(r"( *)(- )?[^#:\s][^#:]*: ([|>])-?(?: +#.*)?")
+
+        def strings(node):
+            if isinstance(node, dict):
+                return set().union(*map(strings, node.values()), set())
+            if isinstance(node, list):
+                return set().union(*map(strings, node), set())
+            return {node} if isinstance(node, str) else set()
+
+        found = 0
+        for name, text in sources.items():
+            read_as = strings(glados.parse_yaml(text, name))
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                m = header.fullmatch(line)
+                if not m:
+                    continue
+                key_at = len(m.group(1)) + (2 if m.group(2) else 0)
+                body = []
+                for nxt in lines[i + 1:]:
+                    if nxt.strip() and glados._indent_of(nxt) <= key_at:
+                        break
+                    body.append(nxt)
+                while body and not body[-1].strip():
+                    body.pop()
+                indents = {glados._indent_of(b) for b in body if b.strip()}
+                with self.subTest(source=name, line=i + 1):
+                    self.assertEqual(len(indents), 1, body)
+                    if m.group(3) == ">":
+                        whole = " ".join(b.strip() for b in body)
+                    else:
+                        whole = "\n".join(b[min(indents):] for b in body)
+                    self.assertIn(whole, read_as)
+                    found += 1
+        self.assertGreaterEqual(found, 30)
+
+    def test_what_the_subset_reads_a_yaml_reader_reads_too(self):
+        """The property behind the cases above, checked against a YAML
+        reader when one is installed (PyYAML; the suite needs none): what
+        the parser accepts, YAML reads the same way. It may refuse more
+        than YAML does, never read differently. The corpus crosses keys
+        and values in every position, and adds every YAML file and
+        frontmatter block the toolchain reads."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        bs = "\\"
+        keys = ["k", "max-cycles", '"k"', "'k'", f'"m{bs}x41x"',
+                f'"{bs}u006b"', f'"k{bs}"', "&a k", "!!str k", "*a", "? k",
+                "?k", "<<", '"<<"', "a:b", '"a: b"', "'it''s'", "-k", "[k]",
+                "{k}", "|k", ">k", "%k", "@k", "`k", ",k", ":k", "k #c",
+                '"k" x', "a b", "a'b", 'a"b', "- k", "k\t", "null", "~",
+                "1", "07", "yes", "1.5", '"1"', "=", "k\x85"]
+        values = [
+            "v", "3", "-3", "0", "010", "08", "true", "false", "null", "~",
+            "", '"v"', "'v'", f'"a{bs}" # b"', "don't # c", "a 'b' # c",
+            "&a v", "*a", "!!int 3", "!x v", "|", "|-", ">", ">-", "|2",
+            ">+", "|+", "[a, b]", "[a, b,]", "[]", "[ ]", "[&a x]", "[*a]",
+            "[?x]", "[a?b]", "[a: b]", "[a:b]", "[a:]", '["a" , b]',
+            "[a, , b]", "[,]", "[a, b] c", "[a, [b]]", "[a, b # c]",
+            "[a b, 'c''d']", "a: b", "a:b", "a:", "http://x#f", "v # c",
+            "v#c", '"v" w', '"abc', "'abc", "- x", "-", "? x", "?x", ":x",
+            "%x", "@x", "`x", "]", "}", ",x", "{a: b}", "{}", f'"{bs}q"',
+            f'"{bs}x4"', f'"{bs}uD800"', f'"{bs}U00110000"',
+            f'"{bs}e{bs}N{bs}_{bs}L{bs}P{bs}/{bs} {bs}0{bs}a{bs}b{bs}v{bs}f"',
+            f'"{bs}x41{bs}u00e9{bs}U0001F600{bs}t{bs}\t{bs}{bs}{bs}"x"',
+            "'a''b'", "a #", "#c", "-x", "a\tb", '"a" # c', "'a' #c",
+            "'a'#c", '"a"#c', "a\t# c", "''", '""', "a ' b", 'a " b',
+            "\u0663", "-\u0663", "<<", "=", "[<<]", "k\x85",
+        ]
+        templates = ["{k}: {v}\n", "m:\n  {k}: {v}\n  z: 1\n",
+                     "l:\n  - {k}: {v}\n    z: 1\n",
+                     "{k}: {v}\n  one\n  two\nz: 1\n"]
+        item_templates = ["l:\n  - {v}\n  - z\n", "l:\n- {v}\n",
+                          "l:\n  - {v}\n    one\n  - z\n"]
+        # a block scalar's text and the lines after it, at every indent
+        # around the text's: shallower, deeper, a comment. Blank lines and
+        # deeper lines go under literal scalars only: the subset does not
+        # fold those.
+        block_templates = [
+            "{k}: {v}\n    one\n  two\nz: 1\n",
+            "{k}: {v}\n    one\n  # c\nz: 1\n",
+            "{k}: {v}\n    one\n  # c\n    two\nz: 1\n",
+            "{k}: {v}\n    one\n    two\n # c\n   # d\nz: 1\n",
+            "m:\n  {k}: {v}\n      one\n    two: 1\n",
+            "m:\n  {k}: {v}\n      one\n    # c\n  z: 1\n",
+            "l:\n  - {v}\n      one\n    - z\n",
+            "l:\n  - {v}\n      one\n    # c\n  - z\n",
+            "l:\n  - {k}: {v}\n        one\n      z: 1\n"]
+        literal_templates = [
+            "{k}: {v}\n    one\n      two\n # c\n   # d\nz: 1\n",
+            "{k}: {v}\n      \n  one\nz: 1\n",
+            "{k}: {v}\n  \n    one\n\n  \n    two\nz: 1\n"]
+        corpus = [t.format(k=k, v=v) for t in templates
+                  for k in keys for v in values]
+        corpus += [t.format(v=v) for t in item_templates for v in values]
+        corpus += [t.format(k=k, v=v) for t in block_templates
+                   for k in keys for v in values if v[:1] in "|>"]
+        corpus += [t.format(k=k, v=v) for t in literal_templates
+                   for k in keys for v in values if v[:1] == "|"]
+        corpus += [read(p) for p in (
+            EXAMPLE, REPO / "src" / "kernel" / "presets" / "phases.yaml",
+            REPO / "src" / "kernel" / "state-registry.yaml",
+            REPO / "src" / "kernel" / "aliases.yaml")]
+        for md in sorted((REPO / "src").rglob("*.md")):
+            lines = read(md).split("\n")
+            if lines[0].strip() == "---" and "---" in lines[1:]:
+                corpus.append("\n".join(lines[1:lines.index("---", 1)]))
+
+        def norm(node):
+            if isinstance(node, dict):
+                return {k: norm(v) for k, v in node.items()}
+            if isinstance(node, list):
+                return [norm(v) for v in node]
+            # the subset drops a block scalar's final newline by design
+            return node.rstrip("\n") if isinstance(node, str) else node
+
+        accepted, wrong = 0, []
+        for text in corpus:
+            try:
+                mine = glados.parse_yaml(text, "t")
+            except glados.YamlError:
+                continue
+            accepted += 1
+            try:
+                theirs = yaml.safe_load(text)
+            except Exception as exc:  # PyYAML raises ValueError for some
+                # ill-formed escapes, not only YAMLError
+                wrong.append(f"{text!r}: read {mine!r}, YAML refuses it "
+                             f"({str(exc).splitlines()[0]})")
+                continue
+            if norm(mine) != norm({} if theirs is None else theirs):
+                wrong.append(f"{text!r}: read {mine!r}, YAML reads "
+                             f"{theirs!r}")
+        self.assertGreater(accepted, 500)
+        if wrong:
+            self.fail(f"{len(wrong)} of {accepted} accepted documents "
+                      f"misread:\n" + "\n".join(wrong[:40]))
+
+
+class TestYamlListOfMaps(unittest.TestCase):
+    """`- key: value` opens a mapping item, as in standard YAML (F6a). It
+    used to parse as the string 'key: value', silently."""
+
+    def parse(self, text):
+        return glados.parse_yaml(text, "t")
+
+    def test_single_key_item(self):
+        self.assertEqual(self.parse("items:\n  - name: a\n  - name: b\n"),
+                         {"items": [{"name": "a"}, {"name": "b"}]})
+
+    def test_multi_key_item(self):
+        parsed = self.parse("items:\n  - name: a\n    kind: gate  # note\n"
+                            "    count: 3\n  - name: b\n")
+        self.assertEqual(parsed["items"],
+                         [{"name": "a", "kind": "gate", "count": 3},
+                          {"name": "b"}])
+
+    def test_nested_blocks_under_an_item_key(self):
+        parsed = self.parse(
+            "- id: shape\n"
+            "  audits:\n"
+            "    - plan\n"
+            "    - spec\n"
+            "  options:\n"
+            "    review: in-context\n"
+            "    nested:\n"
+            "      - deep: 1\n"
+            "        deeper: [x, y]\n"
+            "  note: |\n"
+            "    line one\n"
+            "    line two\n"
+            "- id: open-mr\n")
+        self.assertEqual(parsed, [
+            {"id": "shape", "audits": ["plan", "spec"],
+             "options": {"review": "in-context",
+                         "nested": [{"deep": 1, "deeper": ["x", "y"]}]},
+             "note": "line one\nline two"},
+            {"id": "open-mr"},
+        ])
+
+    def test_quoted_and_colon_strings_unchanged(self):
+        parsed = self.parse('items:\n  - "a: b"\n  - \'c: d\'\n'
+                            "  - http://host/x\n  - plain\n  - [p, q]\n")
+        self.assertEqual(parsed["items"],
+                         ["a: b", "c: d", "http://host/x", "plain", ["p", "q"]])
+
+    def test_bare_dash_map_still_works(self):
+        parsed = self.parse("items:\n  -\n    name: a\n    kind: gate\n"
+                            "  - name: b\n")
+        self.assertEqual(parsed["items"],
+                         [{"name": "a", "kind": "gate"}, {"name": "b"}])
+
+    def test_misaligned_item_key_is_an_error(self):
+        with self.assertRaises(glados.YamlError) as ctx:
+            self.parse("items:\n  - name: a\n     kind: gate\n")
+        self.assertIn("t:3", str(ctx.exception))
+        with self.assertRaises(glados.YamlError) as ctx:
+            self.parse("- name: a\n  name: b\n")
+        self.assertIn("duplicate key 'name'", str(ctx.exception))
+
+    def test_shipped_yaml_parses_the_same_shape(self):
+        # Every shipped YAML file still parses, and nothing in them was a
+        # `- key: value` string the new rule would turn into a map.
+        def no_maps_in_lists(node):
+            if isinstance(node, dict):
+                return all(no_maps_in_lists(v) for v in node.values())
+            if isinstance(node, list):
+                return all(not isinstance(v, dict) and no_maps_in_lists(v)
+                           for v in node)
+            return True
+        for path in (EXAMPLE, REPO / "src" / "kernel" / "presets" / "phases.yaml",
+                     REPO / "src" / "kernel" / "state-registry.yaml",
+                     REPO / "src" / "kernel" / "aliases.yaml"):
+            with self.subTest(path=path.name):
+                self.assertTrue(no_maps_in_lists(
+                    glados.parse_yaml(read(path), path.name)))
 
 
 class TestManifestTokenAttacks(unittest.TestCase):
@@ -901,6 +1995,85 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertIn("slack", out)
         self.assertNotIn("Traceback", out)
 
+    # `- name: value` is a mapping item in YAML. In a list that holds names it
+    # must be a named error, never an unhashable-dict traceback (and never a
+    # hard exit from `check --report-only`).
+    MAPPING_ITEM_EDITS = [
+        ("disabled-workflows: []", "disabled-workflows:\n  - brunch: x",
+         "disabled-workflows: item 1 is a mapping ('brunch: x')"),
+        ("default-modules: [standards-gate]",
+         "default-modules:\n  - standards-gate: x",
+         "default-modules: item 1 is a mapping ('standards-gate: x')"),
+        ("  brunch:         [mr-review-panel]",
+         "  brunch:\n    - mr-review-panel: x",
+         "workflows.brunch: item 1 is a mapping ('mr-review-panel: x')"),
+        ("  bug:         [issue]", "  bug:\n    - issue: x",
+         "channels.bug: item 1 is a mapping ('issue: x')"),
+        ("relaxation-acknowledged: [delete-code]",
+         "relaxation-acknowledged:\n  - delete-code: yes",
+         "relaxation-acknowledged: item 1 is a mapping ('delete-code: yes')"),
+    ]
+
+    def test_mapping_item_in_a_name_list_is_a_named_error(self):
+        for old, new, msg in self.MAPPING_ITEM_EDITS:
+            with self.subTest(key=msg.split(":")[0]):
+                text = read(EXAMPLE)
+                self.assertIn(old, text, "doctoring failed")
+                rc, out = install("direct",
+                                  make_target(text.replace(old, new, 1)))
+                self.assertEqual(rc, 1, out)
+                self.assertIn(msg, out)
+                self.assertIn("'- name: value' is a mapping in YAML", out)
+                self.assertNotIn("Traceback", out)
+
+    def test_mapping_item_never_crashes_check_or_doctor(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        original = read(t / "glados.yaml")
+        for old, new, msg in self.MAPPING_ITEM_EDITS:
+            with self.subTest(key=msg.split(":")[0]):
+                write(t / "glados.yaml", original.replace(old, new, 1))
+                rc, out = run_cli("check", "--target", t, "--source", REPO,
+                                  "--report-only")
+                self.assertEqual(rc, 0, "--report-only must not hard-exit:\n"
+                                 + out)
+                self.assertIn(msg, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, "doctor must never fail:\n" + out)
+                self.assertNotIn("Traceback", out)
+
+    def test_wrong_shapes_are_named_errors(self):
+        # a list where a mapping belongs, and a scalar where a list belongs
+        workflows = ("workflows:\n"
+                     "  review-mr:      [mr-review-panel]\n"
+                     "  verify-feature: [evaluator-spawn]\n"
+                     "  fix-bug:        [evaluator-spawn, standards-gate]\n"
+                     "  run-epic:       [mr-review-panel, standards-gate]\n"
+                     "  brunch:         [mr-review-panel]\n")
+        listed = ("workflows:\n"
+                  "  - review-mr: [mr-review-panel]\n"
+                  "  - brunch: [mr-review-panel]\n")
+        cases = [
+            (workflows, listed, "'workflows:' must be a mapping"),
+            ("disabled-workflows: []", "disabled-workflows: true",
+             "disabled-workflows: must be a list of workflow names"),
+            ("params:\n", "params: 3\nunused:\n",
+             "'params:' must be a mapping"),
+        ]
+        for old, new, msg in cases:
+            with self.subTest(msg=msg):
+                text = read(EXAMPLE)
+                self.assertIn(old, text, "doctoring failed")
+                rc, out = install("direct",
+                                  make_target(text.replace(old, new, 1)))
+                self.assertEqual(rc, 1, out)
+                self.assertIn(msg, out)
+                self.assertNotIn("Traceback", out)
+
     def test_alias_shadowing_core_fails(self):
         src = make_doctored_source()
         aliases = src / "src" / "kernel" / "aliases.yaml"
@@ -911,6 +2084,138 @@ class TestManifestTokenAttacks(unittest.TestCase):
         self.assertEqual(rc, 1, "core-shadowing alias must fail:\n" + out)
         self.assertIn("shadows", out)
         self.assertIn("intent", out)
+
+
+class TestManifestKeysAndDecisions(unittest.TestCase):
+    """Unknown top-level keys warn without failing (F6b); a decision value
+    outside the four classes is fatal and names the leaf (F6c)."""
+
+    def test_unknown_top_level_key_warns_but_installs(self):
+        text = read(EXAMPLE) + "\nchanels:\n  bug: [issue]\n"
+        t = make_target(text)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, "an unknown key must not fail install:\n" + out)
+        self.assertIn("unknown top-level key 'chanels'", out)
+        self.assertIn("known keys:", out)
+        self.assertIn("channels", out.split("unknown top-level key 'chanels'")[1])
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, "an unknown key must not fail check:\n" + out)
+        self.assertEqual(out.count("unknown top-level key 'chanels'"), 1, out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("manifest keys: unknown top-level key(s) chanels", out)
+
+    def test_unknown_key_is_reported_when_the_install_fails(self):
+        # The misspelt key is the cause of the failure: 'sinsk:' leaves the
+        # slack sink undeclared. The warning must not vanish with the run.
+        bad = (read(EXAMPLE).replace("  escalation:  [issue]",
+                                     "  escalation:  [issue, slack]")
+               + "\nsinsk:\n  slack:\n    team-visible: true\n")
+        rc, out = install("direct", make_target(bad))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unknown top-level key 'sinsk'", out)
+        self.assertIn("sink 'slack' is not declared", out)
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", bad)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("unknown top-level key 'sinsk'", out)
+        self.assertIn("sink 'slack' is not declared", out)
+
+    def test_known_keys_cover_the_example_and_stay_quiet(self):
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertEqual(glados.unknown_manifest_keys(raw), [])
+        for key in ("pipelines", "steps", "canon", "lifecycle", "concurrency",
+                    "phase-declared"):
+            self.assertIn(key, glados.KNOWN_MANIFEST_KEYS)
+        t = make_target()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("unknown top-level key", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertIn("manifest keys: all known", out)
+
+    def test_a_decision_right_in_any_key_spelling_meets_the_floor(self):
+        """In production, `"schema\\x2Dmigration": agent` and
+        `&d schema-migration: agent` are schema-migration: agent to a YAML
+        reader, but the parser kept them as other leaves, so the relaxation
+        check never fired and validate passed with no warning at all."""
+        bs = "\\"
+        head = "glados: 2\nplatform: github\nphase: production\ndecisions:\n"
+
+        def validate(body):
+            rc, out = run_cli("validate", "--target",
+                              make_target(head + body), "--source", REPO)
+            self.assertNotIn("Traceback", out)
+            return rc, out
+
+        laxer = ("decision 'schema-migration: agent' is laxer than phase "
+                 "'production'")
+        for body in ("  schema-migration: agent\n",
+                     f'  "schema{bs}x2Dmigration": agent\n',
+                     f'  "schema{bs}u002Dmigration": agent\n'):
+            with self.subTest(body=body):
+                rc, out = validate(body)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(laxer, out)
+        for body, needle in (
+                ("  &d schema-migration: agent\n",
+                 "glados.yaml:5: '&d schema-migration' starts with '&'"),
+                ("  schema-migration: !!str agent\n",
+                 "glados.yaml:5: '!!str agent' starts with '!'"),
+                ("  schema-migration: *d\n",
+                 "glados.yaml:5: '*d' starts with '*'")):
+            with self.subTest(body=body):
+                rc, out = validate(body)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+
+    def test_bad_decision_value_is_fatal_and_names_the_leaf(self):
+        text = read(EXAMPLE).replace("  new-dependency: agent",
+                                     "  new-dependency: agnet")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, "a misspelt decision class must fail:\n" + out)
+        self.assertIn("decisions.new-dependency: 'agnet' is not a decision class",
+                      out)
+        self.assertIn("agent | record | escalate | forbidden", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_bad_merge_authority_is_fatal(self):
+        """A merge authority outside human | agent-integration-only | agent
+        installed: it has no defined behaviour at run time, and the
+        relaxation check compares an unknown value as not laxer."""
+        for value in ("humna", "agnet", ""):
+            with self.subTest(value=value):
+                text = read(EXAMPLE).replace(
+                    "merge-authority: human ",
+                    f"merge-authority: {value} ")
+                self.assertNotEqual(text, read(EXAMPLE))
+                rc, out = install("direct", make_target(text))
+                self.assertEqual(rc, 1, out)
+                shown = repr(value or None) if not value else f"'{value}'"
+                self.assertIn(f"merge-authority: {shown} is not a merge "
+                              f"authority", out)
+                self.assertIn("human | agent-integration-only | agent", out)
+                self.assertNotIn("Traceback", out)
+
+    def test_decision_leaf_names_stay_open(self):
+        text = read(EXAMPLE).replace("  new-dependency: agent",
+                                     "  new-dependency: agent\n"
+                                     "  vendor-swap: escalate")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 0, "a project-named decision leaf must install:\n"
+                         + out)
+
+    def test_non_mapping_decisions_fails_cleanly(self):
+        text = read(EXAMPLE).replace(
+            "decisions:\n  schema-migration: record\n",
+            "decisions:\n  - schema-migration\n  - delete-code\n"
+            "unused:\n  schema-migration: record\n")
+        rc, out = install("direct", make_target(text))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'decisions:' must be a mapping", out)
+        self.assertNotIn("Traceback", out)
 
 
 class TestRootCauseSynthesis(unittest.TestCase):
@@ -1011,7 +2316,7 @@ class TestRootCauseSynthesis(unittest.TestCase):
         reader is one ticket away.
         """
         body = " ".join(read(REPO / "src" / "vocabulary" / "verdicts.md").split())
-        self.assertIn("name the line that reads it", body)
+        self.assertIn("name the line that reads, calls or handles it", body)
         self.assertIn("It cannot establish that nothing *should*", body)
         self.assertIn("stated as the fact and never as a demand", body)
 
@@ -1306,7 +2611,9 @@ class TestRootCauseSynthesis(unittest.TestCase):
         """
         body = " ".join(read(REPO / "src" / "modules" / "evaluator-spawn.md").split())
         self.assertIn("What is deliberately out of scope", body)
-        self.assertIn("a decision already made, not a gap to report back", body)
+        self.assertIn("each labelled with who deferred it", body)
+        self.assertIn("A deferral excuses an absence", body)
+        self.assertNotIn("a decision already made", body)
 
     def test_synthesis_introduces_no_new_verdict_vocabulary(self):
         # One severity scale, one verdict vocabulary - the synthesis reuses
@@ -1316,6 +2623,1367 @@ class TestRootCauseSynthesis(unittest.TestCase):
             self.assertNotIn(invented, body)
         self.assertIn("`blocking`", body)
         self.assertIn("`advisory`", body)
+
+
+class TestReviewInputs(unittest.TestCase):
+    """What a fresh reviewer is told to treat as settled.
+
+    A fresh agent is independent of the author's context, but the author
+    writes its brief, and core text told it to settle what the author wrote:
+    the MR description's scope, a contract file copied from the author's own
+    spec, a criterion that named the author's mechanism. A project pipeline
+    cannot reach that text, so each rule is pinned into the compiled cores it
+    governs: review-mr, verify-feature, run-pipeline and implement-feature
+    (and plan-feature, which writes the criteria). Asserted with whitespace
+    flattened, so a re-wrap of the source does not break a test.
+    """
+
+    FRAGMENT = (
+        "## What a fresh reviewer is given",
+        "So a brief carries inputs, never the author's conclusions about them",
+        "A brief carries what the workflow that writes it lists for it and "
+        "nothing else",
+        "no verdict, approval or gate result from an earlier pass",
+        "no disposition the author gave a finding",
+        "no instruction about what is or is not a defect",
+        "A finding still open from an earlier pass may be named, as open",
+        "The author is whoever wrote the change, agent or person",
+        "is labelled as the author's, and is under review like the code",
+        "A person's words, meaning anyone's but the author's",
+        "are quoted verbatim with where they were said (a file path or an MR "
+        "note) and labelled as theirs, untagged.",
+        # words bind as firmly as they were said: one commitment tag per
+        # clause, read from its own words, so a hedge never softens a whole
+        # quote and a firm clause in an answer keeps its force (v3.1)
+        "**A person set only what their quoted words name, as firmly as "
+        "they said it.** Each clause takes the tag its words give until the "
+        "person corrects it:",
+        "*Directive* (\"must\", \"need\", \"never\", \"always\", or a "
+        "plain statement of what is wanted) binds.",
+        # a hedged want is a Preference, never a Hunch: code cannot test a
+        # want (v3.1)
+        "*Preference* (\"should\", \"I'd like\", \"prefer\", or a hedged "
+        "want: \"I think we need\") sets a default that evidence may "
+        "override.",
+        # a Hunch is a belief the code can test, and stands until it is
+        # contradicted (v3.1); an unhedged claim is one too, so a ticket's
+        # statement of what the code does gets tested rather than obeyed,
+        # and a problem the ticket or brief states still asks for its own
+        # absence (v3.2); a reviewer's stated problem does not, or every
+        # advisory a person wrote as a problem would bind (fix round 1)
+        "*Hunch* (\"I think\", \"maybe\", \"probably\", \"I wonder\", "
+        "or an unhedged claim, such as a stated problem) is a belief about "
+        "what is true (a cause, what code does), which the artifact tests "
+        "against the code, reporting what it finds; it stands unless "
+        "contradicted. A ticket's or brief's stated problem also asks for "
+        "its absence, as a Directive.",
+        # a go-ahead approves only what was shown; an answer binds the
+        # outcome its reading describes, never the option's wording, and
+        # only named evidence the person never saw reopens it (v3, v3.1)
+        # an option's words are its writer's, so choosing one is Assent
+        # even when they read as an order (v3.2)
+        "*Assent* (\"seems fine\", \"yes\", \"go with that\", choosing a "
+        "question's reading, however worded) approves only the direction of "
+        "what they were shown, which stays its writer's: a chosen reading's outcome, not "
+        "its mechanism, scope words or phrasing. Material evidence they "
+        "were not shown reopens it as a question naming that evidence.",
+        # evidence against words is stated in one form, from outside the
+        # change, never blocking, and has a channel where the workflow takes
+        # no questions (v3.1)
+        "**Challenge in the open.** Where evidence outside the change "
+        "suggests a person's words miss what they want, the artifact says "
+        "\"your words say X (tag); the code shows Y; I propose Z\", naming "
+        "where.",
+        "Against a Directive, which stands until they answer, or where it is "
+        "material, that is a question for them; otherwise the work follows "
+        "Z.",
+        "Neither raising a challenge nor following one past a Preference or "
+        "Hunch blocks: where the workflow takes no questions, a challenge is "
+        "an advisory written as one.",
+        # a change that does not do what the words say, or departs under a
+        # softened tag, is not a challenge (v3.1)
+        "Any other departure from a person's words, under too soft a tag "
+        "included, breaks a criterion the work received.",
+        "A scope statement excuses an absence, never a presence",
+        # an author's deferral never excuses an outcome a person set, and
+        # only words that name it let it go (v3)
+        "means the reviewer does not report that thing as missing, except a "
+        "criterion the work received: only a person's quoted words naming it "
+        "and letting it go waive one, never a go-ahead on an artifact that "
+        "lists it unmet.",
+        "No scope statement, the author's or a person's, makes what the "
+        "change does add correct: what it adds is reviewed on its merits",
+        "Deferring a unit's consumer does not excuse the unit: that nothing "
+        "calls it is still a finding",
+    )
+
+    VERDICTS = (
+        "breaks an acceptance criterion the work received (one the ticket "
+        "or someone other than the author set; the author's own are design "
+        "under review)",
+        "Pre-existing means already on the target branch",
+        "Commits this branch already carries (an earlier revision, an "
+        "earlier run's work) are part of the change and are not precedent. "
+        "This settles what counts as pre-existing, not what a delta pass "
+        "re-reads",
+        "**For every type, field, parameter, public method or function, and "
+        "exception type a change adds, name the line that reads, calls or "
+        "handles it.**",
+        "A reader acts on the value in production code: it branches on it, "
+        "computes with it, or passes it out of the change to a receiver "
+        "that acts on it",
+        "A test, a copy into another field, a check of the value against "
+        "itself or its twin, and a serializer whose output no receiver acts "
+        "on are not readers",
+        "a check that only rejects the value reads it only when some "
+        "production code can produce the value it rejects",
+        "A unit is public when code outside its own module can reach it",
+        "For a public method or function the change adds, or keeps while "
+        "removing its last production caller, name its production caller; "
+        "for one the project publishes as its API, name that export instead",
+        "For an exception type the change adds, name the handler that "
+        "decides what happens next and what it decides for this failure; "
+        "the framework's default is not a handler",
+        # the reader rule still states a fact, and still advises
+        "stated as the fact and never as a demand",
+        "It is `advisory` unless the unread or uncalled thing also breaks "
+        "something",
+    )
+
+    DECISION_RIGHTS = (
+        "Judge a decision against the target branch. A table, migration, "
+        "interface or format this branch adds is one decision, made once "
+        "under its class; reworking it before it reaches the target is part "
+        "of that decision, not a further schema migration or API break. That "
+        "holds unless the project deploys or publishes from a branch other "
+        "than the target",
+    )
+
+    FOUR = ("review-mr", "verify-feature", "run-pipeline", "implement-feature")
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, core):
+        text = self.core(core)
+        for rule in rules:
+            self.assertIn(rule, text, f"{core} lacks: {rule!r}")
+
+    def inlining(self, module):
+        """Every compiled core whose provenance header inlines `module`."""
+        names = set()
+        for path in self.dir.glob("*.md"):
+            header = next((l for l in read(path).splitlines()
+                           if "modules-inlined:" in l), "")
+            if module in header:
+                names.add(path.stem)
+        return names
+
+    def test_the_fragment_reaches_every_fresh_reviewer_once(self):
+        """One rule, three include sites, one copy per document.
+
+        The panel, the evaluator and the fresh-agent design review each brief
+        a reviewer, and each must carry the fragment. Identified from the
+        provenance header too, so a new core that seats a panel or an
+        evaluator is covered without editing this test.
+        """
+        reviewers = ({"review-mr", "verify-feature", "run-pipeline"}
+                     | self.inlining("mr-review-panel")
+                     | self.inlining("evaluator-spawn"))
+        for name in sorted(reviewers):
+            with self.subTest(core=name):
+                self.assertAllIn(self.FRAGMENT, name)
+                text = self.core(name)
+                self.assertEqual(
+                    text.count("excuses an absence, never a presence"), 1,
+                    f"{name} states the scope rule more than once")
+
+    def test_the_fragment_adds_no_tier_and_no_verdict_word(self):
+        # the tags and the challenge live in their own fragment since v3.2,
+        # so address-review can carry them without the brief rules
+        body = (read(REPO / "src" / "vocabulary" / "review-inputs.md")
+                + read(REPO / "src" / "vocabulary" / "person-words.md"))
+        for word in ("`blocking`", "`advisory`", "APPROVE", "REQUEST_CHANGES",
+                     "ESCALATE", "PASS", "FAIL"):
+            self.assertNotIn(word, body)
+
+    def test_no_reviewer_is_told_author_scope_is_settled(self):
+        """The phrase that disarmed every reviewer is gone from all three."""
+        for name in ("review-mr", "verify-feature", "run-pipeline"):
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertNotIn("a decision already made", text)
+                self.assertNotIn("work the author declared is a decision", text)
+                self.assertNotIn("a contract file, if one exists, takes "
+                                 "precedence", text)
+
+    def test_the_vocabulary_changes_reach_all_four_cores(self):
+        for name in self.FOUR:
+            with self.subTest(core=name):
+                self.assertAllIn(self.VERDICTS, name)
+                self.assertNotIn("breaks an acceptance criterion, opens",
+                                 self.core(name))
+
+    def test_decision_rights_are_judged_against_the_target_branch(self):
+        """Every core gets the preamble, so every core gets the sentence."""
+        cores = [p.stem for p in sorted(self.dir.glob("*.md"))
+                 if p.stem in glados.CORES]
+        self.assertTrue(set(self.FOUR) <= set(cores))
+        for name in cores:
+            with self.subTest(core=name):
+                self.assertAllIn(self.DECISION_RIGHTS, name)
+
+    def test_only_a_received_criterion_blocks_the_evaluator(self):
+        """An author's criterion is design under review, in the verdict too.
+
+        verdicts makes only a criterion the work received blocking, so the
+        evaluator's PASS cannot need every criterion: a plain design that
+        drops a mechanism the author's own criterion named would otherwise
+        FAIL, and map to REQUEST_CHANGES, whatever tier the vocabulary gives.
+        """
+        cores = self.inlining("evaluator-spawn")
+        self.assertIn("verify-feature", cores)
+        for name in sorted(cores):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "PASS — every criterion the work received passed and no "
+                    "blocking issue found.",
+                    "A failed criterion the brief labels as the author's is "
+                    "not one the work received: it is an issue at the tier "
+                    "its consequence earns, and where the criterion itself "
+                    "is unnecessary, say so",
+                    "Acceptance criteria (criterion | source | PASS/FAIL | "
+                    "evidence)",
+                ), name)
+                self.assertNotIn("PASS — every criterion passed",
+                                 self.core(name))
+
+    def test_the_panel_reads_scope_as_an_absence(self):
+        self.assertAllIn((
+            # the panel's brief list is the one list of what the panel is
+            # given; review-mr gathers from it rather than keeping a second
+            # list that drifted from it (v3.2)
+            "the spec and the merge-request description (without its step "
+            "table or the findings it lists), labelled as the author's;",
+            "Gather what *Assemble the brief* lists, and the personas active "
+            "for this feature",
+            "the rules in *Verdicts and finding severities* and *What a fresh "
+            "reviewer is given*, copied verbatim",
+            "3. Read the merge-request description before you raise "
+            "anything, as the brief carries it: without its step table or "
+            "the findings it lists",
+            "tells you what the change leaves out. Do not report that back "
+            "as a gap",
+            "It never makes what the change puts in correct, whoever asked "
+            "for it: that is reviewed on its merits",
+            "5. For every type, field, parameter, public method and "
+            "exception type this change adds, or leaves without a production "
+            "caller, find its reader, production caller or handler",
+            "what it declares left out is a deferral",
+            "**Which acceptance criteria the work received does the diff "
+            "meet?**",
+            "**What is in the diff that no criterion the work received asked "
+            "for?**",
+        ), "review-mr")
+        self.assertNotIn("the severity scale, verdict words, and composition "
+                         "rules above", self.core("review-mr"))
+
+    def test_a_replan_rebriefs_the_whole_change(self):
+        """A delta pass over a re-planned change never judges the new plan."""
+        self.assertAllIn((
+            "**Cycle 2 and after brief the delta**",
+            "**Unless the work was re-planned.** When a plan, shape or spec "
+            "record differs between `review.reviewed-head` and this head, "
+            "this cycle briefs the whole change against the target branch, "
+            "as cycle 1 does, with the open findings still named",
+            "**For a delta pass, check first that the reviewed head is still "
+            "an ancestor of this one.**",
+        ), "review-mr")
+        text = self.core("review-mr")
+        self.assertLess(text.index("**Cycle 2 and after brief the delta**"),
+                        text.index("**Unless the work was re-planned.**"))
+        self.assertLess(text.index("**Unless the work was re-planned.**"),
+                        text.index("**For a delta pass, check first"))
+
+    def test_the_evaluator_brief_labels_its_inputs(self):
+        self.assertAllIn((
+            "| What was agreed | The acceptance criteria, each with its "
+            "source: the ticket, a person's words quoted (an answer to a "
+            "question, with the reading it chose, among them), or the "
+            "author's plan, shape or spec, labelled as the author's, each "
+            "assumption they label included",
+            "A contract file takes precedence over the plan and spec only for "
+            "what a person's words name; a criterion the author derived is "
+            "the author's, under review like the code",
+            "or against the branch's merge-base with the target branch when "
+            "that commit is not on the target",
+            "declares deferred, each labelled with who deferred it: the "
+            "author, or a person quoted. A deferral excuses an absence, as "
+            "*What a fresh reviewer is given* sets out",
+            "| Vocabulary | The rules in *Verdicts and finding severities* and "
+            "*What a fresh reviewer is given*, copied verbatim |",
+            "acceptance criteria in their own words, each with its source",
+        ), "verify-feature")
+        self.assertNotIn("wrote or approved", self.core("verify-feature"))
+
+    def test_the_design_review_brief_labels_its_deferrals(self):
+        self.assertAllIn((
+            "| What is deliberately out of scope | Anything the plan, the "
+            "spec or an earlier step deferred, each labelled with who "
+            "deferred it",
+            "| Vocabulary | The rules in *Verdicts and finding severities*, "
+            "*What a fresh reviewer is given* and *Questions for a person*, "
+            "copied verbatim |",
+            "the base commit (`work.base-sha`, or the branch's merge-base "
+            "with the target branch when that commit is not on the target)",
+        ), "run-pipeline")
+
+    def test_the_shape_is_laid_down_and_then_checked(self):
+        """shape.md promised implement-feature lays the shape down first.
+
+        The promise was only in the shape step; implement-feature and
+        verify-feature never mentioned a shape. Now the implementer lays it
+        down and states departures, and the evaluator lists every public unit
+        the diff adds or drops against it. Stating a departure declares it;
+        it never excuses a unit the diff adds.
+        """
+        self.assertAllIn((
+            "When the caller passes a shape with the spec, take it too. Its "
+            "units are the first task of the breakdown: lay their signatures "
+            "down before any body",
+            "Any public unit the diff adds that the shape does not list, or a "
+            "shape unit the diff drops, is a departure",
+            "the test result, and each departure from the shape with its "
+            "reason",
+        ), "implement-feature")
+        self.assertAllIn((
+            "the shape's path when the run has one",
+            "| Shape | Only when the run has a shape: its path, and each "
+            "departure from it that implement-feature's `progress` outcome "
+            "states, labelled as the author's",
+            "6. If the brief names a shape, list every public unit the diff "
+            "adds that the shape does not list, and every shape unit the diff "
+            "drops. One the brief does not list as a stated departure is an "
+            "issue. A stated departure is not undeclared drift, but a unit it "
+            "adds is still reviewed on its merits, and its stated reason is "
+            "the author's",
+            "Shape when the brief names one (unit | added/dropped | stated "
+            "departure or not)",
+        ), "verify-feature")
+        self.assertNotIn("Each is an issue unless the brief lists it as a "
+                         "stated departure", self.core("verify-feature"))
+        self.assertAllIn((
+            "When implement-feature or verify-feature runs after a shape, "
+            "pass it the shape with the spec",
+            "| Readers | For every new field, parameter, public method or "
+            "function, and exception type, the unit that reads, calls or "
+            "handles it, as *Verdicts and finding severities* defines them. |",
+            "| Precedent | The unit on the target branch each new one "
+            "follows. |",
+        ), "run-pipeline")
+
+    def test_each_requirement_names_its_source(self):
+        """The label does the work; a mechanism criterion is not moved.
+
+        A criterion the author invented is an assumption, and verdicts makes
+        only a received criterion blocking, so labelling is enough. Moving a
+        criterion that names a code construct to Approach is left to a
+        project plan step.
+        """
+        self.assertAllIn((
+            "Label each requirement with its source: the ticket, a person's "
+            "words (quoted, with where they were said), or \"assumption\" for "
+            "one you invented rather than received, so spec-feature can "
+            "confirm or kill it",
+        ), "plan-feature")
+        text = self.core("plan-feature")
+        self.assertNotIn("names a code construct", text)
+        self.assertNotIn("Requirements you invented rather than received are "
+                         "assumptions", text)
+
+
+class TestDesignLoop(unittest.TestCase):
+    """How run-pipeline's revise loop ends: questions and stalls park.
+
+    Two trial runs of a plain-first pipeline spent hours in design: the
+    fresh-agent gate caught real defects, but every cycle counted against the
+    bound, progress included, and a finding that turned on what a person
+    meant could only block, use up a cycle and end the run. A project cannot
+    change how run-pipeline counts, closes or parks, so each rule is pinned
+    into compiled run-pipeline. Asserted with whitespace flattened, so a
+    re-wrap of the source does not break a test.
+    """
+
+    QUESTIONS = (
+        "## Questions for a person",
+        "No code or file settles what a person meant.",
+        # a choice no one's words reach becomes a question by its class
+        "Whoever finds an artifact resting on words whose readings differ "
+        "materially, or on an `escalate` choice no one's words reach, "
+        "raises a question: the author, a reviewer or a gate's audit.",
+        # material means the readings differ in whether a named outcome is
+        # met, judged in the people's own words at their fullest reading,
+        # so a rival meaning of an outcome's words is judged from the
+        # widest and an author's restatement never narrows it; what a
+        # person's words gave up is not counted; and a finder unsure
+        # whether readings differ asks rather than assumes (v3.2)
+        "**Materially**: the readings differ in whether an outcome the "
+        "ticket's or a person's own words name is met, or one needs a "
+        "choice `decisions:` classes `escalate`; when unsure, they do. Each "
+        "outcome counts as fully as any reading reads it, less what a "
+        "person's words let go.",
+        # narrow variants that meet the same outcomes do not park: they
+        # take the project's own precedent before the plainest, and a test
+        # pins the assumption; a stored record is one, its class in
+        # `decisions:` deciding whether it is asked (v3, v3.1). The list is
+        # of differences, not categories exempt whatever they leave unmet
+        # (v3.2)
+        "Readings that meet the same outcomes (differing in a unit, a "
+        "stored record, a failure path) are not: the artifact takes the one "
+        "the project's standards or nearest in-tree precedent follows, else "
+        "the plainest, labelled as an assumption for a test to pin.",
+        "**Form**: numbered, under *Questions for a person* in its finder's "
+        "file",
+        # a tested Hunch and a reopened Assent carry their evidence where
+        # the person reads the words (v3.2)
+        "the words it turns on, quoted with where said and their tag (a "
+        "Hunch with what the code showed, a reopened Assent with what its "
+        "giver was not shown), or the `escalate` class it needs",
+        "the readings, plainest first, each an outcome the person might "
+        "want, never a mechanism",
+        # a question is never a way around a finding
+        "**A question never replaces a finding** and fails nothing",
+        "What code, files, a standard, a stated outcome or the blocking "
+        "definition settles is a finding at its tier, even where a person's "
+        "words are silent",
+        "A question goes beside it only if the answer changes its fix",
+        "Any other doubt is an advisory written as a question",
+        # nor is an assumption a way around a question: the artifact that
+        # assumes has the blocking finding, whoever raises the question
+        "raises a question: the author, a reviewer or a gate's audit. An "
+        "artifact that assumes an answer instead has a blocking finding.",
+    )
+
+    PARK = (
+        "**Questions.** The run records each question for a person, a "
+        "nested plan's open ones included, and how it went:",
+        # routed from the readings as their finder wrote them
+        "the question and its readings stay their finder's",
+        # decision rights decide what is never asked
+        "A reading that needs a choice classed `forbidden` is refused as "
+        "*Decision rights* sets out, never asked.",
+        # only `escalate` makes a choice material (questions.md), so an
+        # `agent` or `record` choice by itself asks nothing
+        "or one needs a choice `decisions:` classes `escalate`",
+        # a body may defer its questions to a later step, which parks even
+        # when it asks nothing, and never past code or the MR
+        "**A one-way door parks the step** once its check is done (with no "
+        "check, once its artifact is written), or at the end or skip of a "
+        "later step its body names, none up to it producing `change` or "
+        "`mr`: one park for all of them, as at a `human` checkpoint, the "
+        "questions standing where the approval would",
+        "Any other pipeline claims no branch until it parks and cuts one.",
+        "At a bound, the run stops instead, its escalation carrying the "
+        "questions too",
+        "**Answers.** Record each verbatim, with who gave it and where, "
+        "noting when that is not the person whose words the question turns "
+        "on; the question and its readings stay their finder's",
+        # an answer costs a revise cycle (Bound's definition counts it),
+        # wherever it reaches: an overturned two-way door from an earlier
+        # step is revised in each artifact built on it (v3.1)
+        "The author then revises for the answers, in each artifact they "
+        "reach, and any finding still open (**Bound**)",
+        "A step after open-mr parks for no question: its questions go on "
+        "the MR with its `verdict`",
+        # a question park resumes inside the step, on an answer
+        "continues after the checkpoint, or inside the step for answers, "
+        "once a maintainer, or a CODEOWNER of `glados.yaml` or "
+        "`product-knowledge/steps/`, has approved or answered on the park's "
+        "escalation",
+        "quote the approval or answers in the new record",
+        "With no approval or answer yet, say so in the record",
+        "check the approval or answer as **Resume** in step 4 sets out",
+    )
+
+    BOUND = (
+        "**Bound.** A revise cycle is one revision of a step's artifact, "
+        "whatever it answers (open blocking findings, a person's answers, a "
+        "refusal), and the check after it",
+        "one row per check (a review, a gate's audit, or an ask at a "
+        "`human` checkpoint)",
+        "`check | file | given | closed | raised | questions | stalled`",
+        # no check overwrites another, so the table can be checked
+        "`check` is the row's number n. Each check's files carry it, so none "
+        "overwrites another; a gate's audit done here is "
+        "`<record>.<id>.audit-<n>.md`. `file` links them, or quotes the "
+        "answer to an ask",
+        "A finding is named by its check and number (`2.1`)",
+        "`given`: what earlier rows left open. `closed`: those its file "
+        "reports closed or not a defect, naming whose call it was; a check "
+        "done here reports as step 5 of the reviewer's prompt sets out",
+        # recurrence is the same consequence elsewhere, and doubt parks
+        "`raised`: its new blocking findings, each `new`, or `recurs <n>` "
+        "when its file shows earlier finding n's defect (the same "
+        "consequence) at another path, input or place, a re-open included, "
+        "saying why; when unsure, `recurs`.",
+        "`questions`: those it asked (**Questions**)",
+        "`stalled`: `yes` when it raises a `recurs`, or ends a revise cycle "
+        "given findings that closes none of them; `—` for a check after no "
+        "revision; else `no`",
+        # a stall parks at once, with the decision framed for the person
+        # and the research an informed answer needs, named field by field
+        # since a stall turns on findings, not words (v3.1)
+        "A stalled check parks the step at once, naming the open findings, "
+        "their kind and how the author would remove it, for the person to "
+        "approve that, rule a finding not a defect, waive findings by name, "
+        "or stop, with a scenario, each option's cost and risk, and the "
+        "author's recommendation, confidence and evidence.",
+        "At the bound, mark the row `failed`.",
+        "On hitting a bound: stop, emit an `escalation` outcome carrying the "
+        "open findings and the cycle history, and end the run.",
+        # a refusal is a finding the ask raises: it costs a revise cycle
+        "A refusal, with the person's reasons, is a blocking finding the ask "
+        "raises: revise the artifact as `required` does, whatever the "
+        "modifier, and ask again within the step's bounds",
+        # a park never resets the count
+        "copies the parked run's step and cycle tables instead",
+        # loop-bounds names the runaway guard; its re-open stop stands for
+        # every other loop and names run-pipeline's park as the exception,
+        # so the compiled document holds no two contrary rules
+        "| revise cycles per pipeline step (run-pipeline) | "
+        "`params.pipeline.max-cycles` |",
+        "that is a stalemate regardless of the counter: stop and emit an "
+        "`escalation` immediately rather than spending remaining cycles on "
+        "it, except in run-pipeline's revise loop, which parks for a person "
+        "(its **Bound**).",
+    )
+
+    REVIEW = (
+        "| Findings still open | Those the cycle table leaves open, by "
+        "number, copied verbatim from where they were raised |",
+        # the reviewer knows what the work received, not only the author's
+        # restatement of it (v3); an answer the author gave a two-way door
+        # is the author's, not a criterion the work received (v3.1)
+        "| What was asked | The ticket, each instruction a person gave this "
+        "run, and each question a person answered, with its readings and "
+        "answer, copied verbatim with where said: the criteria the work "
+        "received |",
+        "| Vocabulary | The rules in *Verdicts and finding severities*, *What "
+        "a fresh reviewer is given* and *Questions for a person*, copied "
+        "verbatim |",
+        "exactly two files beside the run record, numbered n by the check "
+        "(**Bound** in step 4): `<record>.<id>.review-brief-<n>.md` (input) "
+        "and `<record>.<id>.review-<n>.md` (output). Nothing else is shared.",
+        # closure is per kind, and a wrong finding can be retired
+        "5. Report each finding the brief names as open: closed, only when "
+        "nothing else in the artifact has the same defect (no other path, "
+        "input or place of its kind); not closed, and where it still holds; "
+        "or not a defect, and why. One not closed is still blocking.",
+        "6. List every other issue",
+        # the reviewer checks what the author filed and how it routed it,
+        # and looks for words used untagged or departed from silently (v3.1)
+        "7. Check each assumption, tag, challenge and question (its form "
+        "and door) the artifact states, and any person's words it rests on "
+        "untagged or departs from unstated; raise questions for a person, as "
+        "the vocabulary in the brief sets out.",
+        "Open findings (number | status | where or why)",
+        "Issues (numbered; location, severity, what would fix it), Questions "
+        "for a person, Canon conflicts",
+        "PASS: no blocking issue. FAIL: list the blocking issues, open "
+        "findings not closed included.",
+        "The result feeds the step's cycle table (**Bound**) and, for a "
+        "gate, its pass or fail.",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.target = t
+        cls.dir = t / "product-knowledge" / "glados"
+        cls.text = " ".join(read(cls.dir / "run-pipeline.md").split())
+
+    def assertAllIn(self, rules, text):
+        for rule in rules:
+            self.assertIn(rule, text, f"run-pipeline lacks: {rule!r}")
+
+    def test_a_question_is_defined_once_and_reaches_the_reviewer(self):
+        self.assertAllIn(self.QUESTIONS, self.text)
+        self.assertEqual(self.text.count("## Questions for a person"), 1,
+                         "one fragment, one copy per document")
+        # the brief copies it by name, beside the rules it already copies
+        self.assertAllIn(self.REVIEW[2:3], self.text)
+
+    def test_a_question_adds_no_tier_no_verdict_and_no_status(self):
+        body = read(REPO / "src" / "vocabulary" / "questions.md")
+        for word in ("`blocking`", "`advisory`", "APPROVE", "REQUEST_CHANGES",
+                     "ESCALATE", "PASS", "FAIL"):
+            self.assertNotIn(word, body)
+        self.assertIn("`pending | done | skipped | waived | parked | "
+                      "failed`", self.text, "no new step status")
+
+    def test_a_one_way_door_parks_and_is_routed_from_its_readings(self):
+        self.assertAllIn(self.PARK, self.text)
+        # no going on under an unasked assumption to the MR: a question that
+        # does not park is answered and put to the person (v3.1, two-way door)
+        self.assertNotIn("the author goes on with the plainest reading",
+                         self.text)
+        self.assertNotIn("every question for a person the run went on "
+                         "without", self.text)
+        # a choice any class covers no longer parks: only `escalate` does
+        self.assertNotIn("needs a choice a class under `decisions:` covers",
+                         self.text)
+        self.assertNotIn("The park is not a revise cycle", self.text)
+        # the rule sits with the park rules it builds on
+        self.assertLess(self.text.index("- **Resume.**"),
+                        self.text.index("- **Questions.**"))
+        self.assertLess(self.text.index("- **Questions.**"),
+                        self.text.index("- **Selection re-check.**"))
+
+    def test_the_bound_counts_all_cycles_and_stalled_ones(self):
+        self.assertAllIn(self.BOUND, self.text)
+        self.assertNotIn("Count each step's revise cycles in the record and "
+                         "check `params.pipeline.max-cycles` before starting "
+                         "another", self.text)
+        self.assertNotIn("Cycles count against the step's bound", self.text)
+        self.assertNotIn("max-total-cycles", self.text)
+        # one file per check: the old shared names are gone
+        self.assertNotIn("<record>.<id>.review.md", self.text)
+        self.assertNotIn("<record>.<id>.review-brief.md", self.text)
+
+    def test_the_design_review_reports_closure_and_questions(self):
+        self.assertAllIn(self.REVIEW, self.text)
+        self.assertNotIn("PASS: no blocking issue found. FAIL", self.text)
+        self.assertNotIn("as the vocabulary in the brief sets out, not an "
+                         "issue", self.text)
+
+    def test_parked_tickets_wait_for_an_approval_or_an_answer(self):
+        text = " ".join(read(self.dir / "run-epic.md").split())
+        self.assertIn("A ticket whose run parks, at a checkpoint or on a "
+                      "question, waits for its approval or answer", text)
+        self.assertIn("check each parked ticket once for its approval or "
+                      "answer", text)
+
+    def test_the_runaway_guard_resolves_and_no_stall_count_is_tuned(self):
+        """`params.pipeline.max-cycles` is compiled into run-pipeline, so it
+        must resolve with no params: block, in every phase, from the
+        baseline (a dangling literal fails the install). A stall has no
+        number: the first stalled check parks, so no stalled-cycle bound is
+        set or compiled anywhere."""
+        report = read(self.target / ".glados" / "assembly-report.md")
+        self.assertIn("| params.pipeline.max-cycles | 8 | (baseline) |",
+                      report)
+        self.assertNotIn("max-stalled-cycles", report)
+        source = glados.Source(REPO)
+        for phase in glados.PHASES:
+            with self.subTest(phase=phase):
+                raw = {"glados": 2, "platform": "gitlab", "phase": phase}
+                r = glados.resolve_manifest(raw, source.presets, "glados.yaml")
+                pipeline = r.values["params"]["pipeline"]
+                self.assertEqual(pipeline["max-cycles"], 8)
+                self.assertNotIn("max-stalled-cycles", pipeline)
+        for path in sorted(self.dir.glob("*.md")):
+            with self.subTest(core=path.stem):
+                self.assertNotIn("max-stalled-cycles", read(path))
+        # a project that set max-cycles keeps its meaning: all cycles
+        raw = {"glados": 2, "platform": "gitlab", "phase": "evolving",
+               "params": {"pipeline": {"max-cycles": 2}}}
+        r = glados.resolve_manifest(raw, source.presets, "glados.yaml")
+        self.assertEqual(r.values["params"]["pipeline"]["max-cycles"], 2)
+        self.assertEqual(r.provenance["params.pipeline.max-cycles"],
+                         "explicit")
+
+    def test_the_other_loops_keep_their_counting(self):
+        """Only run-pipeline's revise loop changed: the MR review loop, the
+        evaluator and the standards gate keep their bounds, and the cycle
+        table stays in the one core that keeps it."""
+        for name in ("review-mr", "verify-feature", "address-review"):
+            with self.subTest(core=name):
+                text = " ".join(read(self.dir / f"{name}.md").split())
+                for row in (
+                    "| review-mr ⇄ address-review cycles per MR round | "
+                    "`params.review-panel.max-cycles` |",
+                    "| evaluator verify/fix cycles per feature | "
+                    "`params.evaluator.max-cycles` |",
+                    "| standards-gate re-runs per gated artifact | "
+                    "`params.standards-gate.max-cycles` |",
+                ):
+                    self.assertIn(row, text)
+                self.assertNotIn("`check | file | given | closed", text)
+                self.assertNotIn("`stalled`: `yes`", text)
+
+
+class TestHealthierRun(unittest.TestCase):
+    """The v3 rules from the first plain-first trial runs (docs/proposals/
+    v3.md): an outcome a person set cannot be deferred by the author, an
+    answer binds the outcome it chose and is traced to code and a test, a
+    repeated advisory goes to the person, a fix covers its kind, one full
+    suite per fix loop, and a record that is an index. Each rule is pinned
+    into the compiled cores it governs, with whitespace flattened so a
+    re-wrap of the source does not break a test.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    def test_an_author_cannot_defer_a_received_criterion(self):
+        """The ticket's outcome stays owed until a person waives it, at every
+        fresh reviewer (the rule is in the fragment TestReviewInputs pins
+        into each); the panel's scope order points at it by name, and each
+        brief's out-of-scope row raises one, not only what breaks."""
+        self.assertAllIn((
+            "Do not report that back as a gap, except where *What a fresh "
+            "reviewer is given* says to",), "review-mr")
+        self.assertNotIn("Do not report that back as a gap: it costs",
+                         self.core("review-mr"))
+        for name in ("run-pipeline", "verify-feature"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "Raise one where living with it breaks something, an "
+                    "unmet criterion the work received included, and say "
+                    "what breaks",), name)
+                self.assertNotIn("Raise one only where living with it",
+                                 self.core(name))
+
+    def test_every_fresh_reviewer_is_given_what_was_asked(self):
+        """A gate briefed only with the author's restated outcomes checks the
+        author's words; the ticket and the person's words reach the design
+        reviewer and the panel too, the author's spec labelled as such."""
+        self.assertAllIn((
+            "| What was asked | The ticket, each instruction a person gave "
+            "this run, and each question a person answered, with its "
+            "readings and answer, copied verbatim with where said: the "
+            "criteria the work received |",), "run-pipeline")
+        # the panel gets the answers a person gave, as the design reviewer
+        # does, so it never blocks on a choice a person already made (C7,
+        # v3.2), and each instruction or answer people gave on the MR: an
+        # overturn posted there is an answer (fix round 1)
+        self.assertAllIn((
+            "the ticket or a person's brief, each question a person answered "
+            "in the run that opened the MR, with its readings and answer, and "
+            "each instruction or answer people gave on the MR, quoted with "
+            "where said;",
+        ), "review-mr")
+        self.assertNotIn("the changed-file list, the spec or ticket",
+                         self.core("review-mr"))
+
+    def test_words_bind_as_firmly_as_they_were_said(self):
+        """Hedged words set a default evidence can revise; firm ones bind;
+        an answer binds its reading's outcome, never the option's wording.
+        v3.1's commitment tags absorb v3's wording rather than sit beside
+        it: pinned into every reviewer by TestReviewInputs.FRAGMENT; here,
+        that each core says it once and that the old readings are gone."""
+        for name in ("run-pipeline", "verify-feature", "review-mr"):
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertEqual(text.count("as firmly as they said it"), 1)
+                self.assertNotIn("Words bind as firmly as they were said",
+                                 text)
+                self.assertNotIn("Evidence against a default", text)
+                self.assertNotIn("and the proposal stays the author's", text)
+                self.assertNotIn("and its wording stays its writer's", text)
+
+    def test_an_answer_and_an_assumption_are_traced_to_code_and_test(self):
+        """An answer is a criterion the work received, and an assumption the
+        author labelled instead of asking is the author's: the evaluator
+        checks both, and an untested one is a test gap at the tier its
+        source earns."""
+        self.assertAllIn((
+            "a person's words quoted (an answer to a question, with the "
+            "reading it chose, among them)",
+            "or the author's plan, shape or spec, labelled as the author's, "
+            "each assumption they label included",
+            "5. Mark each acceptance criterion PASS or FAIL, with the "
+            "evidence you observed: the code that meets it and the test "
+            "that pins it. One a test can pin that no test pins is an issue: "
+            "blocking for a criterion the work received, advisory for the "
+            "author's.",
+        ), "verify-feature")
+        # the answers reach the nested verify-feature that writes the brief
+        self.assertAllIn((
+            # a nested stage tags people's words as the design review it
+            # faces checks them (v3.1)
+            "Pass the artifacts that meet their needs, by path from the step "
+            "table, and the run's answers and the tags of *What a fresh "
+            "reviewer is given* as caller context.",
+        ), "run-pipeline")
+
+    def test_a_repeated_declined_advisory_goes_to_the_person(self):
+        """Recorded where a reader of the index finds it, asked once
+        whatever the materiality rule says, and parking only where its
+        door is one-way."""
+        self.assertAllIn((
+            "**A declined advisory** (a fresh agent's, left undone when its "
+            "row ends) is noted in that row by file and number.",
+            "Once two fresh reviewers or evaluators in this run have raised "
+            "it (the same defect at the same unit), it is a question for the "
+            "person, asked once whatever *Materially* says: whether they "
+            "want it, readings \"wanted\" and \"not wanted\", the two "
+            "findings quoted as its words and recommendation, beside the "
+            "author's reasons for declining.",
+            # the author who declined it twice does not write the case it
+            # is asked on, and its door routes it like any question: the two
+            # findings are its recommendation, so *Doors* makes that its
+            # default unless a person's words take another reading, rather
+            # than keeping the state two independent checks found wanting
+            # (FID-9, v3.2); a second default rule here would override a
+            # person's answer (fix round 1)
+            "beside the author's reasons for declining. It is never made "
+            "blocking.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("the work unchanged until they answer", text)
+        self.assertNotIn("Its default is the findings' recommendation", text)
+        self.assertNotIn("**An advisory two fresh agents", text)
+        # it sits with the question routes, after the two it builds on
+        self.assertLess(text.index("**A one-way door parks the step**"),
+                        text.index("**A two-way door parks nothing.**"))
+        self.assertLess(text.index("**A two-way door parks nothing.**"),
+                        text.index("**A declined advisory**"))
+
+    def test_a_fix_covers_its_kind_in_code(self):
+        """Every place the change has the defect, not a sweep of code that
+        predates it, and a place left alone names the input that shows it."""
+        self.assertAllIn((
+            "A finding the caller passes to fix (a gate's or an evaluator's) "
+            "is a task covering its kind: list in the checklist every place "
+            "where the change has the same defect (each other path, input or "
+            "place of its kind; a breach that predates the change is not "
+            "one), then fix each or name, per place, the input that shows it "
+            "does not hold there. Fixing only the place it names leaves it "
+            "open.",
+        ), "implement-feature")
+
+    def test_one_full_suite_per_fix_loop(self):
+        self.assertAllIn((
+            "run the tests of every area the diff touches and the project's "
+            "unit suite — not just the tests written above",
+            "The full suite runs once per fix loop, in verify-feature's "
+            "evaluator.",
+        ), "implement-feature")
+        self.assertNotIn("run the full test suite — not just the tests",
+                         self.core("implement-feature"))
+        # the one full run is checked against CI, not the author's list
+        self.assertAllIn((
+            "| How to verify | The full test suite and lint commands, as CI "
+            "runs them, and the path of the CI configuration;",
+            "3. Run every test and lint command in the brief. A test job in "
+            "the CI configuration it names that the brief leaves out is an "
+            "issue.",
+        ), "verify-feature")
+        # committing code needs the full suite, and the evaluator's run of
+        # it on the same diff counts, so a fix loop pays for it once
+        for name in ("run-pipeline", "build-feature", "fix-bug"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "Run the project's full test suite before committing "
+                    "code, and its exact CI checks locally before pushing "
+                    "it; a fresh evaluator's run of them on the same diff "
+                    "counts.",), name)
+
+    def test_the_record_is_an_index_and_commits_go_by_row(self):
+        """A reader reads the head and its rows, not the whole record; a
+        revision's dispositions stay out of the artifact the next reviewer
+        reads; a row's process files go to the ledger in one save when it
+        ends or parks, never onto the branch, which a run with no branch of
+        its own does not claim until it parks (v3.2)."""
+        self.assertAllIn((
+            "**The record is an index**: under its header, `## Now` (the "
+            "step in progress, what it waits on, the next action), kept "
+            "current; a reader reads it and the rows its step needs.",
+            "Findings stay in their check's files, and how the revision "
+            "before check n answered them in `<record>.<id>.revision-<n>.md`, "
+            "which no brief names.",
+            "**Commits.** When a row ends or parks, its process files "
+            "(artifact, briefs, check results, record) go to the ledger in "
+            "one save (*Before ending this run*, step 4).",
+            "Any other pipeline claims no branch until it parks and cuts one.",
+            # the mandatory epilogue's save, compiled into the same core,
+            # is the one that row saves point at
+            "**Save the record to the ledger.**",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("PASS with advisory issues records them in the "
+                         "step's row", text)
+        self.assertNotIn("none is committed alone", text)
+        self.assertNotIn("claims no branch, and commits nothing", text)
+        self.assertNotIn("go in one commit when the row ends or parks", text)
+
+    def test_each_rule_is_said_once_in_run_pipeline(self):
+        """Text the v3 rules made redundant is gone, so run-pipeline did not
+        grow: each of these is stated by the section the remaining pointer
+        names."""
+        text = self.core("run-pipeline")
+        # a nested escalation ends the run: said under the modifiers only
+        self.assertEqual(text.count("ends in `escalation`"), 1)
+        self.assertIn("A nested workflow that ends in `escalation`, and the "
+                      "standards gate stopping at its bound", text)
+        # pending MR items: the epilogue lists whose; open-mr points at it
+        self.assertIn("post every item waiting for it, as *No MR yet is not "
+                      "a failed delivery*", text)
+        self.assertNotIn("the `## Pending MR delivery` items of this run's "
+                         "record", text)
+        # self-review defers to After the MR opens instead of restating it
+        self.assertIn("Its verdict follows **After the MR opens** in "
+                      "run-pipeline's step 4, whatever the step's modifier",
+                      text)
+        self.assertNotIn("queue fixes so review line references stay stable",
+                         text)
+        # a design review's result is no verdict before the MR, and a step
+        # after the MR posts one: said once, by run-pipeline's step 4
+        self.assertNotIn("It never becomes a `verdict` outcome", text)
+        # the work left for a human: one rule, under Branch, which step 5
+        # points at; the record it names is on the ledger, saved by the
+        # epilogue before any outcome is published, so no second push
+        # (v3.2)
+        self.assertEqual(text.count("leaves its work there for a human"), 1)
+        self.assertNotIn("once the epilogue has committed the record", text)
+        self.assertIn("When no MR was opened, the artifacts in the record are "
+                      "the deliverable (**Branch** in step 4).", text)
+        # a re-open: Loop bounds names run-pipeline's park as its exception,
+        # so Bound does not restate the stop it overrides
+        self.assertNotIn("not the stop *Loop bounds* sets for a re-open",
+                         text)
+        # the gate's bound stop is Loop bounds' own, not restated
+        self.assertNotIn("do not re-run again", text)
+        # the bypass is documented in the pipelines guide, not run-time text
+        self.assertNotIn("Known gap", text)
+        self.assertIn("**Known gap.** Anyone can still run build-feature "
+                      "directly", " ".join(read(
+                          REPO / "docs" / "guides" / "pipelines.md").split()))
+
+    def test_a_retired_stall_count_is_reported_not_silently_kept(self):
+        """A manifest that still tunes the v2 stall count resolves, but
+        install and validate warn that nothing reads it, and the assembly
+        report marks it retired instead of listing it as a live setting."""
+        raw = {"glados": 2, "platform": "gitlab", "phase": "evolving",
+               "params": {"pipeline": {"max-cycles": 5,
+                                       "max-stalled-cycles": 2}}}
+        warnings = glados.manifest_warnings(raw, "glados.yaml")
+        self.assertIn("glados.yaml: params.pipeline.max-stalled-cycles is "
+                      "retired in 2.5 (v3): the first stalled check parks "
+                      "the step for a person, so no stall count is read; "
+                      "remove it", warnings)
+        self.assertEqual(glados.manifest_warnings(
+            {"glados": 2, "params": {"pipeline": {"max-cycles": 5}}},
+            "glados.yaml"), [])
+        manifest = read(EXAMPLE).replace(
+            "\nparams:\n", "\nparams:\n  pipeline:\n    "
+            "max-stalled-cycles: 2\n", 1)
+        self.assertIn("max-stalled-cycles: 2", manifest)
+        t = make_target(manifest)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("params.pipeline.max-stalled-cycles is retired", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("| params.pipeline.max-stalled-cycles | 2 | (explicit; "
+                      "retired, read by nothing) |", report)
+
+
+class TestInformedInput(unittest.TestCase):
+    """The v3.1 rules (docs/proposals/v3.md, *v3.1*): people's words carry
+    a commitment tag, evidence against them is stated as a challenge, a
+    question reaches a person only with the research behind it, and only a
+    one-way door parks the run. A project cannot change what a fresh
+    reviewer is told about people's words, what a question must carry or
+    when run-pipeline parks, so each rule is pinned into the compiled cores
+    it governs, with whitespace flattened so a re-wrap of the source does
+    not break a test.
+    """
+
+    TAGS = ("*Directive* (", "*Preference* (", "*Hunch* (", "*Assent* (")
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    def reviewers(self):
+        names = {"review-mr", "verify-feature", "run-pipeline"}
+        for path in self.dir.glob("*.md"):
+            header = next((l for l in read(path).splitlines()
+                           if "modules-inlined:" in l), "")
+            if "mr-review-panel" in header or "evaluator-spawn" in header:
+                names.add(path.stem)
+        return sorted(names)
+
+    def test_each_clause_carries_one_of_four_tags_defined_once(self):
+        """V31-1: every fresh reviewer gets the four tags, each defined once,
+        in order from firmest to the assent that binds only what was shown.
+        A tag is read from each clause's own words, so a hedge in front of
+        a want leaves a Preference and a firm clause inside an answer keeps
+        its force; the brief quotes the words untagged, so a reviewer is
+        never handed the author's reading of them."""
+        for name in self.reviewers():
+            with self.subTest(core=name):
+                text = self.core(name)
+                at = [text.index(tag) for tag in self.TAGS]
+                self.assertEqual(at, sorted(at))
+                for tag in self.TAGS:
+                    self.assertEqual(text.count(tag), 1, tag)
+                self.assertIn("Each clause takes the tag its words give "
+                              "until the person corrects it:", text)
+                self.assertIn("or a hedged want: \"I think we need\")", text)
+                self.assertIn("is a belief about what is true (a cause, "
+                              "what code does)", text)
+                self.assertIn("and labelled as theirs, untagged.", text)
+                # no rule lets a hedge anywhere soften the whole quote
+                self.assertNotIn("the softer where they mix", text)
+
+    def test_evidence_against_words_is_a_challenge_never_a_block(self):
+        """V31-2: one form, said once, from evidence outside the change; a
+        Directive's challenge is a question and the Directive stands
+        meanwhile; a softer tag's is the work's decision unless it is
+        material; raising one never blocks. A change that does not do what
+        the words say is not a challenge, nor is a departure under a tag
+        softer than the words: both break a criterion the work received."""
+        for name in self.reviewers():
+            with self.subTest(core=name):
+                text = self.core(name)
+                self.assertEqual(text.count(
+                    "\"your words say X (tag); the code shows Y; I propose "
+                    "Z\""), 1)
+                self.assertIn("Where evidence outside the change suggests a "
+                              "person's words miss what they want", text)
+                self.assertIn("Against a Directive, which stands until they "
+                              "answer, or where it is material, that is a "
+                              "question for them; otherwise the work follows "
+                              "Z.", text)
+                self.assertIn("Any other departure from a person's words, "
+                              "under too soft a tag included, breaks a "
+                              "criterion the work received.", text)
+                self.assertNotIn("Where code or evidence points away", text)
+        # the design reviewer checks what the artifact filed and how it
+        # routed each question, and looks for words it used untagged or left
+        # without saying so (v3.1)
+        self.assertAllIn((
+            "7. Check each assumption, tag, challenge and question (its form "
+            "and door) the artifact states, and any person's words it rests "
+            "on untagged or departs from unstated;",), "run-pipeline")
+        # every challenge the work followed is pooled with the run's other
+        # decisions, so the person whose words were overridden can see it
+        self.assertAllIn(("every two-way door the author answered "
+                          "(**Questions**), every challenge the work "
+                          "followed and,",), "run-pipeline")
+
+    def test_a_question_carries_what_an_informed_answer_needs(self):
+        """V31-3: no question reaches a person without the decision, a
+        scenario, each reading's consequences, its door and what makes it
+        one-way, a recommendation with its confidence, evidence a reader can
+        open and what favours it over the other readings, and what silence
+        means; a part that says nothing about this question is missing. A
+        stall's park names the parts that fit a choice among findings."""
+        # v3.2, from a worked demonstration on two real questions: the
+        # parts a person answers from come first and the words for checking
+        # last; the scenario is traced once, through today's code, and each
+        # reading says what users would see in it, so the two no longer
+        # repeat each other; reversibility is back; and the no-answer line,
+        # which the door already settles, gives way to what would change
+        # the recommendation
+        self.assertAllIn((
+            "**Form**: numbered, under *Questions for a person* in its "
+            "finder's file, complete and specific to it before a person sees "
+            "it, in this order: the decision, in one line; a concrete "
+            "scenario through today's code; the readings, plainest first, "
+            "each an outcome the person might want, never a mechanism, with "
+            "what users would see in that scenario, its cost, risk and "
+            "reversibility; the finder's recommendation, with its "
+            "confidence, evidence (a file and line, test, data or quote), "
+            "what favours it over each other reading and what fact would "
+            "change it; the door and its default, naming what makes it "
+            "one-way; and the "
+            "words it turns on, quoted with where said and their tag (a "
+            "Hunch with what the code showed, a reopened Assent with what "
+            "its giver was not shown), or the `escalate` class it needs.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("and what happens if no one answers", text)
+        self.assertNotIn("a concrete scenario, today and under each reading",
+                         text)
+        self.assertNotIn("in its finder's file: the question;", text)
+        self.assertNotIn("never a mechanism; and what each changes", text)
+        self.assertNotIn("in the form *Questions for a person* sets out",
+                         text)
+
+    def test_only_a_one_way_door_parks(self):
+        """V31-4: a door is judged from the readings by one list, so a
+        reviewer can check the routing. The project's `decisions:` classes
+        decide schema, API and data choices, as every phase preset sets
+        them; core adds only an outcome a person names left unmet or
+        changed where users see it. A one-way door parks with the informed
+        question; a two-way door is answered on its finder's recommendation,
+        except that a person's Directive or chosen reading stands, and is
+        pooled with the run's other decisions and put to the person without
+        waiting, standing if no one answers."""
+        # v3.2: three blind classifiers applying v3.1's test found every
+        # material question one-way (a reading that changes an outcome
+        # nearly always leaves it unmet somewhere), could not say from
+        # whose reading "unmet" was judged, fired on an outcome unmet under
+        # every reading, and left "users" undefined. The door is now judged
+        # from the one reading that would stand, the default: a person's
+        # words take it where they do, else the finder's recommendation.
+        # Only a person answers a question whose default gives up an
+        # outcome another reading meets, needs an `escalate` choice, or
+        # does not exist because people's words take two readings.
+        self.assertAllIn((
+            "**Doors**: a question's default is the reading a person's "
+            "Directive or chosen reading takes, else its finder's "
+            "recommendation. Only a person answers a one-way door: one with "
+            "no default (people's words take two readings), or whose default "
+            "needs an `escalate` choice or leaves unmet an outcome another "
+            "reading meets; when unsure, one-way. Others are two-way doors.",
+            "**A two-way door parks nothing.** The author answers it by its "
+            "default (*Doors*). The question joins the next park, else the "
+            "MR, for the person to confirm or overturn; unanswered, the "
+            "answer stands.",
+            "emit one pooled `decision` outcome: every `record` checkpoint, "
+            "every two-way door the author answered (**Questions**), every "
+            "challenge the work followed and, when "
+            "`decisions.pipeline-discretion` is `record`, every "
+            "discretionary act.",
+        ), "run-pipeline")
+        text = self.core("run-pipeline")
+        self.assertNotIn("**Every other question parks the step**", text)
+        self.assertEqual(text.count("**Doors**"), 1)
+        # one test, not a list and a gloss that disagree; no fixed list of
+        # mechanisms that would override a phase's `agent` or `record`; and
+        # no undefined "users" deciding the route, nor an outcome unmet
+        # under every reading (v3.2)
+        for gone in ("a stored schema or format", "a public API, data no "
+                     "change could take back", "no user to tell",
+                     "a named outcome users see", "differ in what users see",
+                     "leaves such an outcome unmet",
+                     "the author answering one assumes its answer"):
+            self.assertNotIn(gone, text)
+        # the route sits with the other question routes in step 4
+        self.assertLess(text.index("- **Questions.**"),
+                        text.index("**A two-way door parks nothing.**"))
+        self.assertLess(text.index("**A two-way door parks nothing.**"),
+                        text.index("- **Selection re-check.**"))
+        # Doors builds on the outcomes materiality names
+        self.assertLess(text.index("**Materially**"),
+                        text.index("**Doors**"))
+
+
+class TestPeopleOnTheMR(unittest.TestCase):
+    """The v3.2 rules (docs/proposals/v3.md, *v3.2*): a person's review on
+    the merge request is an input to the review loop. In the third trial
+    run the panel approved, a human reviewer then posted two gaps and seven
+    advisories, and the run said "No document of this run routes a
+    person's MR note": nothing read it. On the attempt before, every gate
+    approved and the human found four blocking issues. GLaDOS posts under
+    a person's account, so what it posts is marked and anything unmarked
+    is a person's. Pinned into the compiled cores that read and answer MR
+    notes, with whitespace flattened.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def assertAllIn(self, rules, name):
+        text = self.core(name)
+        for rule in rules:
+            self.assertIn(rule, text, f"{name} lacks: {rule!r}")
+
+    NOTES = (
+        "## People on the merge request",
+        # the account a note came from proves nothing: GLaDOS posts under a
+        # person's, so the marker, at the start of the first line (a quote
+        # of a GLaDOS note is still a person's), tells them apart; a role on
+        # the project makes the words a person's, so a bot, a system note
+        # or a passer-by on a public repository sets no criterion, and the
+        # change's own author is under review, never a person giving it
+        # criteria (fix round 1). Where the agents commit, push and post
+        # under the owner's account, the MR and commits carry the owner's
+        # name, so who wrote a change a run made is said outright: the owner
+        # reviewing the agents' change is the case this rule exists for
+        # (final round)
+        "A note or reply on the merge request whose first line does not "
+        "start with `(GLaDOS <workflow>)` is a person's when someone with a "
+        "role on the project wrote it, whichever account posted it, unless "
+        "they wrote the change. GLaDOS wrote a change its runs made, "
+        "whatever name it carries. A system note or a bot's is no one's, "
+        "and anyone else's is evidence.",
+        # GitHub keeps a person's words in three lists, and the usual read
+        # of the first misses inline review comments (fix round 1)
+        "**Read each**, of every kind the platform (`platform:`) keeps: on "
+        "GitHub, comments, reviews with their state, and inline review "
+        "comments are three lists.",
+        # an overturn or an instruction posted on the MR is what the work
+        # received (L10); a tier the person gives stands, so "nothing
+        # blocks" blocks nothing and a stated problem binds only as firmly
+        # as they said it (fix round 1)
+        "An instruction or answer in one is a criterion the work received, "
+        "and each point a finding labelled as theirs, at the tier they give "
+        "it whatever the scale says; with none given, a Directive or chosen "
+        "reading the change does not meet is `blocking`, and any other "
+        "point takes the scale's tier.",
+        # no silent decline, and a panel cannot approve past a person
+        "**Theirs to close.** A point is open until the change meets it or "
+        "the author answers it on the MR in the *Challenge in the open* "
+        "form, the only way the author declines or departs from one.",
+        "Against a `blocking` point that answer is a question for that "
+        "person: it closes only when the change meets it or they withdraw "
+        "or waive it in their own words, never by approval, refutation or "
+        "the author's reasons.",
+        # a confirmation asked of someone else is theirs to give, not the
+        # author's to answer (fix round 1)
+        "One asking anyone but the author (a confirmation, a reopened "
+        "answer) closes only when they answer.",
+    )
+
+    def test_the_loop_reads_and_answers_people_on_the_mr(self):
+        for name in ("review-mr", "address-review"):
+            with self.subTest(core=name):
+                self.assertAllIn(self.NOTES, name)
+                text = self.core(name)
+                self.assertEqual(
+                    text.count("## People on the merge request"), 1)
+                # read at their tags: the tags travel with the rule
+                self.assertEqual(text.count("*Directive* ("), 1)
+                self.assertEqual(text.count("**Challenge in the open.**"), 1)
+
+    def test_review_mr_carries_people_into_its_pass_and_decision(self):
+        self.assertAllIn((
+            # a review usually lands after the loop has used its cycles, so
+            # a person's new point starts a new round (fix round 1); the
+            # round restarts the bound only, and the cycle number runs on so
+            # the open findings stay named (fix round 2)
+            # the guard run quotes what it hands over, so the pass after
+            # the fix does not start a second round for the same note
+            # (final round)
+            "A person's point no run of this workflow has quoted starts a "
+            "new round of cycles: the record notes the cycle it follows. "
+            "`review.cycle` is not reset, so open findings stay named.",
+            # a point on an unchanged head is not ignored: it goes to the fix
+            # half, whatever the last pass decided; a note with no point
+            # (an approval, "LGTM") sends nothing (fix round 1)
+            "there is nothing new to review: this run produces a `progress` "
+            "outcome saying so and stops, handing any such point, quoted "
+            "with its id, to address-review, whatever that pass decided "
+            "(*People on the merge request*).",
+            # read by id, not by time, and again before deciding: the trial's
+            # human review landed while the pass ran (fix round 1)
+            "Every pass quotes, with its id, each person's note no earlier "
+            "pass quoted, listing them again before it decides, and names "
+            "each person's point still open, which closes only as *People "
+            "on the merge request* sets out.",
+            # a one-way door posted after the MR opened waits for a person
+            "a one-way question among them stays open, keeping the MR from "
+            "review-clean, until a person answers it on the MR.",
+            # the decision names everything step 4 says keeps the MR from
+            # review-clean, so step 8 read alone cannot call it clean while
+            # a one-way question waits on a person (final round)
+            "the MR is review-clean, unless a one-way question step 4 "
+            "carries is still open, which leaves it waiting on that person; "
+            "the loop ends, once address-review has answered any person's "
+            "point still open.",
+            # the Goal points at the two places that end the loop instead of
+            # restating an older, shorter condition (final round)
+            "A dirty pass hands off to the address-review workflow, forming "
+            "the loop review-mr ⇄ address-review; step 8 and "
+            "address-review's handoff say when it ends.",
+            # whether the loop runs again is said once, in address-review's
+            # handoff: a fix pass that committed nothing ends it
+            "never as its members; its handoff starts the next cycle.",
+        ), "review-mr")
+        self.assertNotIn("then re-enter this workflow for the next cycle",
+                         self.core("review-mr"))
+        self.assertNotIn("`review.cycle` to 0", self.core("review-mr"))
+        for gone in ("A clean pass ends the loop",
+                     "runs until every panelist approves",
+                     "A person's point no pass has quoted"):
+            self.assertNotIn(gone, self.core("review-mr"))
+
+    def test_address_review_takes_people_points_as_its_work(self):
+        self.assertAllIn((
+            "Read every person's point open on the MR too. If neither demands "
+            "changes or an answer, there is nothing to address",
+            # answering without a commit leaves nothing to re-review
+            "The loop continues until the MR is review-clean or the bound "
+            "escalates; a pass that committed nothing ends it.",
+            # a round is review-mr's to start; the bound check says where it
+            # finds one (final round)
+            "Check the cycle bound for the round review-mr's record notes, "
+            "then run the review-mr workflow against the new HEAD.",
+            # a human review has no synthesis, and that case stays stated
+            "**When `review.verdicts` carries no synthesis** (an older "
+            "record, a review a human wrote by hand)",
+        ), "address-review")
+        text = self.core("address-review")
+        self.assertNotIn("If no verdict demands changes, there is nothing "
+                         "to address", text)
+
+    def test_everything_glados_posts_is_marked(self):
+        """The reader rule is only as good as the writer rule: every core
+        can post on an MR, mid-run too (address-review's replies), so the
+        epilogue marks it, whatever a sink's config says, at the start, where
+        a quote of it cannot pass for it."""
+        for path in sorted(self.dir.glob("*.md")):
+            if path.stem not in glados.CORES:
+                continue
+            with self.subTest(core=path.stem):
+                text = self.core(path.stem)
+                self.assertIn(
+                    "Everything a run posts on a merge request, in any step, "
+                    "starts with `(GLaDOS <workflow>)`, whatever a sink's "
+                    "config says.", text)
+                # the verdict comment's "lead with the verdict, no preamble"
+                # makes room for the marker (final round)
+                if "## Publishing a verdict" in text:
+                    self.assertIn("Lead with the verdict, after `(GLaDOS "
+                                  "<workflow>)`. No preamble", text)
+
+    def test_commit_messages_meet_the_projects_checks_when_made(self):
+        """The third trial run's messages broke the project's 80-column
+        rule, enforced by a commit-msg hook its clones never installed, so
+        CI went red after the push, when fixing a message costs a rewrite.
+        Fresh clones are how agents usually run, and a clone carries no
+        hooks."""
+        for name in ("run-pipeline", "build-feature", "fix-bug",
+                     "address-review"):
+            with self.subTest(core=name):
+                self.assertAllIn((
+                    "a fresh evaluator's run of them on the same diff counts. "
+                    "Install any commit-msg hook the project declares before "
+                    "the first commit.",), name)
 
 
 class TestSinkConfig(unittest.TestCase):
@@ -1385,6 +4053,33 @@ class TestSinkConfig(unittest.TestCase):
         self.assertEqual(len(mr), 1, rows)
         self.assertIn("lines)", mr[0], "multi-line body must be summarized")
         self.assertNotIn("No praise", mr[0], "body must not be inlined")
+
+    def test_example_and_guide_sink_blocks_validate(self):
+        """The commented sinks: block in glados.yaml.example, uncommented,
+        and each yaml block in docs/guides/sinks.md over a minimal manifest
+        pass validate as written. Both declared a slack sink with no
+        team-visible:, so a copy of either failed validate, install and
+        check."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# sinks:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        self.assertIn("  slack:", block)
+        t = make_target(read(EXAMPLE) + "\n" + "\n".join(block) + "\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        guide = read(REPO / "docs" / "guides" / "sinks.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreaterEqual(len(blocks), 3)
+        for i, text in enumerate(blocks):
+            with self.subTest(block=i):
+                t = make_target("glados: 2\nplatform: gitlab\n"
+                                "phase: evolving\n" + text)
+                rc, out = run_cli("validate", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, out)
 
     def test_compiled_core_escalates_on_a_failed_sink(self):
         # The compiled core is the artifact the agent actually reads; a bound
@@ -1515,6 +4210,2282 @@ class TestDeliveryAndPanelContract(unittest.TestCase):
                         "the call site must precede the definition")
 
 
+class TestKernelRunRules(unittest.TestCase):
+    """Run-lifecycle rules that exist only as compiled text: the nested-run
+    marker stack (F2), pending MR delivery (F3), preset defaults (F4), the
+    plugin path mapping (F4/F5), the standards-gate bound (F6d) and the
+    evaluator's persona slot (F6e). Asserted on compiled output, with
+    whitespace flattened so a re-wrap of the source does not break a test."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.direct = make_target(read(EXAMPLE))
+        rc, out = install("direct", cls.direct)
+        assert rc == 0, out
+        cls.plugin = make_plugin_target()
+        rc, out = install("claude-plugin", cls.plugin)
+        assert rc == 0, out
+
+    @staticmethod
+    def flat(text):
+        return " ".join(text.split())
+
+    def _cores(self):
+        cores = sorted((self.direct / "product-knowledge" / "glados").glob("*.md"))
+        cores = [c for c in cores if c.stem in glados.CORES]
+        self.assertEqual(len(cores), len(glados.CORES))
+        return cores
+
+    def _core(self, name):
+        return self.flat(read(
+            self.direct / "product-knowledge" / "glados" / f"{name}.md"))
+
+    def test_aistudio_contract_matches_the_paste_kit(self):
+        """The bundle's runtime contract said glados.yaml's values were
+        inlined at compile time, while the paste kit's README says the live
+        keys are not baked in and must be pasted. Both now say paste it,
+        with the preset table the defaults come from."""
+        t = make_target(read(EXAMPLE))
+        rc, out = install("aistudio", t)
+        self.assertEqual(rc, 0, out)
+        kit = t / "glados" / "adapters" / "aistudio"
+        bundle = self.flat(read(kit / "bundles" / "review-mr.aistudio.md"))
+        self.assertNotIn("inlined at compile time", bundle)
+        self.assertIn("You cannot read `glados.yaml` here. Only its "
+                      "optimize-for sentence was compiled in", bundle)
+        self.assertIn("ask for it rather than guess", bundle)
+        self.assertIn("`.glados/presets.yaml`: ask for that file too", bundle)
+        readme = self.flat(read(kit / "README.md"))
+        self.assertIn("together with `.glados/presets.yaml`", readme)
+        self.assertIn("the current `glados.yaml` and `.glados/presets.yaml`",
+                      readme)
+
+    def test_review_mr_takes_over_findings_posted_after_the_mr(self):
+        """A pipeline step after open-mr posts its verdict and hands its
+        blocking findings to review-mr; cycle 1 carries them, and one still
+        open reaches address-review like a synthesis finding."""
+        text = self._core("review-mr")
+        self.assertIn("**Findings handed over with the MR.**", text)
+        self.assertIn("cycle 1 carries them in the brief, each named and open "
+                      "until this pass refutes or closes it", text)
+        self.assertIn("joins the consolidated list in step 7 at its severity, "
+                      "as a synthesis finding does", text)
+
+    def test_every_core_pushes_and_pops_the_marker_stack(self):
+        for core in self._cores():
+            with self.subTest(core=core.stem):
+                text = self.flat(read(core))
+                self.assertIn("`.glados/runs/stack` lists every run in flight, "
+                              "one filename per line, outermost first, and its "
+                              "last line always equals `current`", text)
+                # nesting is decided by who started the run, never by
+                # whether a leftover record looks unfinished
+                self.assertIn("**Nested run.** This run is nested only when a "
+                              "workflow you are running in this session "
+                              "started it as one of its own steps", text)
+                self.assertIn("under `## Nested runs`", text)
+                self.assertIn("**Fresh run.**", text)
+                self.assertIn("Any other `current` or `stack` is stale, "
+                              "whatever its record says", text)
+                self.assertIn("note the stale filename(s) in this record",
+                              text)
+                self.assertIn("A run that resumes earlier work (run-epic "
+                              "picking up its ticket table) is fresh too", text)
+                self.assertNotIn("its epilogue has not finalized it", text)
+                self.assertIn("pop this run off the marker stack: remove this "
+                              "run's line from `.glados/runs/stack`; if lines "
+                              "remain, write the last remaining line into "
+                              "`.glados/runs/current`", text)
+                self.assertIn("otherwise delete both `current` and `stack`", text)
+                self.assertNotIn("unconditionally", text.split(
+                    "## Before ending this run")[1])
+
+    def test_nested_runs_work_under_the_outer_claim_and_row(self):
+        text = self._core("plan-feature")
+        self.assertIn("A nested run (step 1) adds no claim of its own", text)
+        self.assertIn("works under that claim, which the outermost run clears",
+                      text)
+        self.assertIn("a run that is not nested (preamble step 1) appends the "
+                      "single work-unit row for the whole unit of work", text)
+        self.assertIn("A nested run does neither", text)
+        self.assertIn("a nested plan's row would mark the whole feature done "
+                      "early", text)
+
+    def test_run_epic_tickets_are_their_own_unit_of_work(self):
+        text = self._core("build-feature")
+        self.assertIn("a ticket's build inside run-epic is a unit of work of "
+                      "its own (its own branch and MR), so it records and "
+                      "clears its own claim", text)
+        self.assertIn("it appends the ticket's row and clears the ticket's "
+                      "claim; the runs nested inside it do neither", text)
+
+    def test_pending_mr_delivery_is_not_an_escalation(self):
+        text = self._core("verify-feature")
+        self.assertIn("**No MR yet is not a failed delivery.**", text)
+        self.assertIn("record it in the run record under `## Pending MR "
+                      "delivery`. This does not escalate.", text)
+        self.assertIn("posts every pending MR item from its own record, from "
+                      "the records of the runs nested inside it, and from a "
+                      "parked run it resumed", text)
+        self.assertIn('"no MR for this work; mr-comment delivery not applicable"',
+                      text)
+        # a parked unit of work has not ended: its items wait for the resume
+        self.assertIn("A run that ends with its unit still waiting on a "
+                      "person (step 3) has not ended it: its items stay "
+                      "pending for the run that resumes the work and opens "
+                      "the MR", text)
+        # the existing guarantees survive
+        self.assertIn("a verdict that never reached the MR leaves the change "
+                      "looking unreviewed", text)
+        self.assertIn("One escalation per run", text)
+        self.assertIn("Once the MR exists, a post that fails is a failed "
+                      "delivery", text)
+
+    def test_pending_mr_items_post_before_review_and_get_committed(self):
+        text = self._core("build-feature")
+        self.assertIn("as soon as the MR is open, before handing the MR to "
+                      "review (build-feature right after it opens the MR in "
+                      "its step 5, before its self-review", text)
+        # the end case is about the item's own work, not the whole unit
+        self.assertIn("no MR exists for the work an item is about (run-epic's "
+                      "backlog selection, a standalone plan)", text)
+        self.assertIn("even if nested runs opened MRs for their own work", text)
+        self.assertIn("Save again for any record update made in this step, "
+                      "before step 6", text)
+        self.assertNotIn("one more `chore(glados): record <workflow> run` "
+                         "commit", text)
+        self.assertNotIn("Commit these record updates like any other", text)
+
+    def test_absent_keys_default_from_the_preset_table(self):
+        for core in self._cores():
+            with self.subTest(core=core.stem):
+                text = self.flat(read(core))
+                self.assertIn("## Reading glados.yaml", text)
+                self.assertIn("take its default from the preset table, "
+                              "`.glados/presets.yaml`", text)
+                self.assertIn("the table's `baseline`, then the preset named "
+                              "by the manifest's `phase:`, then the keys the "
+                              "manifest sets explicitly", text)
+                self.assertNotIn("**Plugin paths.**", text,
+                                 "the plugin mapping is plugin-only")
+
+    def test_plugin_maps_presets_and_personas_to_its_own_copies(self):
+        guard = glados.PLUGIN_BOOTSTRAP_GUARD
+        flat_guard = self.flat(guard)
+        self.assertIn("when `.glados/presets.yaml` is missing, the preset "
+                      "table is `src/kernel/presets/phases.yaml` there",
+                      flat_guard)
+        self.assertIn("when `.glados/personas/` is missing, the library "
+                      "personas are `src/personas/` there", flat_guard)
+        self.assertIn("two levels above this file", flat_guard)
+        # the mapping names exactly two read-only files; run state is never
+        # looked for in the plugin
+        self.assertIn("Run records and the `.glados/runs/` markers always "
+                      "live in this repo: create them here", flat_guard)
+        self.assertNotIn("When a file the text names under `.glados/` is "
+                         "missing", flat_guard)
+        for core in sorted((self.plugin / "compiled" / "claude-plugin").glob("*.md")):
+            with self.subTest(core=core.stem):
+                text = read(core)
+                self.assertTrue(text.startswith(guard), core.name)
+                self.assertIn("## Reading glados.yaml", text)
+        # the mapped files really are where the guard says, relative to the
+        # plugin root (the repo root holds compiled/claude-plugin/)
+        self.assertTrue((REPO / "src" / "kernel" / "presets" / "phases.yaml").is_file())
+        self.assertTrue(any((REPO / "src" / "personas").glob("*.md")))
+
+    def test_standards_gate_reruns_are_bounded(self):
+        source = glados.Source(REPO)
+        self.assertEqual(
+            source.presets["baseline"]["params"]["standards-gate"]["max-cycles"], 3)
+        self.assertIn("escalation", source.modules["standards-gate"]["emits"])
+        text = self._core("implement-feature")
+        # the bound's stop is Loop bounds' own rule, said once there
+        self.assertIn("Each re-run of the gate on a corrected artifact is one "
+                      "gate cycle, bounded by "
+                      "`params.standards-gate.max-cycles` as *Loop bounds* "
+                      "sets out", text)
+        self.assertIn("On hitting a bound: stop, emit an `escalation` outcome "
+                      "carrying the open findings and the cycle history, and "
+                      "end the run", text)
+        self.assertIn("A run enclosing this one (preamble step 1) stops too, "
+                      "rather than advancing on an artifact the gate did not "
+                      "pass", text)
+        self.assertIn("| standards-gate re-runs per gated artifact | "
+                      "`params.standards-gate.max-cycles` |", text)
+        self.assertIn("## Loop bounds", text)
+        # where another module already inlined Loop bounds, the gate's copy is
+        # a pointer and the bound row is still in the document
+        fix = self._core("fix-bug")
+        self.assertIn("`params.standards-gate.max-cycles`", fix)
+        self.assertEqual(fix.count("## Loop bounds"), 1, "one copy per document")
+
+    def test_evaluator_brief_has_a_persona_slot(self):
+        text = self._core("verify-feature")
+        self.assertIn("| Personas to consult |", text)
+        self.assertIn("`run.active-personas` (recorded by plan-feature); when "
+                      "that key is absent, the default roster in "
+                      "`params.review-panel.personas`", text)
+        self.assertIn("`product-knowledge/personas/`, then the library personas "
+                      "in `.glados/personas/`", text)
+        self.assertIn("critique the change from that persona's mandate", text)
+
+
+class TestPipelines(unittest.TestCase):
+    """Project workflows (Part P): `steps:` + `pipelines:` in glados.yaml,
+    run by the run-pipeline core. The rule set (V1-V10, W1-W2) is asserted
+    in-process through check_pipelines; install, check, validate, doctor and
+    the per-pipeline shims through the real CLI."""
+
+    MINIMAL = ("glados: 2\nplatform: gitlab\nphase: {phase}\n"
+               "branching:\n  feature: \"feat/<slug>\"\n"
+               "  default-target: main\n")
+
+    STEPS = (
+        "steps:\n"
+        "  architecture-review:\n"
+        "    description: Audit structure against our layering rules\n"
+        "    kind: gate\n"
+        "    stage: speccing\n"
+        "    audits: [shape, target-structure, spec-feature]\n"
+        "  target-structure:\n"
+        "    description: Describe the structure the refactor ends in\n"
+        "    kind: produce\n"
+        "    produces: spec\n"
+        "    stage: speccing\n")
+
+    PIPELINES = (
+        "pipelines:\n"
+        "  backend-feature:\n"
+        "    description: A change to an endpoint or a schema\n"
+        "    when: The change adds or alters an endpoint or a schema.\n"
+        "    sequence:\n"
+        "      - plan-feature\n"
+        "      - shape\n"
+        "      - architecture-review\n"
+        "      - spec-feature\n"
+        "      - implement-feature\n"
+        "      - verify-feature\n"
+        "      - open-mr\n"
+        "      - self-review\n"
+        "    step-options:\n"
+        "      architecture-review:\n"
+        "        review: fresh-agent\n"
+        "  refactor:\n"
+        "    description: Behavior-preserving restructuring\n"
+        "    when: The goal is structural and no behavior may change.\n"
+        "    sequence: [target-structure, architecture-review, "
+        "implement-feature, verify-feature, open-mr]\n")
+
+    BUILD_FEATURE_SHA = ("9785018be6559a32f6880ded7252240c6c7a177f0fa7b052"
+                         "b7bc82bf053afcc9")
+    FIX_BUG_SHA = ("669ebcf2caa27b0a2b99198f741ed9e2d9dd7722a13424b90f787ef"
+                   "7996bc953")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = glados.Source(REPO)
+
+    # -- helpers -------------------------------------------------------------
+
+    def check(self, extra, phase="evolving", target=None):
+        """check_pipelines over MINIMAL + ``extra``, in-process."""
+        text = self.MINIMAL.format(phase=phase) + extra
+        raw = glados.parse_yaml(text, "glados.yaml")
+        r = glados.resolve_manifest(raw, self.source.presets, "glados.yaml")
+        enabled = [c for c in glados.CORES
+                   if c not in set(r.values.get("disabled-workflows") or [])]
+        return glados.check_pipelines(self.source, r, enabled, target)
+
+    def assertError(self, pc, *needles):
+        joined = "\n".join(pc.errors)
+        for needle in needles:
+            self.assertIn(needle, joined, f"missing {needle!r} in:\n{joined}")
+
+    def pipeline(self, sequence, options="", name="p"):
+        return (f"pipelines:\n  {name}:\n    description: d\n    when: w\n"
+                f"    sequence: [{', '.join(sequence)}]\n" + options)
+
+    def project(self, extra=None, phase="evolving", bodies=None):
+        """A target with MINIMAL + steps + pipelines and a body per step."""
+        extra = self.STEPS + self.PIPELINES if extra is None else extra
+        t = make_target(self.MINIMAL.format(phase=phase) + extra)
+        for sid in (["architecture-review", "target-structure"]
+                    if bodies is None else bodies):
+            write(t / "product-knowledge" / "steps" / f"{sid}.md",
+                  f"## What to check\n- {sid}\n")
+        return t
+
+    # -- the declarations that ship ------------------------------------------
+
+    def test_valid_declarations_pass_and_rows_get_defaults(self):
+        pc = self.check(self.STEPS + self.PIPELINES)
+        self.assertEqual(pc.errors, [])
+        self.assertEqual(pc.warnings, [])
+        rows = {r["id"]: r for r in pc.pipelines["backend-feature"]["rows"]}
+        self.assertEqual(rows["shape"]["review"], "in-context")
+        self.assertEqual(rows["plan-feature"]["review"], "none")
+        self.assertEqual(rows["architecture-review"]["review"], "fresh-agent")
+        self.assertEqual(rows["architecture-review"]["modifier"], "required")
+        self.assertEqual(rows["architecture-review"]["checkpoint"], "none")
+        # V4: a gate audits the LATEST earlier step its audits: names
+        self.assertEqual(rows["architecture-review"]["audits"], "shape")
+        refactor = {r["id"]: r for r in pc.pipelines["refactor"]["rows"]}
+        self.assertEqual(refactor["architecture-review"]["audits"],
+                         "target-structure")
+        # a produces: spec step satisfies implement-feature (no V3 error)
+        self.assertEqual(refactor["target-structure"]["produces"], "spec")
+
+    def test_example_blocks_validate(self):
+        """The commented steps:/pipelines: blocks in glados.yaml.example,
+        uncommented, are a valid declaration (and stay commented: presets
+        cannot set what the example does not declare live)."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# steps:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        self.assertIn("pipelines:", block)
+        raw = glados.load_manifest(EXAMPLE)
+        self.assertNotIn("pipelines", raw)
+        self.assertNotIn("steps", raw)
+        self.assertIn("# pipeline-discretion:", read(EXAMPLE))
+        pc = self.check("\n".join(block) + "\n")
+        self.assertEqual(pc.errors, [])
+        t = self.project("\n".join(block) + "\n",
+                         bodies=["architecture-review"])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados validate: OK", out)
+
+    def test_guide_examples_validate(self):
+        """The four example pipelines in docs/guides/pipelines.md are valid
+        as written, and every YAML block in the guide parses."""
+        guide = read(REPO / "docs" / "guides" / "pipelines.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreater(len(blocks), 2)
+        for block in blocks:
+            glados.parse_yaml(block, "pipelines.md")
+        # the first two snippets, copied together, are a first valid try
+        self.assertIn("steps:", blocks[0])
+        self.assertIn("pipelines:", blocks[1])
+        first = blocks[0] + blocks[1]
+        ids = list(glados.parse_yaml(first, "pipelines.md")["steps"])
+        t = self.project(first, bodies=ids)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 pipeline(s), 1 project step(s), 0 warning(s)", out)
+        full = next(b for b in blocks
+                    if "pipelines:" in b and "steps:" in b and "rfc:" in b)
+        ids = list(glados.parse_yaml(full, "pipelines.md")["steps"])
+        t = self.project(full, bodies=ids)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("4 pipeline(s), 6 project step(s), 0 warning(s)", out)
+
+    # -- V1-V10 --------------------------------------------------------------
+
+    def test_v1_names_are_kebab_case_and_unique(self):
+        self.assertError(self.check(
+            "steps:\n  Bad_Id:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"), "'Bad_Id' is not kebab-case")
+        cases = [("review-mr", "is a GLaDOS workflow"),
+                 ("mission", "is a v1 alias"),
+                 ("shape", "is a built-in step"),
+                 ("init", "is the Claude Code plugin's init skill"),
+                 ("run-pipeline", "is the workflow that runs pipelines")]
+        for name, why in cases:
+            with self.subTest(name=name):
+                pc = self.check(self.pipeline(["plan-feature"], name=name))
+                self.assertError(pc, f"pipelines.{name}: '{name}' {why}")
+        pc = self.check(
+            "steps:\n  twin:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n" + self.pipeline(["twin"], name="twin"))
+        self.assertError(pc, "share one namespace")
+
+    def test_vocabulary_constants_agree(self):
+        """The built-in contracts use only the closed artifact kinds, and
+        V1 refuses every reserved name with the reason the table gives."""
+        kinds = set(glados.ARTIFACT_KINDS)
+        for sid, b in glados.BUILTIN_STEPS.items():
+            with self.subTest(step=sid):
+                self.assertLessEqual(set(b["needs"]), kinds)
+                if b["produces"] is not None:
+                    self.assertIn(b["produces"], kinds)
+        self.assertLessEqual(set(glados.STEP_PRODUCES), kinds)
+        for name, why in glados.RESERVED_STEP_NAMES.items():
+            with self.subTest(name=name):
+                pc = self.check(self.pipeline(["plan-feature"], name=name))
+                self.assertError(pc, f"pipelines.{name}: '{name}' is {why}")
+
+    def test_v1_collision_fails_the_install(self):
+        t = make_target(read(EXAMPLE) + "\n" + self.pipeline(
+            ["plan-feature"], name="fix-bug"))
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("pipelines.fix-bug: 'fix-bug' is a GLaDOS workflow", out)
+        self.assertNotIn("Traceback", out)
+        self.assertFalse((t / ".claude").exists(), "nothing may be emitted")
+
+    def test_v2_sequences(self):
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence: []\n"), "pipelines.p.sequence: required and not empty")
+        self.assertError(self.check(self.pipeline(["plan-feture"])),
+                         "'plan-feture' is neither a built-in step")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "plan-feature"])), "'plan-feature' appears twice")
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence: plan-feature\n"),
+            "pipelines.p.sequence: must be a list of step ids")
+        self.assertError(self.check(
+            "pipelines:\n  p:\n    description: d\n    when: w\n"
+            "    sequence:\n      - plan-feature: x\n"),
+            "item 1 is a mapping ('plan-feature: x')")
+        # a typo'd id does not cascade into "nothing produces a spec"
+        pc = self.check(self.pipeline(["spec-featur", "implement-feature"]))
+        self.assertNotIn("needs a spec", "\n".join(pc.errors))
+
+    def test_v3_needs_come_from_an_earlier_step(self):
+        self.assertError(self.check(self.pipeline(
+            ["implement-feature", "open-mr"])),
+            "'implement-feature' needs a spec, but no step before it in the "
+            "sequence produces one")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "self-review"])), "'self-review' needs an MR")
+        optional_spec = ("    step-options:\n      spec-feature:\n"
+                         "        modifier: optional\n        when: w\n")
+        seq = ["plan-feature", "spec-feature", "implement-feature"]
+        self.assertError(self.check(self.pipeline(seq, optional_spec)),
+                         "'implement-feature' needs a spec, but its only "
+                         "earlier producer 'spec-feature' is optional")
+        # an advisory step always runs, so the same holds for it
+        advisory = optional_spec + ("      implement-feature:\n"
+                                    "        modifier: advisory\n")
+        self.assertError(self.check(self.pipeline(seq, advisory)),
+                         "its only earlier producer 'spec-feature' is optional")
+        # an optional consumer of an optional producer is fine
+        both = optional_spec + ("      implement-feature:\n"
+                                "        modifier: optional\n        when: w\n")
+        self.assertEqual(self.check(self.pipeline(seq, both)).errors, [])
+
+    def test_v4_a_gate_audits_an_earlier_step(self):
+        pc = self.check(self.STEPS + self.pipeline(
+            ["architecture-review", "plan-feature", "shape"]))
+        self.assertError(pc, "gate 'architecture-review' audits [shape, "
+                             "target-structure, spec-feature], but none of "
+                             "them runs before it")
+        opt = ("    step-options:\n      shape:\n        modifier: optional\n"
+               "        when: w\n")
+        pc = self.check(self.STEPS + self.pipeline(
+            ["plan-feature", "shape", "architecture-review"], opt))
+        self.assertError(pc, "can audit only optional steps before it")
+        self.assertError(self.check(
+            "steps:\n  g:\n    description: d\n    kind: gate\n"
+            "    stage: speccing\n" + self.pipeline(["g"])),
+            "steps.g.audits: a gate must name the steps it may audit")
+
+    def test_prose_keys_of_the_wrong_type_are_named(self):
+        """`when: true` or `description: 5` was reported as missing
+        ("required"), which sent the user looking for a key they wrote."""
+        pc = self.check(
+            "steps:\n  s:\n    description: [a, b]\n    kind: produce\n"
+            "    stage: planning\n"
+            "pipelines:\n  a:\n    description: 5\n    when: true\n"
+            "    sequence: [s]\n    step-options:\n      s:\n"
+            "        modifier: optional\n        when: false\n")
+        self.assertError(
+            pc,
+            "steps.s.description: must be one line of prose — got [a, b], "
+            "which YAML reads as a list; quote it if you meant text",
+            "pipelines.a.description: must be one line of prose — got 5",
+            "pipelines.a.when: must be one line of prose — got true, which "
+            "YAML reads as a number or a boolean",
+            "pipelines.a.step-options.s.when: must be one line of prose — got "
+            "false")
+        joined = "\n".join(pc.errors)
+        self.assertNotIn("description: required", joined)
+        self.assertNotIn("when: required", joined)
+        # absent is still "required"
+        self.assertError(self.check(
+            "pipelines:\n  a:\n    sequence: [plan-feature]\n"),
+            "pipelines.a.description: required", "pipelines.a.when: required")
+
+    def test_v5_closed_keys_and_values(self):
+        cases = [
+            ("steps:\n  s:\n    description: d\n    kidn: produce\n"
+             "    stage: planning\n", ["steps.s.kidn: unknown key",
+                                      "steps.s.kind: required"]),
+            ("steps:\n  s:\n    kind: produce\n    stage: later\n",
+             ["steps.s.description: required", "'later' is not a stage"]),
+            ("steps:\n  s:\n    description: d\n    kind: gate\n"
+             "    stage: speccing\n    audits: [shape]\n    produces: spec\n",
+             ["only a produce step declares what it produces"]),
+            ("steps:\n  s:\n    description: d\n    kind: produce\n"
+             "    stage: speccing\n    audits: [shape]\n",
+             ["only a gate audits"]),
+            ("steps:\n  s:\n    description: d\n    kind: produce\n"
+             "    stage: speccing\n    produces: mr\n",
+             ["'mr' is not an artifact a step can declare"]),
+            (self.pipeline(["plan-feature"]).replace("    when: w\n",
+                                                     "    whne: w\n"),
+             ["pipelines.p.whne: unknown key", "pipelines.p.when: required"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifer: optional\n"),
+             ["step-options.plan-feature.modifer: unknown key"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      shape:\n        review: none\n"),
+             ["'shape' is not in this pipeline's sequence"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        when: w\n"),
+             ["only an optional step takes when:"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifier: optional\n"),
+             ["modifier: optional needs a when:"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        modifier: maybe\n"
+                           "        checkpoint: always\n"),
+             ["modifier: 'maybe'", "checkpoint: 'always'"]),
+            (self.pipeline(["plan-feature"], "    step-options:\n"
+                           "      plan-feature:\n        review: bogus\n"),
+             ["step-options.plan-feature.review: 'bogus' — one of none | "
+              "in-context | fresh-agent"]),
+        ]
+        for extra, needles in cases:
+            with self.subTest(needles=needles[0]):
+                self.assertError(self.check(extra), *needles)
+
+    def test_v6_review_only_where_the_step_takes_it(self):
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "spec-feature", "implement-feature"],
+            "    step-options:\n      implement-feature:\n"
+            "        review: none\n")),
+            "implement-feature takes no review: setting")
+        mr = ["plan-feature", "spec-feature", "implement-feature", "open-mr",
+              "self-review"]
+        for sid in ("open-mr", "self-review"):
+            with self.subTest(step=sid):
+                self.assertError(self.check(self.pipeline(
+                    mr, f"    step-options:\n      {sid}:\n"
+                        f"        review: in-context\n")),
+                    f"{sid} takes no review: setting")
+        self.assertError(self.check(self.pipeline(
+            ["plan-feature", "spec-feature"],
+            "    step-options:\n      spec-feature:\n"
+            "        review: in-context\n")),
+            "spec-feature takes only none | fresh-agent")
+        self.assertEqual(self.check(self.pipeline(
+            ["plan-feature", "spec-feature"],
+            "    step-options:\n      spec-feature:\n"
+            "        review: fresh-agent\n      plan-feature:\n"
+            "        review: in-context\n")).errors, [])
+
+    def test_v7_step_bodies_exist_without_frontmatter(self):
+        t = tmpdir("glados-steps-")
+        extra = self.STEPS + self.PIPELINES
+        # no target: no body check
+        self.assertEqual(self.check(extra).errors, [])
+        self.assertError(self.check(extra, target=t),
+                         "steps.architecture-review: no body at "
+                         "product-knowledge/steps/architecture-review.md")
+        write(t / "product-knowledge" / "steps" / "architecture-review.md",
+              "---\nkind: gate\n---\n\n## What to check\n")
+        write(t / "product-knowledge" / "steps" / "target-structure.md",
+              "## What to produce\n")
+        pc = self.check(extra, target=t)
+        self.assertError(pc, "architecture-review.md starts with YAML "
+                             "frontmatter")
+        self.assertNotIn("target-structure", "\n".join(pc.errors))
+        # a case mismatch fails on every platform, not only on Linux CI
+        c = tmpdir("glados-steps-case-")
+        write(c / "product-knowledge" / "steps" / "Architecture-Review.md",
+              "## What to check\n")
+        write(c / "product-knowledge" / "steps" / "target-structure.md",
+              "## What to produce\n")
+        self.assertError(self.check(extra, target=c),
+                         "steps.architecture-review: the body is "
+                         "product-knowledge/steps/Architecture-Review.md, but "
+                         "the step needs product-knowledge/steps/"
+                         "architecture-review.md")
+        # install checks bodies too (with the target), and names the file
+        p = self.project(bodies=["target-structure"])
+        rc, out = install("direct", p)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no body at product-knowledge/steps/"
+                      "architecture-review.md", out)
+
+    def test_v8_nested_workflows_must_be_enabled(self):
+        pc = self.check("disabled-workflows: [spec-feature]\n"
+                        + self.pipeline(["plan-feature", "spec-feature"]))
+        self.assertError(pc, "'spec-feature' is a workflow disabled-workflows "
+                             "turns off")
+        pc = self.check(self.pipeline(["plan-feature"]), phase="sunset")
+        self.assertEqual(pc.errors, [])
+        self.assertTrue(any("run-pipeline is disabled" in w
+                            for w in pc.warnings), pc.warnings)
+
+    def test_v9_pipeline_discretion_is_a_decision_class(self):
+        source = self.source
+        self.assertEqual(
+            source.presets["baseline"]["decisions"]["pipeline-discretion"],
+            "record")
+        self.assertEqual(
+            source.presets["baseline"]["params"]["pipeline"]["max-cycles"], 8)
+        for phase, want in (("nascent", "agent"), ("evolving", "agent"),
+                            ("production", "record"), ("sunset", "record")):
+            self.assertEqual(
+                source.presets[phase]["decisions"]["pipeline-discretion"],
+                want, phase)
+        t = make_target(self.MINIMAL.format(phase="production")
+                        + "decisions:\n  pipeline-discretion: sometimes\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("decisions.pipeline-discretion: 'sometimes' is not a "
+                      "decision class", out)
+        # laxer than the phase needs a confession, like any decision
+        t = make_target(self.MINIMAL.format(phase="production")
+                        + "decisions:\n  pipeline-discretion: agent\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("relaxation-acknowledged", out)
+
+    def test_v10_description_fits_250_characters(self):
+        long = "x" * 251
+        pc = self.check(self.pipeline(["plan-feature"]).replace(
+            "description: d", f"description: {long}"))
+        self.assertError(pc, "251 characters — keep it to 250 or fewer")
+        ok = self.check(self.pipeline(["plan-feature"]).replace(
+            "description: d", "description: " + "x" * 250))
+        self.assertEqual(ok.errors, [])
+
+    def test_warnings_w1_w2(self):
+        pc = self.check(
+            "steps:\n  spare:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"
+            + self.pipeline(["plan-feature", "spec-feature",
+                             "implement-feature", "open-mr"], name="quick"))
+        self.assertEqual(pc.errors, [])
+        self.assertIn("pipelines.quick: opens an MR with no verification "
+                      "step; the MR description will say so", pc.warnings)
+        self.assertIn("steps.spare: declared but no pipeline uses it — add "
+                      "it to a sequence or remove it", pc.warnings)
+        # validate prints them and still passes; install prints them too
+        t = self.project(
+            "steps:\n  spare:\n    description: d\n    kind: produce\n"
+            "    stage: planning\n"
+            + self.pipeline(["plan-feature", "spec-feature",
+                             "implement-feature", "open-mr"], name="quick"),
+            bodies=[])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: pipelines.quick: opens an MR", out)
+        self.assertIn("2 warning(s)", out)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: steps.spare: declared", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("- pipelines.quick: opens an MR with no verification "
+                      "step", report)
+
+    def test_warnings_survive_a_failed_install(self):
+        # an unused step is often the other half of a misspelt sequence id
+        extra = ("steps:\n  arch-review:\n    description: d\n"
+                 "    kind: produce\n    stage: planning\n"
+                 + self.pipeline(["arch-reveiw"]))
+        rc, out = install("direct", self.project(extra, bodies=[]))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'arch-reveiw' is neither a built-in step", out)
+        self.assertIn("glados: warning: steps.arch-review: declared but no "
+                      "pipeline uses it", out)
+
+    def test_malformed_blocks_never_crash(self):
+        bad = [
+            "pipelines:\n  - backend-feature\n",
+            "steps: scalar\n",
+            "steps:\n  s: scalar\n",
+            self.pipeline(["plan-feature"], "    step-options:\n"
+                          "      - plan-feature\n"),
+            self.pipeline(["plan-feature"], "    step-options:\n"
+                          "      plan-feature: scalar\n"),
+            "pipelines:\n  p:\n    description: [a, b]\n    when: 3\n"
+            "    sequence: [1, 2]\n",
+        ]
+        for extra in bad:
+            with self.subTest(extra=extra[:40]):
+                pc = self.check(extra)
+                self.assertTrue(pc.errors, extra)
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + bad[0])
+        rc, out = run_cli("check", "--target", t, "--source", REPO,
+                          "--report-only")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("pipelines: must be a mapping", out)
+        self.assertNotIn("Traceback", out)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    # -- presets, phases, hash ------------------------------------------------
+
+    def test_preset_setting_pipelines_rejected(self):
+        for key in ("pipelines", "steps"):
+            with self.subTest(key=key):
+                src = make_doctored_source()
+                presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+                text = read(presets).replace(
+                    "nascent:\n", f"nascent:\n  {key}:\n    x:\n"
+                                  f"      description: d\n", 1)
+                presets.write_text(text, encoding="utf-8", newline="\n")
+                rc, out = install("direct", make_target(), source=src)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(f"preset 'nascent' sets '{key}'", out)
+                self.assertIn("the team's own declaration, not a phase "
+                              "default", out)
+                self.assertNotIn("Traceback", out)
+
+    def test_sunset_disables_run_pipeline(self):
+        t = self.project(phase="sunset")
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        owned = t / ".claude" / "commands" / "glados"
+        self.assertFalse((owned / "run-pipeline.md").exists())
+        shim = read(owned / "backend-feature.md")
+        self.assertIn("run-pipeline, the workflow that runs it, is disabled",
+                      shim)
+        self.assertNotIn("read and follow", shim)
+        self.assertIn("run-pipeline is disabled", out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("**run-pipeline is disabled**", report)
+        # sunset disabled it, not a disabled-workflows: line the manifest
+        # does not have: shim, warning and report name the preset
+        flat = " ".join(shim.split())
+        self.assertIn("is disabled by the sunset phase preset (glados.yaml "
+                      "sets no `disabled-workflows:`", flat)
+        self.assertNotIn("in this project's glados.yaml", flat)
+        self.assertIn("disabled by the sunset phase preset", " ".join(out.split()))
+        self.assertIn("disabled** by the sunset phase preset", report)
+        # an explicit list is named as such
+        t2 = self.project(self.STEPS + self.PIPELINES
+                          + "disabled-workflows: [run-pipeline]\n")
+        rc, out = install("claude", t2)
+        self.assertEqual(rc, 0, out)
+        shim = " ".join(read(t2 / ".claude" / "commands" / "glados" /
+                             "backend-feature.md").split())
+        self.assertIn("is disabled in this project's glados.yaml "
+                      "(`disabled-workflows:`)", shim)
+
+    def test_hash_moves_on_names_and_descriptions_only(self):
+        raw = glados.parse_yaml(self.MINIMAL.format(phase="evolving")
+                                + self.STEPS + self.PIPELINES, "glados.yaml")
+        base = glados.structural_hash(raw)
+        self.assertEqual(
+            glados.structural_projection(raw)["pipelines"],
+            {"backend-feature": "A change to an endpoint or a schema",
+             "refactor": "Behavior-preserving restructuring"})
+
+        def edited(fn):
+            copy = json.loads(json.dumps(raw))
+            fn(copy)
+            return glados.structural_hash(copy)
+
+        self.assertEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"]["sequence"].pop()))
+        self.assertEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"].update(when="other")))
+        self.assertEqual(base, edited(lambda m: m.pop("steps")))
+        self.assertNotEqual(base, edited(
+            lambda m: m["pipelines"]["refactor"].update(description="new")))
+        self.assertNotEqual(base, edited(
+            lambda m: m["pipelines"].update(extra={"description": "d"})))
+        # the same through check: a sequence edit keeps it passing, a
+        # description edit makes the compile stale
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        gy = t / "glados.yaml"
+        write(gy, read(gy).replace("      - self-review\n", ""))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        write(gy, read(gy).replace("Behavior-preserving restructuring",
+                                   "Restructuring that keeps behavior"))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("stale compile", out)
+
+    # -- shims -----------------------------------------------------------------
+
+    def test_shims_per_script_mode_and_cleanup(self):
+        modes = {
+            "claude": (".claude/commands/glados/backend-feature.md",
+                       ".claude/commands/glados/run-pipeline.md",
+                       "/glados:run-pipeline backend-feature <brief>"),
+            "direct": ("product-knowledge/glados/backend-feature.md",
+                       "product-knowledge/glados/run-pipeline.md", None),
+            "gemini": (".gemini/commands/glados/backend-feature.toml",
+                       ".gemini/commands/glados/run-pipeline.toml",
+                       "/glados:run-pipeline backend-feature <brief>"),
+            "antigravity": (".agents/workflows/glados-backend-feature.md",
+                            ".agents/workflows/glados-run-pipeline.md",
+                            "/glados-run-pipeline backend-feature <brief>"),
+            "pi": (".pi/prompts/glados-backend-feature.md",
+                   ".pi/prompts/glados-run-pipeline.md",
+                   "/glados-run-pipeline backend-feature <brief>"),
+        }
+        for mode, (shim, runner, invoke) in modes.items():
+            with self.subTest(mode=mode):
+                t = self.project()
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                self.assertTrue((t / runner).is_file(), runner)
+                text = read(t / shim)
+                if mode == "gemini":
+                    data = tomllib.loads(text)
+                    self.assertEqual(data["description"],
+                                     "A change to an endpoint or a schema")
+                    text = data["prompt"]
+                elif mode != "direct":
+                    fm, _ = glados.split_frontmatter(text, shim)
+                    self.assertEqual(fm["description"],
+                                     "A change to an endpoint or a schema")
+                self.assertIn(f"read and follow `{runner}`", text)
+                self.assertIn("with `backend-feature` as the first word of "
+                              "its arguments", text)
+                if invoke:
+                    self.assertIn(invoke, text)
+                if mode == "pi":
+                    self.assertEqual(text.count("${ARGUMENTS"), 1)
+                    self.assertIn(
+                        "ignore its closing `## Invocation arguments` "
+                        "section, which is an unexpanded placeholder when "
+                        "the file is read", " ".join(text.split()))
+                self.assertTrue((t / shim.replace("backend-feature",
+                                                  "refactor")).is_file())
+                rc, out = run_cli("check", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, out)
+                # removing a pipeline removes its shim at the next install
+                gy = t / "glados.yaml"
+                text = read(gy)
+                write(gy, text[:text.index("  refactor:\n")])
+                self.assertEqual(install(mode, t)[0], 0)
+                self.assertFalse((t / shim.replace("backend-feature",
+                                                   "refactor")).exists(),
+                                 f"{mode}: removed pipeline's shim lingers")
+                self.assertTrue((t / shim).is_file())
+
+    def test_no_shims_in_plugin_or_aistudio(self):
+        t = self.project()
+        rc, out = install("aistudio", t)
+        self.assertEqual(rc, 0, out)
+        names = [p.name for p in all_files(t / "glados")]
+        self.assertFalse(any("backend-feature" in n for n in names), names)
+        p = make_plugin_target()
+        write(p / "glados.yaml.example",
+              read(EXAMPLE) + "\n" + self.STEPS + self.PIPELINES)
+        rc, out = install("claude-plugin", p)
+        self.assertEqual(rc, 0, out)
+        self.assertFalse((p / "skills" / "backend-feature").exists())
+        self.assertFalse(
+            (p / "compiled" / "claude-plugin" / "backend-feature.md").exists())
+        self.assertTrue(
+            (p / "compiled" / "claude-plugin" / "run-pipeline.md").is_file())
+
+    # -- validate --------------------------------------------------------------
+
+    def test_validate_lists_errors_and_writes_nothing(self):
+        t = self.project(self.pipeline(["implement-feature"], name="Bad")
+                         + "steps:\n  s:\n    kind: nope\n", bodies=[])
+        before = {f.relative_to(t).as_posix() for f in all_files(t)}
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("glados validate: FAIL", out)
+        self.assertIn("  - pipelines.Bad: 'Bad' is not kebab-case", out)
+        self.assertIn("  - steps.s.kind: 'nope' is not a step kind", out)
+        self.assertNotIn("Traceback", out)
+        after = {f.relative_to(t).as_posix() for f in all_files(t)}
+        self.assertEqual(before, after, "validate must write nothing")
+        # no manifest at all: a clean failure, not a traceback
+        rc, out = run_cli("validate", "--target", tmpdir(), "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no manifest", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_validate_runs_from_a_plugin_layout_with_no_install(self):
+        """A plugin-only repo has no .glados/: validate runs from the
+        plugin's own bin/glados.py, which finds src/ beside bin/."""
+        plugin = tmpdir("glados-plugin-root-")
+        shutil.copytree(REPO / "bin", plugin / "bin",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(REPO / "src", plugin / "src")
+        shutil.copyfile(EXAMPLE, plugin / "glados.yaml.example")
+        t = self.project()
+        self.assertFalse((t / ".glados").exists())
+        proc = subprocess.run(
+            [sys.executable, str(plugin / "bin" / "glados.py"), "validate",
+             "--target", str(t)], capture_output=True, text=True)
+        out = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("2 pipeline(s), 2 project step(s)", out)
+        self.assertFalse((t / ".glados").exists(), "validate wrote files")
+        # and a vendored .glados/glados.py validates without --source
+        self.assertEqual(install("direct", t)[0], 0)
+        proc = subprocess.run(
+            [sys.executable, str(t / ".glados" / "glados.py"), "validate",
+             "--target", str(t)], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_vendored_toolchain_ignores_a_project_src_kernel(self):
+        """A project with its own src/kernel/ (an OS kernel's sources) made
+        the vendored .glados/glados.py resolve the project root as the
+        GLaDOS source, so validate failed, and run-pipeline runs validate
+        before its first step."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "src" / "kernel" / "sched.c", "int main(void) { return 0; }\n")
+        for cmd in ("validate", "check"):
+            with self.subTest(cmd=cmd):
+                proc = subprocess.run(
+                    [sys.executable, str(t / ".glados" / "glados.py"), cmd,
+                     "--target", str(t)], capture_output=True, text=True)
+                out = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, out)
+                self.assertNotIn("missing kernel source", out)
+
+    # -- report, scaffold, doctor, guard ---------------------------------------
+
+    def test_assembly_report_lists_pipelines(self):
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("## Pipelines", report)
+        self.assertIn("### `backend-feature`", report)
+        self.assertIn("| 3 | architecture-review | project gate | required | "
+                      "fresh-agent | none | `shape` |", report)
+        self.assertIn("| 2 | shape | library step | required | in-context | "
+                      "none |  |", report)
+        self.assertIn("### Project steps", report)
+        self.assertIn("| target-structure | produce | speccing | spec |  | "
+                      "`product-knowledge/steps/target-structure.md` |", report)
+        self.assertIn("| params.pipeline.max-cycles | 8 | (baseline) |", report)
+        # no declarations, no section
+        t2 = make_target()
+        self.assertEqual(install("direct", t2)[0], 0)
+        self.assertNotIn("## Pipelines",
+                         read(t2 / ".glados" / "assembly-report.md"))
+
+    def test_scaffold_and_doctor_cover_the_steps_dir(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertTrue(
+            (t / "product-knowledge" / "steps" / ".gitkeep").exists())
+        write(t / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("product-knowledge/steps/", out,
+                         "no steps in use: nothing to report")
+        p = self.project()
+        # no CODEOWNERS at all: the none-found line names the steps dir too
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("CODEOWNERS: none found — consider one covering "
+                      "glados.yaml and product-knowledge/steps/", out)
+        write(p / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("has no pattern found covering product-knowledge/steps/",
+                      out)
+        write(p / "CODEOWNERS",
+              "/glados.yaml @maintainers\n/product-knowledge/ @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("covers product-knowledge/steps/", out)
+        # patterns that name the directory's files, or float to any depth
+        cover = glados._codeowners_cover
+        gdir = "product-knowledge/steps/"
+        for pattern in ("/product-knowledge/steps/*.md", "**/steps/",
+                        "steps/", "product-knowledge/**"):
+            with self.subTest(pattern=pattern):
+                self.assertTrue(cover(f"{pattern} @a\n", gdir))
+        for pattern in ("*", "/steps/", "docs/steps/", "/glados.yaml",
+                        "/product-knowledge/stepsx/"):
+            with self.subTest(pattern=pattern):
+                self.assertFalse(cover(f"{pattern} @a\n", gdir))
+
+    def test_plugin_guard_names_pipelines_and_the_toolchain(self):
+        flat = " ".join(glados.PLUGIN_BOOTSTRAP_GUARD.split())
+        self.assertIn("any project workflows and steps (`pipelines:`, "
+                      "`steps:`) and any canon (`canon:`) govern this run",
+                      flat)
+        self.assertIn("when `.glados/glados.py` is missing, the toolchain is "
+                      "`bin/glados.py` there", flat)
+        self.assertTrue((REPO / "bin" / "glados.py").is_file())
+
+    # -- compiled text ---------------------------------------------------------
+
+    def test_run_pipeline_compiled_rules(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        for rule in (
+            # selection
+            "Record `pipeline: <name> (selected by: <rule>)`",
+            "never a silent fallback",
+            "A defect report goes to fix-bug",
+            # validate first, from the GLaDOS that compiled this document
+            "Run `glados.py validate --target .` from the GLaDOS that "
+            "compiled this document",
+            "never improvise around it",
+            # the step table, written before anything runs
+            "`# | step | kind | modifier | review | checkpoint | status | "
+            "artifact | result | note`",
+            "Before any step runs, write the step table into the run record",
+            "no markdown checkboxes",
+            # pinned inputs
+            "`git hash-object`", "gating inputs changed mid-run",
+            # modifiers and the bound
+            "| `required` | always |", "| `optional` | when the agent judges",
+            "| `advisory` | always |", "`waived` by a named person",
+            "`params.pipeline.max-cycles`",
+            # checkpoint: save the process files, commit the code and push
+            # before waiting, park when unattended, and the park keeps MR
+            # items pending
+            "`human`: save first (**Commits**), commit any working diff a "
+            "step left uncommitted, and push the branch",
+            "A refusal, with the person's reasons, is a blocking finding",
+            "mark the row `parked`",
+            # a park has not finished its unit: the epilogue's rule, cited
+            "and end the run, which has not finished its unit of work "
+            "(*Before ending this run*, steps 3 and 5)",
+            # resume: the parked pipeline, its table, and its pins
+            "(selected by: resume)",
+            "compares its fresh pins with the parked run's",
+            # a code-changing pipeline is on its branch before its first step
+            "When the caller already put this run on a working branch "
+            "(run-epic does), stay on it",
+            # a modifier never softens a stop
+            "It never softens a stop",
+            # no verdict before an MR exists; after it, findings go to one
+            "Gates and reviews that run before open-mr publish no `verdict` "
+            "outcome",
+            "its blocking findings start no revise loop",
+            "This holds on every way the run ends",
+            # the no-Python checklist names the closed key sets
+            "a step takes only `description`, `kind` and `stage` (all "
+            "required)",
+            # the library steps
+            "Never write stub files to the branch",
+            "No verification step ran in this pipeline.",
+            "as *No MR yet is not a failed delivery* (step 5 of *Before "
+            "ending this run*) sets out",
+            "## Persona pass", "## Fresh-agent design review",
+        ):
+            self.assertIn(rule, text)
+        self.assertIn("A run that ends with its unit of work still waiting "
+                      "on a person has not finished it: run-pipeline "
+                      "parking a step or resuming a park that has no "
+                      "approval or answer yet, and run-epic stopping with "
+                      "only parked tickets left", text,
+                      "the epilogue owns the parked rule")
+        # said once: run-pipeline no longer restates the claim, row and
+        # pending-item consequences of a park
+        self.assertNotIn("the parked-run rule in step 3", text)
+        self.assertNotIn("the claim stays, no work-unit row is appended",
+                         text)
+        self.assertEqual(text.count("## Verdicts and finding severities"), 1)
+        for rule in (
+            # rule 1 is a person's choice only: run-epic hands over its row
+            "| 1 | A person invoked this run, and the first word of their "
+            "arguments names a pipeline",
+            # a park is resumed from its own branch, pinned against the target
+            "fetch that branch and check it out first, whatever branch this "
+            "run started on",
+            "check the approval or answer as **Resume** in step 4 sets "
+            "out before step 2",
+            "emit one `escalation` naming the branch, this run's record, the "
+            "artifact paths and the approval needed",
+            "`git rev-parse <target>:<path>` after a fetch",
+            "With no approval or answer yet, say so in the record and end "
+            "the run there, running no step and copying no table",
+            # an in-session wait is resumable too
+            "If a person invoked the run, mark the row `parked` in that "
+            "save",
+            # post-MR findings: posted at once, then handed to review-mr
+            "delivered to its bound sinks when the step ends, not at the end "
+            "of the run",
+            # a one-way question a post-MR step posts has a reader, so the
+            # MR cannot go review-clean with the door unanswered (fix round 1)
+            "handing it the blocking findings and one-way questions of every "
+            "verdict a step after open-mr posted, each named, as still open",
+            # the hand-off keys on an MR having been opened, not on the
+            # sequence listing open-mr (an optional open-mr can be skipped)
+            "When this run, or the parked run it resumed, opened an MR",
+            "When no MR was opened, the artifacts in the record are the "
+            "deliverable",
+            # one rule for every end with no MR: the work stays on the
+            # branch; the record and artifacts its escalation names are on
+            # the ledger, saved before any outcome is published (v3.2)
+            "A run on its own branch that ends with no MR, a park included, "
+            "leaves its work there for a human: it commits any working diff, "
+            "pushes, and says so in the record.",
+            # a gate with no persona seated is still audited
+            "With no persona seated, this agent does the audit itself "
+            "against the body",
+        ):
+            self.assertIn(rule, text)
+        # one hand-off rule, stated once (step 5), not in each fragment
+        self.assertNotIn("### Hand off", text)
+        self.assertNotIn("for review-mr and address-review to settle", text)
+
+    # -- the configuration a run obeys is pinned (B2) ------------------------
+
+    def effective(self, t, *extra, source=REPO):
+        """The digest `effective-config` prints for target ``t``."""
+        rc, out = run_cli("effective-config", "--target", t, "--source",
+                          source, *extra)
+        self.assertEqual(rc, 0, out)
+        found = re.search(r"glados effective-config: ([0-9a-f]{64})", out)
+        self.assertTrue(found, out)
+        return found.group(1)
+
+    @staticmethod
+    def blob(t, rel):
+        return subprocess.run(["git", "hash-object", str(t / rel)],
+                              capture_output=True, text=True).stdout.strip()
+
+    def test_a_run_pins_the_configuration_in_effect(self):
+        """glados.yaml's blob is not the configuration a run obeys: a bound
+        or a decision class it leaves out comes from the preset table, so
+        the run pins the digest of the layered result too, in one rule."""
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-pipeline.md").split())
+        self.assertIn("record the git blob SHA (`git hash-object`) of "
+                      "`glados.yaml` and of each step body used, and the "
+                      "digest of the configuration in effect that "
+                      "`glados.py effective-config --target .` prints", text)
+        self.assertIn("(without Python, the preset table's blob SHA)", text)
+        self.assertIn("(`git rev-parse <target>:<path>` after a fetch, and "
+                      "`effective-config --ref <target>`)", text)
+        self.assertEqual(text.count("Pin the gating inputs"), 1)
+        self.assertEqual(text.count("effective-config"), 3)
+        # a configuration the command refuses is no pin to run under
+        self.assertIn("Re-check them, in the working tree, before each step "
+                      "and before finishing. A change means an `escalation` "
+                      "(\"gating inputs changed mid-run\") and a stop; so does "
+                      "an `effective-config` that fails or prints no digest, "
+                      "naming what it printed.", text)
+
+    def test_an_inherited_bound_or_decision_right_moves_the_pin(self):
+        """A preset change that alters a run's bounds or decision rights
+        leaves glados.yaml's blob as it was and moves the digest, from the
+        vendored table or, with no .glados/ (the plugin), the toolchain's
+        own. A change that alters nothing (a comment) leaves it alone."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        manifest_blob = self.blob(t, "glados.yaml")
+        pinned = self.effective(t)
+        evolving = original.index("\nevolving:")
+        for label, edited in (
+                ("baseline bound", original.replace(
+                    "      max-cycles: 8\n", "      max-cycles: 20\n")),
+                ("phase decision class", original[:evolving]
+                 + original[evolving:].replace(
+                     "    pipeline-discretion: agent\n",
+                     "    pipeline-discretion: escalate\n", 1))):
+            with self.subTest(change=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                self.assertEqual(self.blob(t, "glados.yaml"), manifest_blob)
+                self.assertNotEqual(self.effective(t), pinned)
+        write(table, "# a comment changes nothing a run obeys\n" + original)
+        self.assertEqual(self.effective(t), pinned)
+        # a bound the table makes unenforceable is refused, not pinned
+        write(table, original.replace("      max-cycles: 8\n",
+                                      "      max-cycles: \"8\"\n"))
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("params.pipeline.max-cycles: must be a whole number", out)
+        self.assertNotIn("Traceback", out)
+        # no .glados/: the plugin's own table, which an update can change
+        plugin_side = self.project()
+        src = make_doctored_source()
+        before = self.effective(plugin_side, source=src)
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        write(presets, read(presets).replace("      max-cycles: 8\n",
+                                             "      max-cycles: 20\n"))
+        self.assertNotEqual(self.effective(plugin_side, source=src), before)
+
+    def test_the_run_table_must_bound_every_loop_it_runs(self):
+        """validate resolves against the toolchain's table, but a run reads
+        .glados/presets.yaml, and effective-config, the gate run-pipeline
+        runs on that table, skipped an absent or null bound: a table with
+        no params.pipeline.max-cycles (or a null review-panel bound) printed
+        a digest to pin. Every bound a compiled workflow references must
+        resolve there, and a table out of shape is named, not a traceback."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        bound = "      max-cycles: 8\n"
+        self.assertEqual(original.count(bound), 1)
+        evolving = original.index("\nevolving:")
+        pipeline_ns = re.search(r"^    pipeline:\n(?:(?:      .*| *#.*)?\n)*",
+                                original, re.M).group(0)
+        baseline = re.search(r"^baseline:\n(?:(?:[ #].*)?\n)*", original,
+                             re.M).group(0)
+        for label, edited, needle in (
+                ("null", original.replace(bound, "      max-cycles:\n"),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("line deleted", original.replace(bound, ""),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("namespace removed", original.replace(pipeline_ns, ""),
+                 "`params.pipeline.max-cycles` but the resolved manifest has "
+                 "no value"),
+                ("phase bound null", original[:evolving]
+                 + original[evolving:].replace("      max-cycles: 5\n",
+                                               "      max-cycles:\n", 1),
+                 "`params.review-panel.max-cycles` but the resolved manifest "
+                 "has no value"),
+                ("baseline not a mapping", original.replace(
+                    baseline, "baseline: 5\n\n"),
+                 "presets.yaml: 'baseline:' must be a mapping"),
+                ("phase not a mapping", original[:evolving] + "\nevolving: 5\n"
+                 + original[original.index("\nproduction:"):],
+                 "presets.yaml: 'evolving:' must be a mapping"),
+                ("params not a mapping", original[:evolving]
+                 + "\nevolving:\n  params: 5\n"
+                 + original[original.index("\nproduction:"):],
+                 "presets.yaml (phase:evolving): params: must be a mapping")):
+            with self.subTest(table=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotRegex(out, r"[0-9a-f]{64}")
+                self.assertNotIn("Traceback", out)
+        write(table, original)
+        self.effective(t)
+
+    def test_before_the_reinstall_effective_config_names_the_version(self):
+        """Run on a 2.4 install before the reinstall, effective-config failed
+        on every workflow, each line saying to set the bound 2.4's table
+        lacks (params.pipeline, params.standards-gate) in glados.yaml, where
+        MIGRATION.md says not to: a value there overrides the preset from
+        then on. It now says first that another version built the install
+        and that the reinstall supplies what the table lacks."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        pipeline_ns = re.search(r"^    pipeline:\n(?:(?:      .*| *#.*)?\n)*",
+                                original, re.M).group(0)
+        write(table, original.replace(pipeline_ns, ""))
+        missing = ("`params.pipeline.max-cycles` but the resolved manifest "
+                   "has no value")
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(missing, out)
+        self.assertNotIn("built by GLaDOS", out)
+        vendored = t / ".glados" / "glados.py"
+        write(vendored, re.sub(r'^VERSION = "[^"]+"', 'VERSION = "2.4.0"',
+                               read(vendored), count=1, flags=re.M))
+        rc, out = run_cli("effective-config", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        first = out.splitlines()[1]
+        self.assertIn("this install was built by GLaDOS 2.4.0", first)
+        self.assertIn("re-run install", first)
+        self.assertIn(".glados/presets.yaml is GLaDOS 2.4.0's table", first)
+        self.assertIn("not glados.yaml's", first)
+        self.assertIn(missing, out)
+
+    def test_the_run_table_must_spell_every_decision_right(self):
+        """effective-config checked the run's own table for bounds only. A
+        decision class it misspells (`agnet`) printed a digest to pin, and
+        so did one written as a YAML alias (`*dr`, its anchor `&dr agent`
+        elsewhere): the parser kept the alias as text, so editing the
+        anchor left the digest unchanged while an agent that resolves
+        aliases read `agent`. Each is refused, and so is a merge authority
+        outside the three."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+        table = t / ".glados" / "presets.yaml"
+        original = read(table)
+        evolving = original.index("\nevolving:")
+        production = original.index("\nproduction:")
+        head, block, tail = (original[:evolving],
+                             original[evolving:production],
+                             original[production:])
+        right = "    pipeline-discretion: agent\n"
+        merge = "  merge-authority: agent-integration-only\n"
+        self.assertEqual(block.count(right), 1)
+        self.assertEqual(block.count(merge), 1)
+        for label, edited, needle in (
+                ("misspelt class", head + block.replace(
+                    right, "    pipeline-discretion: agnet\n") + tail,
+                 "decisions.pipeline-discretion: 'agnet' is not a decision "
+                 "class"),
+                ("alias", head + block.replace(
+                    right, "    pipeline-discretion: *dr\n")
+                 + tail.replace("    pipeline-discretion: record\n",
+                                "    pipeline-discretion: &dr agent\n", 1),
+                 "'*dr' starts with '*'"),
+                ("merge authority", head + block.replace(
+                    merge, "  merge-authority: agent-integration-onyl\n")
+                 + tail,
+                 "merge-authority: 'agent-integration-onyl' is not a merge "
+                 "authority")):
+            with self.subTest(table=label):
+                self.assertNotEqual(edited, original)
+                write(table, edited)
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotRegex(out, r"[0-9a-f]{64}")
+                self.assertNotIn("Traceback", out)
+        write(table, original)
+        self.effective(t)
+
+    def test_a_resumed_run_takes_the_targets_configuration(self):
+        """--ref reads glados.yaml and the preset table as the branch the
+        work targets has them, so a bound the target changed while the work
+        was parked is a changed pin, though the parked checkout still has
+        the old table."""
+        t = self.project()
+        self.assertEqual(install("direct", t)[0], 0)
+
+        def git(*a):
+            p = subprocess.run(["git", "-C", str(t), *a],
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+
+        git("init", "-q")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "t")
+        git("checkout", "-q", "-b", "main")
+        git("add", "-A")
+        git("commit", "-q", "-m", "chore: install glados")
+        git("branch", "feat/parked")
+        parked = self.effective(t)
+        self.assertEqual(self.effective(t, "--ref", "main"), parked)
+        table = t / ".glados" / "presets.yaml"
+        write(table, read(table).replace("      max-cycles: 8\n",
+                                         "      max-cycles: 20\n"))
+        git("commit", "-q", "-am", "chore: raise the pipeline bound")
+        on_main = self.effective(t)
+        git("checkout", "-q", "feat/parked")
+        self.assertEqual(self.effective(t), parked)
+        self.assertEqual(self.effective(t, "--ref", "main"), on_main)
+        self.assertNotEqual(on_main, parked)
+        for ref, needle in (("no-such-branch", "not a commit"),
+                            ("main~1^{tree}", "not a commit")):
+            with self.subTest(ref=ref):
+                rc, out = run_cli("effective-config", "--target", t,
+                                  "--source", REPO, "--ref", ref)
+                self.assertEqual(rc, 1, out)
+                self.assertIn(needle, out)
+                self.assertNotIn("Traceback", out)
+        # the target's manifest is read even where the checkout has none
+        git("rm", "-q", "glados.yaml")
+        git("commit", "-q", "-m", "chore: drop the manifest")
+        self.assertEqual(self.effective(t, "--ref", "main"), on_main)
+        rc, out = run_cli("effective-config", "--target", t, "--source",
+                          REPO, "--ref", "HEAD")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no glados.yaml", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_run_epic_assigns_pipelines(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        text = " ".join(read(t / "product-knowledge" / "glados" /
+                             "run-epic.md").split())
+        self.assertIn("`id | depends-on | pipeline | holder | status`", text)
+        self.assertIn("run the run-pipeline workflow for the ticket, handing "
+                      "it the ticket's row (its pipeline included) as caller "
+                      "context, never the pipeline name as an argument; a "
+                      "`build-feature` row runs the build-feature workflow "
+                      "instead", text)
+        self.assertIn("only a pipeline whose sequence contains `open-mr`, "
+                      "and not as `optional`, qualifies", text)
+        # a disabled run-pipeline (preset or explicit) means build-feature
+        self.assertIn("(only when `glados.yaml` declares `pipelines:` and "
+                      "run-pipeline is enabled)", text)
+        self.assertIn("With run-pipeline in the effective `disabled-workflows` "
+                      "(the phase preset's list included), every ticket gets "
+                      "`build-feature`", text)
+        # a parked ticket resumes on its own branch, and the run that
+        # stops on parked tickets keeps the epic's claim
+        self.assertIn("a parked ticket resumes on the branch its row notes",
+                      text)
+        self.assertIn("note the parked branch and record the park's "
+                      "escalation names", text)
+        self.assertIn("it keeps its claim and appends no work-unit row", text)
+        self.assertIn("is never overwritten", text)
+        self.assertIn("`awaiting-approval:<step>`", text)
+        self.assertIn("no row may still be `awaiting-approval`", text)
+        # agent choices are marked, so a re-check may switch only those
+        self.assertIn("Write a pipeline you chose as `<name> (agent)`", text)
+        # only parked tickets left: end the run, never loop
+        self.assertIn("end this run with a `progress` outcome listing each "
+                      "parked row and the approval or answer it waits for",
+                      text)
+        self.assertIn("Never loop over the queue again within one run", text)
+
+    def test_build_feature_and_fix_bug_sources_unchanged(self):
+        """Maintainer decision: customization adds pipelines and steps; the
+        two fixed workflows stay byte-for-byte as they were (LF-normalized
+        sha256 of their source on main before this release)."""
+        import hashlib
+        for name, want in (("build-feature", self.BUILD_FEATURE_SHA),
+                           ("fix-bug", self.FIX_BUG_SHA)):
+            data = (REPO / "src" / "workflows" / f"{name}.md").read_bytes()
+            got = hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+            self.assertEqual(got, want, f"src/workflows/{name}.md changed")
+
+
+class TestCanon(unittest.TestCase):
+    """Canon (Part C): `canon:` in glados.yaml, checked by check_canon
+    (in-process) and by install, check, validate and doctor (the real CLI).
+    The consult instruction lives in vocabulary/canon.md, included only by
+    the cores that consult canon; digests are project files the compiler
+    never copies."""
+
+    MINIMAL = TestPipelines.MINIMAL
+
+    CANON = (
+        "canon:\n"
+        "  clean-architecture:\n"
+        "    source: \"Robert C. Martin, Clean Architecture (2017)\"\n"
+        "    url: https://example.com/clean-architecture\n"
+        "    digest: product-knowledge/canon/clean-architecture.md\n"
+        "    applies-to: [plan-feature, spec-feature, review-mr]\n"
+        "    seats: [philosophy, architect]\n"
+        "  domain-driven-design:\n"
+        "    source: \"Eric Evans, Domain-Driven Design (2003)\"\n"
+        "    digest: product-knowledge/canon/domain-driven-design.md\n")
+
+    # A string that exists only inside a digest, so finding it anywhere the
+    # compiler wrote means digest content leaked into an installed file.
+    MARKER = "zebra-digest-marker-7731"
+
+    CONSULT_CORES = ["plan-feature", "spec-feature", "verify-feature",
+                     "review-mr", "review-codebase", "brunch", "run-pipeline"]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = glados.Source(REPO)
+
+    # -- helpers -------------------------------------------------------------
+
+    def check(self, extra, target=None, phase="evolving"):
+        """check_canon over MINIMAL + ``extra``, in-process."""
+        raw = glados.parse_yaml(self.MINIMAL.format(phase=phase) + extra,
+                                "glados.yaml")
+        r = glados.resolve_manifest(raw, self.source.presets, "glados.yaml")
+        return glados.check_canon(self.source, r, target)
+
+    def assertError(self, cc, *needles):
+        joined = "\n".join(cc.errors)
+        for needle in needles:
+            self.assertIn(needle, joined, f"missing {needle!r} in:\n{joined}")
+
+    def entry(self, body, name="work"):
+        return (f"canon:\n  {name}:\n    source: \"A Work\"\n"
+                f"    digest: product-knowledge/canon/{name}.md\n" + body)
+
+    def digest(self, name, retrieved=None, drafted="source", words=40):
+        retrieved = retrieved or datetime.date.today().isoformat()
+        body = " ".join(["word"] * words)
+        return (f"---\ncanon: {name}\nversion: \"1\"\n"
+                f"retrieved: {retrieved}\ndrafted-from: {drafted}\n---\n\n"
+                f"# Work\n\n<!-- guidance that doctor does not count -->\n\n"
+                f"## dependency-rule\n\n{self.MARKER} {body}\n\n"
+                f"**Ask:** q?\n\n**Here, specifically:** here.\n")
+
+    def project(self, manifest=None, digests=("clean-architecture",
+                                              "domain-driven-design")):
+        t = make_target(manifest if manifest is not None
+                        else read(EXAMPLE) + "\n" + self.CANON)
+        for name in digests:
+            write(t / "product-knowledge" / "canon" / f"{name}.md",
+                  self.digest(name))
+        return t
+
+    # -- the declaration ---------------------------------------------------------
+
+    def test_valid_block_passes_with_defaults_applied(self):
+        cc = self.check(self.CANON)
+        self.assertEqual(cc.errors, [])
+        ca = cc.entries["clean-architecture"]
+        self.assertEqual(ca["applies-to"],
+                         ["plan-feature", "spec-feature", "review-mr"])
+        self.assertEqual(ca["seats"], ["philosophy", "architect"])
+        self.assertFalse(ca["default-applies-to"])
+        ddd = cc.entries["domain-driven-design"]
+        self.assertEqual(ddd["applies-to"], glados.CANON_DEFAULT_APPLIES_TO)
+        self.assertEqual(ddd["seats"], ["philosophy"])
+        self.assertTrue(ddd["default-seats"])
+        self.assertEqual(glados.CANON_DEFAULT_APPLIES_TO,
+                         ["plan-feature", "shape", "spec-feature",
+                          "verify-feature", "review-mr"])
+        self.assertEqual(glados.CANON_CONSULT_POINTS,
+                         glados.CANON_DEFAULT_APPLIES_TO
+                         + ["review-codebase", "brunch"])
+        # no block, no findings
+        self.assertEqual(self.check("").errors, [])
+        self.assertEqual(self.check("canon:\n").errors, [])
+
+    def test_shape_errors_are_named(self):
+        cases = [
+            (self.entry("    seat: [architect]\n"),
+             "canon.work.seat: unknown key"),
+            ("canon:\n  work:\n    digest: product-knowledge/canon/w.md\n",
+             "canon.work.source: required"),
+            ("canon:\n  work:\n    source: \"W\"\n",
+             "canon.work.digest: required"),
+            ("canon:\n  Clean_Arch:\n    source: \"W\"\n"
+             "    digest: product-knowledge/canon/w.md\n",
+             "'Clean_Arch' is not kebab-case"),
+            ("canon:\n  work: scalar\n",
+             "canon.work: must be a mapping with source and digest"),
+            ("canon: [a, b]\n", "not a list"),
+            ("canon: text\n", "canon: must be a mapping of name -> entry"),
+            (self.entry("    url: [a]\n"), "canon.work.url: must be"),
+        ]
+        for extra, needle in cases:
+            with self.subTest(needle=needle):
+                self.assertError(self.check(extra), needle)
+
+    def test_a_list_shaped_block_is_rejected(self):
+        """`- name: ...` items parse as a list of mappings (F6a), the
+        commonest wrong shape for a block keyed by name."""
+        cc = self.check("canon:\n  - clean-architecture:\n"
+                        "      source: \"W\"\n"
+                        "      digest: product-knowledge/canon/w.md\n")
+        self.assertError(cc, "canon: must be a mapping keyed by each work's "
+                             "name, not a list")
+
+    def test_digest_path_must_stay_in_the_repo(self):
+        for path in ("/etc/passwd", "C:/canon/w.md", "C:\\\\canon\\\\w.md",
+                     "~/canon/w.md", "../outside.md",
+                     "product-knowledge/../../outside.md",
+                     "https://example.com/w.md", "file:///etc/passwd"):
+            with self.subTest(path=path):
+                cc = self.check("canon:\n  work:\n    source: \"W\"\n"
+                                f"    digest: \"{path}\"\n")
+                self.assertTrue(any("canon.work.digest:" in e
+                                    for e in cc.errors), cc.errors)
+        # a URL is named as one, and a drive letter keeps its own message
+        for url in ("https://example.com/w.md", "file:///etc/passwd"):
+            self.assertIn("is a URL", glados.canon_digest_problem(url))
+            self.assertIn("put the address under url:",
+                          glados.canon_digest_problem(url))
+        self.assertIn("is an absolute path",
+                      glados.canon_digest_problem("C:/canon/w.md"))
+        self.assertEqual(glados.canon_digest_problem(
+            "product-knowledge/canon/../canon/w.md"), None)
+        self.assertIn("names the repo root",
+                      glados.canon_digest_problem("product-knowledge/.."))
+        # a directory is an error once the project is known
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        (t / "product-knowledge" / "canon" / "w.md").mkdir(parents=True)
+        cc = self.check(self.entry("").replace("work.md", "w.md"), target=t)
+        self.assertError(cc, "is a directory")
+
+    def dir_link(self, link, to):
+        """A directory symlink, or on Windows without the privilege a
+        junction, which needs none; skips when neither can be made."""
+        try:
+            os.symlink(to, link, target_is_directory=True)
+            return
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt":
+            proc = subprocess.run(["cmd", "/c", "mklink", "/J", str(link),
+                                   str(to)], capture_output=True)
+            if proc.returncode == 0:
+                return
+        self.skipTest("this platform makes neither symlinks nor junctions")
+
+    def test_digest_symlink_out_of_the_repo_is_rejected(self):
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        outside = tmpdir()
+        write(outside / "work.md", "secret\n")
+        link = t / "product-knowledge" / "canon" / "work.md"
+        link.parent.mkdir(parents=True)
+        try:
+            os.symlink(outside / "work.md", link)
+        except (OSError, NotImplementedError):
+            # no file symlinks here: link the canon directory itself
+            link.parent.rmdir()
+            self.dir_link(link.parent, outside)
+        self.assertTrue(link.is_file())
+        self.assertError(self.check(self.entry(""), target=t),
+                         "resolves outside the repo")
+        lines = glados._canon_doctor_lines(
+            t, {"canon": {"work": {"digest":
+                                   "product-knowledge/canon/work.md"}}})
+        self.assertIn("resolves outside the repo", lines[1])
+
+    def test_a_digest_symlink_loop_is_reported_never_raised(self):
+        """Python 3.10 to 3.12 raise RuntimeError resolving a loop; check
+        and doctor report it by name and keep going."""
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        canon = t / "product-knowledge" / "canon"
+        canon.mkdir(parents=True)
+        self.dir_link(canon / "loop", canon / "x")
+        self.dir_link(canon / "x", canon / "loop")
+        write(canon / "good.md", self.digest("good"))
+        self.assertEqual(install("direct", t)[0], 0)
+        manifest = ("canon:\n"
+                    "  loop:\n    source: \"L\"\n"
+                    "    digest: product-knowledge/canon/loop\n"
+                    "  good:\n    source: \"G\"\n"
+                    "    digest: product-knowledge/canon/good.md\n")
+        cc = self.check(manifest, target=t)
+        self.assertEqual(len(cc.errors), 1, cc.errors)
+        self.assertTrue(cc.errors[0].startswith(
+            "canon.loop.digest: product-knowledge/canon/loop"), cc.errors)
+        # 3.10-3.12 name the loop; 3.13 resolves no further, and the
+        # is-a-file check names it instead
+        self.assertTrue("symlink loop" in cc.errors[0], cc.errors)
+        lines = glados._canon_doctor_lines(
+            t, glados.parse_yaml(manifest, "glados.yaml"))
+        self.assertEqual(len(lines), 3, lines)
+        self.assertIn("- loop: product-knowledge/canon/loop", lines[1])
+        self.assertIn("(run check for details)", lines[1])
+        self.assertIn("- good: product-knowledge/canon/good.md ok", lines[2])
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + manifest)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("symlink loop", out)
+        self.assertNotIn("Traceback", out)
+        rc, out = run_cli("check", "--target", t, "--source", REPO,
+                          "--report-only")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+
+    def test_a_digest_path_that_matches_only_by_case_is_a_warning(self):
+        """At any depth: a case-insensitive checkout opens it silently, and
+        Linux CI would report it missing."""
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        write(t / "product-knowledge" / "canon" / "w.md", self.digest("w"))
+        for declared in ("product-knowledge/canon/W.md",
+                         "Product-Knowledge/Canon/w.md"):
+            with self.subTest(declared=declared):
+                cc = self.check("canon:\n  w:\n    source: \"W\"\n"
+                                f"    digest: {declared}\n", target=t)
+                self.assertEqual(cc.errors, [])
+                self.assertEqual(cc.warnings, [
+                    f"canon.w.digest: the path on disk is "
+                    f"product-knowledge/canon/w.md, but the entry names "
+                    f"{declared} — match the case (a case-sensitive "
+                    f"checkout, such as Linux CI, will not find it)"])
+        cc = self.check("canon:\n  w:\n    source: \"W\"\n"
+                        "    digest: product-knowledge/canon/w.md\n",
+                        target=t)
+        self.assertEqual((cc.errors, cc.warnings), ([], []))
+
+    def test_applies_to_names_consult_points_or_declared_steps(self):
+        for point in glados.CANON_CONSULT_POINTS:
+            with self.subTest(point=point):
+                self.assertEqual(self.check(self.entry(
+                    f"    applies-to: [{point}]\n")).errors, [])
+        cc = self.check(self.entry("    applies-to: [implement-feature]\n"))
+        self.assertError(cc, "'implement-feature' is not a consult point")
+        self.assertError(self.check(self.entry("    applies-to: []\n")),
+                         "canon.work.applies-to: empty")
+        self.assertError(self.check(self.entry(
+            "    applies-to:\n      - plan-feature: x\n")),
+            "item 1 is a mapping")
+        # a declared project step is a consult point; a pipeline is not
+        steps = TestPipelines.STEPS + TestPipelines.PIPELINES
+        self.assertEqual(self.check(steps + self.entry(
+            "    applies-to: [architecture-review, shape]\n")).errors, [])
+        cc = self.check(steps + self.entry(
+            "    applies-to: [backend-feature]\n"))
+        self.assertError(cc, "'backend-feature' is a pipeline, not a "
+                             "consult point")
+        # with no steps: declared, a step id is just unknown
+        self.assertError(self.check(self.entry(
+            "    applies-to: [architecture-review]\n")),
+            "'architecture-review' is not a consult point")
+
+    def test_seats_name_lenses_or_personas(self):
+        for seat in glados.STANDING_LENSES + ["architect", "data-modeler"]:
+            with self.subTest(seat=seat):
+                self.assertEqual(self.check(self.entry(
+                    f"    seats: [{seat}]\n")).errors, [])
+        self.assertError(self.check(self.entry("    seats: []\n")),
+                         "canon.work.seats: empty")
+        # with no project in view an unknown name may be a project persona
+        self.assertEqual(self.check(self.entry(
+            "    seats: [domain-expert]\n")).errors, [])
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        cc = self.check(self.entry("    seats: [domain-expert]\n"), target=t)
+        self.assertError(cc, "'domain-expert' is neither a standing lens")
+        write(t / "product-knowledge" / "personas" / "domain-expert.md",
+              "---\ntype: review\n---\n# Domain expert\n")
+        cc = self.check(self.entry("    seats: [domain-expert]\n"), target=t)
+        self.assertNotIn("domain-expert", "\n".join(cc.errors))
+        write(t / "product-knowledge" / "personas" / "Ops-Lead.md", "x\n")
+        cc = self.check(self.entry("    seats: [ops-lead]\n"), target=t)
+        self.assertError(cc, "match the file's case")
+
+    def test_a_missing_digest_is_a_warning_not_an_error(self):
+        t = self.project(digests=("clean-architecture",))
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("glados: warning: canon.domain-driven-design.digest: "
+                      "product-knowledge/canon/domain-driven-design.md does "
+                      "not exist yet", out)
+        self.assertNotIn("canon.clean-architecture.digest", out)
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("does not exist yet", out)
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        # in-process: no target, no filesystem check
+        self.assertEqual(self.check(self.CANON).warnings, [])
+
+    def test_install_check_and_validate_reject_a_bad_block(self):
+        bad = self.CANON.replace("seats: [philosophy, architect]",
+                                 "seats: [philosophy, architekt]")
+        t = self.project(read(EXAMPLE) + "\n" + bad)
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("canon.clean-architecture.seats: 'architekt' is "
+                      "neither a standing lens", out)
+        self.assertNotIn("Traceback", out)
+        self.assertFalse((t / ".glados").exists(), "nothing may be emitted")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("  - canon.clean-architecture.seats:", out)
+        # check --report-only and doctor never crash on any malformed shape
+        good = self.project()
+        self.assertEqual(install("direct", good)[0], 0)
+        for broken in ("canon: [a]\n", "canon:\n  w: 3\n",
+                       "canon:\n  - w:\n      digest: /x\n"):
+            with self.subTest(broken=broken):
+                write(good / "glados.yaml", read(EXAMPLE) + "\n" + broken)
+                rc, out = run_cli("check", "--target", good, "--source",
+                                  REPO, "--report-only")
+                self.assertEqual(rc, 0, out)
+                self.assertIn("canon", out)
+                self.assertNotIn("Traceback", out)
+                rc, out = run_cli("doctor", "--target", good, "--source",
+                                  REPO)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+
+    def test_preset_setting_canon_rejected(self):
+        src = make_doctored_source()
+        presets = src / "src" / "kernel" / "presets" / "phases.yaml"
+        text = read(presets).replace(
+            "nascent:\n", "nascent:\n  canon:\n    x:\n      source: s\n", 1)
+        presets.write_text(text, encoding="utf-8", newline="\n")
+        rc, out = install("direct", make_target(), source=src)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("preset 'nascent' sets 'canon'", out)
+        self.assertIn("not a phase default", out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("canon", glados.EXPLICIT_ONLY_KEYS)
+        self.assertIn("canon", glados.KNOWN_MANIFEST_KEYS)
+        # the example keeps its block commented, so presets cannot set it
+        self.assertNotIn("canon", glados.load_manifest(EXAMPLE))
+
+    def test_example_block_validates(self):
+        """The commented canon: block in glados.yaml.example, uncommented,
+        is a valid declaration."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# canon:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        text = "\n".join(block) + "\n"
+        self.assertEqual(self.check(text).errors, [])
+        t = self.project(read(EXAMPLE) + "\n" + text,
+                         digests=("clean-architecture",))
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 warning(s)", out)
+
+    def test_guide_examples_parse_and_validate(self):
+        guide = read(REPO / "docs" / "guides" / "canon.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreaterEqual(len(blocks), 2)
+        for block in blocks:
+            glados.parse_yaml(block, "canon.md")
+        self.assertIn("canon:", blocks[0])
+        self.assertEqual(self.check(blocks[0]).errors, [])
+        t = self.project(read(EXAMPLE) + "\n" + blocks[0])
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 warning(s)", out)
+
+    def test_registry_and_scaffold(self):
+        keys = self.source.registry["keys"]
+        self.assertEqual(keys["manifest.canon"]["home"], "manifest")
+        self.assertEqual(keys["canon.digests"]["home"],
+                         "repo:product-knowledge/canon/")
+        self.assertEqual(keys["canon.digests"]["writer"], "human")
+        self.assertIn("canon.digests", self.source.human_written_keys())
+        # people write the digests, so disabling steward (the one workflow
+        # that also writes them) never leaves their readers without a
+        # writer (the install still fails, on steward's other keys)
+        t = make_target(read(EXAMPLE).replace(
+            "disabled-workflows: []", "disabled-workflows: [steward]"))
+        rc, out = install("direct", t)
+        self.assertIn("no enabled writer", out)
+        self.assertNotIn("canon.digests", out)
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertTrue(
+            (t / "product-knowledge" / "canon" / ".gitkeep").exists())
+        # the template ships, with the frontmatter doctor and steward read
+        tmpl = read(REPO / "src" / "templates" / "CANON.md")
+        fm, body = glados.split_frontmatter(tmpl, "CANON.md")
+        self.assertEqual(set(fm), {"canon", "version", "retrieved",
+                                   "source-sha256", "drafted-from"})
+        # fails safe: a copy nobody edits never passes for a sourced digest
+        self.assertEqual(fm["drafted-from"], "recall")
+        self.assertIn("response body, byte for byte as", body)
+        self.assertIn("## <principle-id>", body)
+        self.assertIn("**Ask:**", body)
+        self.assertIn("**Here, specifically:**", body)
+        self.assertIn("Quote at most one sentence", body)
+        self.assertTrue(
+            (t / ".glados" / "src" / "templates" / "CANON.md").is_file())
+
+    # -- lane 2: never compiled, never hashed ------------------------------------
+
+    def test_canon_stays_out_of_the_hash_and_check_stays_current(self):
+        base = glados.parse_yaml(read(EXAMPLE), "glados.yaml")
+        with_canon = glados.parse_yaml(read(EXAMPLE) + "\n" + self.CANON,
+                                       "glados.yaml")
+        self.assertNotIn("canon", glados.structural_projection(with_canon))
+        self.assertEqual(glados.structural_hash(base),
+                         glados.structural_hash(with_canon))
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        gy = t / "glados.yaml"
+        for edit in (
+            lambda s: s.replace("applies-to: [plan-feature, spec-feature, "
+                                "review-mr]", "applies-to: [brunch]"),
+            lambda s: s + ("  refactoring:\n    source: \"Martin Fowler, "
+                           "Refactoring\"\n    digest: "
+                           "product-knowledge/canon/refactoring.md\n"),
+            lambda s: s[:s.index("\ncanon:\n") + 1],
+        ):
+            write(gy, edit(read(gy)))
+            rc, out = run_cli("check", "--target", t, "--source", REPO)
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("stale", out)
+        # a digest edit changes nothing the compiler wrote, either
+        write(t / "glados.yaml", read(EXAMPLE) + "\n" + self.CANON)
+        write(t / "product-knowledge" / "canon" / "clean-architecture.md",
+              self.digest("clean-architecture", words=900))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+
+    def test_no_canon_content_in_compiled_output(self):
+        """Neither a digest's text nor the block's own values are compiled:
+        the cores carry only how to consult canon. The report lists the
+        declarations and never a digest's content."""
+        for mode in ("direct", "claude", "pi"):
+            with self.subTest(mode=mode):
+                t = self.project()
+                rc, out = install(mode, t)
+                self.assertEqual(rc, 0, out)
+                for f in all_files(t):
+                    rel = f.relative_to(t).as_posix()
+                    if rel.startswith("product-knowledge/canon/") or \
+                            rel == "glados.yaml" or rel.startswith(".glados/src"):
+                        continue
+                    if f.suffix not in (".md", ".toml", ".json", ".yaml"):
+                        continue
+                    text = read(f)
+                    self.assertNotIn(self.MARKER, text, rel)
+                    if rel != ".glados/assembly-report.md":
+                        self.assertNotIn("Eric Evans", text, rel)
+                        self.assertNotIn("domain-driven-design", text, rel)
+
+    # -- where the fragment compiles ---------------------------------------------
+
+    def _assert_consult_cores_only(self, glados_dir):
+        for core in glados.CORES:
+            path = glados_dir / f"{core}.md"
+            if not path.exists():
+                continue
+            text = read(path)
+            with self.subTest(core=core):
+                full = text.count("## Consulting canon")
+                pointer = text.count("*(See **Consulting canon**")
+                if core in self.CONSULT_CORES:
+                    self.assertEqual(full, 1, f"{core}: one full copy")
+                    self.assertEqual(pointer, 0, f"{core}: no second route")
+                else:
+                    self.assertEqual(full + pointer, 0,
+                                     f"{core} is not a consult point")
+
+    def test_fragment_compiles_into_the_consult_points_only(self):
+        """Included in the bodies of the cores that consult canon, never
+        through a module: default-modules appends standards-gate and the
+        review panel to every core, so a module route would carry the
+        fragment into documents that never consult canon."""
+        self.assertEqual(sorted(self.CONSULT_CORES), sorted(
+            c for c in glados.CORES
+            if "vocabulary/canon.md" in self.source.cores[c]["body"]))
+        for m in glados.MODULES:
+            self.assertNotIn("vocabulary/canon.md",
+                             self.source.modules[m]["body"], m)
+        for phase in ("nascent", "production"):
+            with self.subTest(phase=phase):
+                t = make_target(self.MINIMAL.format(phase=phase))
+                rc, out = install("direct", t)
+                self.assertEqual(rc, 0, out)
+                self._assert_consult_cores_only(
+                    t / "product-knowledge" / "glados")
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self._assert_consult_cores_only(t / "product-knowledge" / "glados")
+        p = make_plugin_target()
+        self.assertEqual(install("claude-plugin", p)[0], 0)
+        self._assert_consult_cores_only(p / "compiled" / "claude-plugin")
+
+    def test_consult_points_declare_their_reads_and_observations(self):
+        """A core that consults canon reads manifest.canon, and one that
+        files canon conflicts emits `observation` (and writes the pending
+        observations unless it never commits to the branch it reviews, as
+        review-mr does)."""
+        for core in self.CONSULT_CORES + ["steward"]:
+            unit = self.source.cores[core]
+            with self.subTest(core=core):
+                self.assertIn("manifest.canon", unit["reads"])
+                self.assertIn("canon.digests", unit["reads"])
+                if core != "steward":
+                    self.assertIn("observation", unit["emits"])
+                if core not in ("review-mr", "steward"):
+                    self.assertIn("observations.pending", unit["writes"])
+        self.assertNotIn("observations.pending",
+                         self.source.cores["review-mr"]["writes"])
+        self.assertIn("canon.digests", self.source.cores["steward"]["writes"])
+
+    def test_fragment_stays_lean_and_states_the_rules(self):
+        frag = read(REPO / "src" / "vocabulary" / "canon.md")
+        self.assertLessEqual(len(frag.split()), 460,
+                             "keep the consult instruction lean; "
+                             "explanation belongs in docs/guides/canon.md")
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        flat = " ".join(read(t / "product-knowledge" / "glados" /
+                             "plan-feature.md").split())
+        for rule in (
+            "If it has no `canon:` block, skip this section",
+            "Never fetch its `url` during a run",
+            "Never fill a principle in from memory",
+            "With no `applies-to`, it applies at `plan-feature`, `shape`, "
+            "`spec-feature`, `verify-feature` and `review-mr`",
+            "gets the digest paths for its seats, never a summary, and the "
+            "Weight, Recall drafts, Cite and Conflicts rules here, copied "
+            "verbatim",
+            "a decision the project recorded, its standards, its "
+            "philosophies, canon",
+            "is an `advisory` finding unless a `must` standard or a `core` "
+            "philosophy adopts the principle",
+            "the finding names its consequence",
+            "`drafted-from: recall`",
+            "`canon:<name>#<principle-id>`",
+            "the disagreement is an observation, not a finding",
+            "carries it in the outcome only",
+            "A fresh agent lists each conflict under **Canon conflicts** in "
+            "its output instead, and the workflow that spawned it files it",
+        ):
+            self.assertIn(rule, flat)
+
+    def test_consult_sites_and_routing_text(self):
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        d = t / "product-knowledge" / "glados"
+
+        def core(name):
+            return " ".join(read(d / f"{name}.md").split())
+
+        self.assertIn("Check the approach against the canon that applies at "
+                      "`plan-feature`", core("plan-feature"))
+        self.assertIn("The pass also presses each principle of the canon "
+                      "that applies at `spec-feature`", core("spec-feature"))
+        self.assertIn("standards documents and canon digests (paths, not "
+                      "summaries", core("verify-feature"))
+        self.assertIn("| Canon digests | Only when this document has a "
+                      "*Consulting canon* section", core("verify-feature"))
+        self.assertIn("against each canon digest it lists",
+                      core("verify-feature"))
+        self.assertIn("Give each panelist the digest paths of the canon that "
+                      "applies at `review-mr`", core("review-mr"))
+        self.assertIn("**Canon**: set the architecture and conventions "
+                      "beside the canon", core("review-codebase"))
+        self.assertIn("routed to its seat", core("brunch"))
+        self.assertIn("brunch seats no standing lens, so an entry seated on a "
+                      "lens goes to every reviewer", core("brunch"))
+        self.assertIn("File each canon conflict a reviewer lists",
+                      core("brunch"))
+        rm = core("review-mr")
+        self.assertIn("and the rules *Consulting canon* gives a fresh agent, "
+                      "copied verbatim", rm)
+        self.assertIn("**File the canon conflicts.** Each `canon-conflicts` "
+                      "entry a panelist returns is an `observation` outcome",
+                      rm)
+        self.assertIn("When the brief lists canon digests, add "
+                      "`canon-conflicts`", rm)
+        self.assertIn("for a canon principle the canon rules it carries", rm)
+        vf = core("verify-feature")
+        self.assertIn("and the rules that section gives a fresh agent, copied "
+                      "verbatim", vf)
+        self.assertIn("Canon conflicts when the brief lists canon digests "
+                      "(canon id | what overrides it)", vf)
+        self.assertIn("File each canon conflict the evaluation lists", vf)
+        rp = core("run-pipeline")
+        self.assertIn("**Check the shape against canon.** The consult point "
+                      "is `shape`", rp)
+        self.assertIn("inside run-pipeline, the current step (`shape`, or a "
+                      "project step's id); a step's review and standards gate "
+                      "belong to that step", rp)
+        # said once: run-pipeline's project-step bullet no longer repeats it
+        self.assertNotIn("the consult point for *Consulting canon* is the "
+                         "step's id", rp)
+        self.assertIn("principle of the canon that applies at this step", rp)
+        self.assertIn("the digest of each entry that applies at the reviewed "
+                      "step, as *Consulting canon* sets out", rp)
+        self.assertIn("and the rules that section gives a fresh agent", rp)
+        self.assertIn("Canon conflicts when the brief lists canon digests", rp)
+        self.assertIn("File each canon conflict the review lists", rp)
+        # module wording rides everywhere, conditioned on the section
+        self.assertIn("| canon, not adopted | `advisory` |",
+                      core("implement-feature"))
+        self.assertIn("when the workflow consults canon, against the canon "
+                      "digests seated on this lens", core("run-epic"))
+        # steward refreshes; it is the one workflow that fetches
+        sw = core("steward")
+        self.assertIn("### 4. Refresh canon digests", sw)
+        self.assertIn("This is the one workflow that fetches a canon source",
+                      sw)
+        self.assertIn("Never make that change yourself", sw)
+        self.assertIn("### 8. Open the cleanup MR", sw)
+        self.assertIn("the suite result from step 6", sw)
+
+    # -- report, doctor, guard ---------------------------------------------------
+
+    def test_assembly_report_lists_declarations_only(self):
+        t = self.project()
+        rc, out = install("direct", t)
+        self.assertEqual(rc, 0, out)
+        report = read(t / ".glados" / "assembly-report.md")
+        self.assertIn("## Canon", report)
+        self.assertLess(report.index("## Sinks"), report.index("## Canon"))
+        self.assertLess(report.index("## Canon"),
+                        report.index("## RELAXED(phase)"))
+        self.assertIn("| clean-architecture | Robert C. Martin, Clean "
+                      "Architecture (2017) | "
+                      "`product-knowledge/canon/clean-architecture.md` | "
+                      "plan-feature, spec-feature, review-mr | "
+                      "philosophy, architect |", report)
+        self.assertIn("| domain-driven-design | Eric Evans, Domain-Driven "
+                      "Design (2003) | "
+                      "`product-knowledge/canon/domain-driven-design.md` | "
+                      "plan-feature, shape, spec-feature, verify-feature, "
+                      "review-mr (default) | philosophy (default) |", report)
+        self.assertNotIn(self.MARKER, report)
+        self.assertNotIn("example.com", report, "the URL is not reported")
+        # no block, no section, and a clean check
+        t2 = make_target()
+        self.assertEqual(install("direct", t2)[0], 0)
+        self.assertNotIn("## Canon", read(t2 / ".glados" / "assembly-report.md"))
+        rc, out = run_cli("check", "--target", t2, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("canon", out)
+
+    def test_doctor_reports_each_digest(self):
+        manifest = read(EXAMPLE) + "\n" + self.CANON + (
+            "  stale-book:\n    source: \"S\"\n"
+            "    digest: product-knowledge/canon/stale-book.md\n"
+            "  long-post:\n    source: \"L\"\n"
+            "    digest: product-knowledge/canon/long-post.md\n"
+            "  remembered:\n    source: \"R\"\n"
+            "    digest: product-knowledge/canon/remembered.md\n")
+        t = self.project(manifest, digests=("clean-architecture",))
+        old = (datetime.date.today() - datetime.timedelta(days=400)).isoformat()
+        canon = t / "product-knowledge" / "canon"
+        write(canon / "stale-book.md", self.digest("stale-book", retrieved=old))
+        write(canon / "long-post.md", self.digest("long-post", words=1200))
+        write(canon / "remembered.md",
+              self.digest("remembered", drafted="recall"))
+        self.assertEqual(install("direct", t)[0], 0)
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("canon: 5 entries declared", out)
+        self.assertIn("- clean-architecture: product-knowledge/canon/"
+                      "clean-architecture.md ok (retrieved", out)
+        self.assertIn("- domain-driven-design: product-knowledge/canon/"
+                      "domain-driven-design.md missing", out)
+        self.assertIn(f"retrieved {old}, 400 days ago (over 180)", out)
+        self.assertIn("words (keep a digest under about 1,000", out)
+        self.assertIn("- remembered: product-knowledge/canon/remembered.md — "
+                      "drafted from recall", out)
+        self.assertNotIn(self.MARKER, out)
+        self.assertNotIn("Traceback", out)
+        # the guidance comment does not count toward the length: the
+        # fixture's body is 50 words, 58 with its comment
+        today = datetime.date.today().isoformat()
+        self.assertIn("- clean-architecture: product-knowledge/canon/"
+                      f"clean-architecture.md ok (retrieved {today}, 50 "
+                      "words)", out)
+        rc, out = run_cli("doctor", "--target", make_target(), "--source",
+                          REPO)
+        self.assertIn("canon: none declared", out)
+
+    def test_doctor_thresholds_and_odd_digests(self):
+        """In-process, on a fixed date: each limit at its boundary, and each
+        way a digest can be wrong reported on its own line."""
+        today = datetime.date(2026, 10, 17)
+        t = make_target(self.MINIMAL.format(phase="evolving"))
+        canon = t / "product-knowledge" / "canon"
+        # 200 words of guidance comment: counted, it would push w1000 over
+        comment = "<!-- " + " ".join(["guidance"] * 200) + " -->"
+
+        def body(words):
+            return "\n".join([comment, " ".join(["word"] * words), ""])
+
+        def fm(retrieved):
+            return (f"---\ncanon: x\nretrieved: {retrieved}\n"
+                    f"drafted-from: source\n---\n")
+
+        def days_ago(n):
+            return (today - datetime.timedelta(days=n)).isoformat()
+
+        write(canon / "d180.md", fm(days_ago(180)) + body(10))
+        write(canon / "d181.md", fm(days_ago(181)) + body(10))
+        write(canon / "w1000.md", fm(days_ago(1)) + body(1000))
+        write(canon / "w1001.md", fm(days_ago(1)) + body(1001))
+        write(canon / "future.md", fm("2027-12-01") + body(10))
+        write(canon / "not-a-date.md", fm("YYYY-MM-DD") + body(10))
+        write(canon / "no-date.md", "---\ncanon: x\n---\n" + body(10))
+        write(canon / "unterminated.md", "---\ncanon: x\n" + body(10))
+        (canon / "utf16.md").write_text(fm(days_ago(1)) + body(10),
+                                        encoding="utf-16")
+        (canon / "a-dir").mkdir()
+        names = ["d180", "d181", "w1000", "w1001", "future", "not-a-date",
+                 "no-date", "unterminated", "utf16", "a-dir"]
+        raw = {"canon": {n: {"source": "S", "digest":
+                             f"product-knowledge/canon/{n}"
+                             + ("" if n == "a-dir" else ".md")}
+                         for n in names}}
+        lines = glados._canon_doctor_lines(t, raw, today=today)
+        got = {l.split(":", 1)[0].strip(" -"): l for l in lines[1:]}
+        self.assertEqual(sorted(got), sorted(names), lines)
+        self.assertIn(f"d180.md ok (retrieved {days_ago(180)}, 10 words)",
+                      got["d180"])
+        self.assertIn("181 days ago (over 180)", got["d181"])
+        self.assertIn(f"w1000.md ok (retrieved {days_ago(1)}, 1000 words)",
+                      got["w1000"])
+        self.assertIn("1001 words (keep a digest under about 1,000",
+                      got["w1001"])
+        self.assertIn("`retrieved: 2027-12-01` is in the future",
+                      got["future"])
+        self.assertIn("`retrieved: YYYY-MM-DD` is not a date (YYYY-MM-DD)",
+                      got["not-a-date"])
+        self.assertIn("no `retrieved:` date (YYYY-MM-DD)", got["no-date"])
+        self.assertIn("unterminated.md has unreadable frontmatter — ",
+                      got["unterminated"])
+        self.assertIn("unterminated frontmatter", got["unterminated"])
+        self.assertIn("utf16.md cannot be read — ", got["utf16"])
+        self.assertIn("not valid UTF-8", got["utf16"])
+        self.assertIn("product-knowledge/canon/a-dir is a directory (run "
+                      "check for details)", got["a-dir"])
+        self.assertNotIn("missing", got["a-dir"])
+        # the template, copied unedited, reports its placeholder date and
+        # its safe default, recall
+        write(canon / "copied.md",
+              read(REPO / "src" / "templates" / "CANON.md"))
+        lines = glados._canon_doctor_lines(t, {"canon": {"copied": {
+            "digest": "product-knowledge/canon/copied.md"}}}, today=today)
+        self.assertIn("`retrieved: YYYY-MM-DD` is not a date", lines[1])
+        self.assertIn("drafted from recall", lines[1])
+        # a block that is not a mapping
+        self.assertEqual(glados._canon_doctor_lines(t, {"canon": ["a"]}),
+                         ["  canon: INVALID — the block must be a mapping "
+                          "keyed by name (run check for details)"])
+
+    def test_doctor_codeowners_covers_the_canon_dir(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertNotIn("product-knowledge/canon/", out,
+                         "no canon in use: nothing to report")
+        p = self.project()
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("CODEOWNERS: none found — consider one covering "
+                      "glados.yaml and product-knowledge/canon/", out)
+        self.assertIn("the canon digests weigh in reviews", out)
+        write(p / "CODEOWNERS", "/glados.yaml @maintainers\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("has no pattern found covering product-knowledge/canon/ "
+                      "— the canon digests weigh in reviews", out)
+        write(p / "CODEOWNERS",
+              "/glados.yaml @maintainers\n/product-knowledge/canon/ @m\n")
+        rc, out = run_cli("doctor", "--target", p, "--source", REPO)
+        self.assertIn("covers product-knowledge/canon/", out)
+
+    def test_plugin_guard_names_canon(self):
+        flat = " ".join(glados.PLUGIN_BOOTSTRAP_GUARD.split())
+        self.assertIn("any canon (`canon:`) govern this run", flat)
+
+
+class TestReleaseHygiene(unittest.TestCase):
+    """The version lives in three files and the release checks guard the
+    paths that change behaviour (F6f-h)."""
+
+    def test_versions_agree(self):
+        plugin = json.loads(read(REPO / ".claude-plugin" / "plugin.json"))
+        package = json.loads(read(REPO / "package.json"))
+        self.assertEqual(glados.VERSION, plugin["version"],
+                         "bin/glados.py VERSION != .claude-plugin/plugin.json")
+        self.assertEqual(glados.VERSION, package["version"],
+                         "bin/glados.py VERSION != package.json")
+
+    def test_version_check_covers_functional_paths(self):
+        wf = read(REPO / ".github" / "workflows" / "version-check.yml")
+        block = wf.split("FUNCTIONAL_PATHS=(")[1].split(")")[0]
+        for path in ("src/", "skills/", "bin/", "hooks/", "ci/", "compiled/",
+                     "glados.yaml.example", "package.json",
+                     ".claude-plugin/plugin.json"):
+            self.assertIn(f"'{path}'", block, f"{path} not a functional path")
+
+    def test_gitlab_verify_ledger_job_has_git(self):
+        ci = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        job = ci.split("glados-verify-ledger:")[1]
+        self.assertIn("python:3.12-slim", job)
+        self.assertIn("apt-get install -y --no-install-recommends git", job)
+        self.assertIn("safe.directory", job)
+        self.assertLess(job.index("before_script:"), job.index("  script:\n"),
+                        "git must be installed before verify-ledger runs")
+
+
 class TestSourceTreeAttacks(unittest.TestCase):
 
     def test_include_cycle_fatal_names_cycle(self):
@@ -1599,6 +6570,35 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("never fails", out)
         self.assertNotIn("Traceback", out)
 
+    def test_doctor_survives_a_manifest_that_cannot_compile(self):
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        write(t / "glados.yaml", read(EXAMPLE).replace(
+            "disabled-workflows: []", "disabled-workflows:\n  - brunch: x"))
+        rc, out = run_cli("doctor", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, "doctor must never fail:\n" + out)
+        self.assertIn("assembly report: could not render a fresh copy", out)
+        self.assertIn("never fails", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_assembly_report_line_survives_any_error(self):
+        # Not only a Fatal: any error while rendering becomes a report line.
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        original = glados._prepare_compilation
+
+        def boom(*_a, **_k):
+            raise RuntimeError("boom")
+
+        glados._prepare_compilation = boom
+        try:
+            line = glados._assembly_report_doctor_line(
+                glados.Source(REPO), t, ["direct"])
+        finally:
+            glados._prepare_compilation = original
+        self.assertIn("could not render a fresh copy to compare", line)
+        self.assertIn("RuntimeError: boom", line)
+
     def test_doctor_reports_codeowners(self):
         t = make_target()
         rc, out = run_cli("doctor", "--target", t, "--source", REPO)
@@ -1612,6 +6612,66 @@ class TestDoctor(unittest.TestCase):
         rc, out = run_cli("doctor", "--target", t, "--source", REPO)
         self.assertEqual(rc, 0)
         self.assertIn("does not mention glados.yaml", out)
+
+    def test_ci_for_a_project_in_a_subdirectory_is_named_unsupported(self):
+        """The vendored CI templates run `.glados/glados.py check --target .`
+        from the repository's root, GitHub reads workflows only from the
+        root's .github/workflows/, and a GitLab include's local: path is from
+        the root too. For a project in a subdirectory (packages/app), install
+        printed enable commands that made a workflow GitHub never runs, and
+        doctor called that wired, and a root .gitlab-ci.yml that includes the
+        package's template not wired. Both now say CI enforcement is
+        supported only for a project at the repository's root; a project
+        there, in a repository or not, keeps the stanza and the answer."""
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                repo = tmpdir("glados-ci-sub-")
+                for args in (("init", "-q"), ("checkout", "-q", "-b", "main")):
+                    subprocess.run(["git", "-C", str(repo), *args],
+                                   capture_output=True)
+                app = repo / "packages" / "app"
+                write(app / "glados.yaml", read(EXAMPLE).replace(
+                    "platform: gitlab", f"platform: {platform}", 1))
+                rc, out = install("claude", app)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("cp .glados/ci/", out)
+                self.assertNotIn("- local: '.glados/ci/", out)
+                self.assertIn("only for a project at the repository root",
+                              out)
+                self.assertIn("packages/app/", out)
+                # What the printed commands made, run in the package...
+                write(app / ".github" / "workflows" / "glados-check.yml",
+                      read(app / ".glados" / "ci" /
+                           "glados-check.github-actions.yml"))
+                write(app / ".gitlab-ci.yml", "include:\n  - local: "
+                      "'.glados/ci/glados-check.gitlab-ci.yml'\n")
+                # ...and wiring at the root that reaches the package.
+                write(repo / ".gitlab-ci.yml", "include:\n  - local: "
+                      "'packages/app/.glados/ci/glados-check.gitlab-ci.yml'"
+                      "\n")
+                rc, out = run_cli("doctor", "--target", app, "--source",
+                                  REPO)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("CI check wired: yes", out)
+                self.assertNotIn("CI check wired: no —", out)
+                self.assertIn("CI check wired: not supported", out)
+                self.assertIn("packages/app/", out)
+        # A project at the root of its repository is unchanged.
+        repo = tmpdir("glados-ci-root-")
+        subprocess.run(["git", "-C", str(repo), "init", "-q"],
+                       capture_output=True)
+        write(repo / "glados.yaml", read(EXAMPLE).replace(
+            "platform: gitlab", "platform: github", 1))
+        rc, out = install("claude", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("cp .glados/ci/glados-check.github-actions.yml", out)
+        rc, out = run_cli("doctor", "--target", repo, "--source", REPO)
+        self.assertIn("CI check wired: no —", out)
+        write(repo / ".github" / "workflows" / "glados-check.yml",
+              read(repo / ".glados" / "ci" /
+                   "glados-check.github-actions.yml"))
+        rc, out = run_cli("doctor", "--target", repo, "--source", REPO)
+        self.assertIn("CI check wired: yes", out)
 
 
 class TestSda(unittest.TestCase):
@@ -1847,9 +6907,582 @@ class TestPluginSkills(unittest.TestCase):
                       read(t / "skills" / "mission" / "SKILL.md"))
 
 
+class TestPortability(unittest.TestCase):
+    """GLaDOS runs mostly on Linux and macOS (agents, CI), and until 2.5's
+    portability round every test ran on Windows. CPython's stat module
+    defines the IO_REPARSE_TAG_* constants on Windows alone, and both
+    guards' junction test and `ledger save`'s, all three vendored into
+    .glados/, read stat.IO_REPARSE_TAG_MOUNT_POINT unguarded. On POSIX
+    every walk under .glados/runs/ raised AttributeError: each guard
+    exited 1, a non-blocking error to both hosts, and let the session end
+    with the record unsaved, and save crashed before saving anything."""
+
+    SCRIPTS = ("bin/glados.py", "hooks/claude-stop-hook.py",
+               "hooks/gemini-afteragent-guard.py")
+    # Modules one OS family's CPython lacks.
+    PLATFORM_MODULES = frozenset({
+        "msvcrt", "winreg", "winsound", "_winapi", "_overlapped", "nt",
+        "msilib", "_msi", "fcntl", "pwd", "grp", "termios", "tty", "pty",
+        "resource", "posix", "syslog", "crypt", "spwd", "_posixsubprocess",
+        "curses", "readline"})
+    # Module attributes one family has and the other lacks, by module
+    # (matched from the start of the name). stat.FILE_ATTRIBUTE_* exist
+    # everywhere, but mean nothing without st_file_attributes, below.
+    PLATFORM_ATTRS = {
+        "stat": r"IO_REPARSE_TAG_",
+        "os": (r"O_(BINARY|NOINHERIT|SHORT_LIVED|TEMPORARY|RANDOM|SEQUENTIAL"
+               r"|TEXT|NOFOLLOW|DIRECTORY|CLOEXEC|NONBLOCK|NOCTTY|SYNC|DSYNC"
+               r"|ASYNC|NDELAY)$|startfile$|add_dll_directory$"
+               r"|[gs]et_handle_inheritable$|P_(DETACH|OVERLAY)$"
+               r"|list(drives|mounts|volumes)$"
+               r"|[gs]et(e?[ug]id|groups|res[ug]id|pgid|pgrp|sid|priority)$"
+               r"|fork(pty)?$|killpg$|wait[34]?$|waitid$|W[A-Z]+$"
+               r"|[fl]?chown$|chroot$|mkfifo$|mknod$|sync$|getloadavg$"
+               r"|uname$|ttyname$|openpty$|nice$|pipe2$|sched_|f?statvfs$"
+               r"|posix_spawnp?$|lchmod$|ctermid$|f?pathconf$|sysconf$"
+               r"|confstr$|makedev$|major$|minor$|initgroups$"),
+        "subprocess": (r"CREATE_|DETACHED_PROCESS$|STARTUPINFO$|STARTF_"
+                       r"|STD_(INPUT|OUTPUT|ERROR)_HANDLE$|SW_HIDE$"
+                       r"|[A-Z_]+_PRIORITY_CLASS$"),
+        "signal": (r"CTRL_(C|BREAK)_EVENT$|SIGBREAK$"
+                   r"|SIG(KILL|HUP|QUIT|ALRM|CHLD|PIPE|USR[12]|CONT|STOP"
+                   r"|TSTP|TTIN|TTOU|WINCH|IO|PROF|VTALRM|XCPU|XFSZ|SYS|TRAP"
+                   r"|BUS|URG|PWR|RTMIN|RTMAX)$|alarm$|[gs]etitimer$"
+                   r"|ITIMER_|pthread_|siginterrupt$|sigpending$|sigwait"
+                   r"|pause$"),
+        "sys": (r"getwindowsversion$|winver$|dllhandle$|[gs]etdlopenflags$"
+                r"|abiflags$"),
+        "time": r"tzset$",
+        "shutil": r"chown$",
+        "select": r"poll$|epoll|kqueue|kevent|devpoll",
+        "socket": r"AF_UNIX$|SO_REUSEPORT$",
+    }
+    # stat_result fields some platforms lack.
+    PLATFORM_FIELDS = frozenset({
+        "st_file_attributes", "st_reparse_tag", "st_blocks", "st_blksize",
+        "st_rdev", "st_flags", "st_gen", "st_birthtime", "st_birthtime_ns",
+        "st_fstype", "st_rsize", "st_creator", "st_type"})
+
+    @staticmethod
+    def _asks_platform(expr) -> bool:
+        """Whether a test asks which platform this is (os.name,
+        sys.platform) or whether a name exists (hasattr)."""
+        for n in ast.walk(expr):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                    and n.func.id == "hasattr":
+                return True
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) \
+                    and (n.value.id, n.attr) in (("os", "name"),
+                                                 ("sys", "platform")):
+                return True
+        return False
+
+    def _guarded(self, node, parents, errors) -> bool:
+        """Whether only a platform that has what ``node`` names reaches it:
+        under an if that asks, after such a test in an `and`, or in a try
+        that catches one of ``errors``."""
+        child = node
+        while child in parents:
+            p = parents[child]
+            if isinstance(p, (ast.If, ast.IfExp, ast.While)) \
+                    and child is not p.test and self._asks_platform(p.test):
+                return True
+            if isinstance(p, ast.BoolOp) and isinstance(p.op, ast.And):
+                before = p.values[:[id(v) for v in p.values].index(id(child))]
+                if any(self._asks_platform(v) for v in before):
+                    return True
+            if isinstance(p, ast.Try) and any(child is s for s in p.body):
+                caught = {n.id for h in p.handlers if h.type is not None
+                          for n in ast.walk(h.type) if isinstance(n, ast.Name)}
+                if caught & errors:
+                    return True
+            child = p
+        return False
+
+    def _platform_only(self, module, name: str) -> bool:
+        pattern = self.PLATFORM_ATTRS.get(module.__name__)
+        return bool(pattern and re.match(pattern, name)) \
+            or not hasattr(module, name)
+
+    def _unguarded(self, path: Path, rel: str) -> list:
+        """Every platform-only module, module attribute or stat field the
+        script at ``path`` uses where a platform without it would reach
+        it, each as `<rel>:<line>: <what>`."""
+        tree = ast.parse(read(path), rel)
+        parents = {c: p for p in ast.walk(tree)
+                   for c in ast.iter_child_nodes(p)}
+        modules: dict = {}
+        found = []
+        attr_errors = {"AttributeError", "Exception"}
+        for n in ast.walk(tree):
+            if not isinstance(n, (ast.Import, ast.ImportFrom)):
+                continue
+            names = ([a.name for a in n.names] if isinstance(n, ast.Import)
+                     else [n.module or ""])
+            for name in names:
+                guarded = self._guarded(
+                    n, parents, {"ImportError", "ModuleNotFoundError",
+                                 "Exception"})
+                try:
+                    importlib.import_module(name)
+                    importable = True
+                except (ImportError, ValueError):
+                    importable = False
+                if (name.split(".")[0] in self.PLATFORM_MODULES
+                        or not importable) and not guarded:
+                    found.append(f"{rel}:{n.lineno}: import {name}")
+            if isinstance(n, ast.Import):
+                for a in n.names:
+                    try:
+                        modules[a.asname or a.name.split(".")[0]] = \
+                            importlib.import_module(
+                                a.name if a.asname else a.name.split(".")[0])
+                    except ImportError:
+                        pass
+
+        def resolve(node):
+            if isinstance(node, ast.Name):
+                return modules.get(node.id)
+            if isinstance(node, ast.Attribute):
+                base = resolve(node.value)
+                if isinstance(base, types.ModuleType):
+                    return getattr(base, node.attr, None)
+            return None
+
+        for n in ast.walk(tree):
+            bad = None
+            if isinstance(n, ast.Attribute):
+                base = resolve(n.value)
+                if n.attr in self.PLATFORM_FIELDS:
+                    bad = "." + n.attr
+                elif isinstance(base, types.ModuleType) \
+                        and self._platform_only(base, n.attr):
+                    bad = f"{base.__name__}.{n.attr}"
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
+                    and n.func.id == "getattr" and len(n.args) == 2 \
+                    and isinstance(n.args[1], ast.Constant) \
+                    and isinstance(n.args[1].value, str):
+                # getattr with no default raises just the same
+                base, name = resolve(n.args[0]), n.args[1].value
+                if name in self.PLATFORM_FIELDS or (
+                        isinstance(base, types.ModuleType)
+                        and self._platform_only(base, name)):
+                    bad = f"getattr(..., {name!r}) with no default"
+            if bad and not self._guarded(n, parents, attr_errors):
+                found.append(f"{rel}:{n.lineno}: {bad}")
+        return found
+
+    def test_no_platform_only_name_is_used_unguarded(self):
+        """A module, module attribute or stat field that one OS family's
+        CPython lacks is used in bin/ or hooks/ only where a platform
+        without it cannot reach it: read with getattr and a default, under
+        a test of os.name, sys.platform or hasattr, or in a try that
+        catches the error. The lists name both families' names, and any
+        name this interpreter lacks counts too, so a run on either family
+        catches the other's."""
+        # the scan sees what it is meant to see
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import os\nimport stat\nimport msvcrt\n"
+              "try:\n    import winreg\nexcept ImportError:\n"
+              "    winreg = None\n"
+              "a = stat.IO_REPARSE_TAG_MOUNT_POINT\n"
+              "b = getattr(stat, 'IO_REPARSE_TAG_MOUNT_POINT', 0)\n"
+              "c = os.lstat('.').st_reparse_tag\n"
+              "d = os.getuid() if hasattr(os, 'getuid') else 0\n"
+              "e = os.O_BINARY\n"
+              "f = getattr(os.lstat('.'), 'st_file_attributes')\n")
+        found = [f.split(": ", 1)[1]
+                 for f in self._unguarded(probe / "probe.py", "probe.py")]
+        self.assertEqual(sorted(found), sorted([
+            "import msvcrt", "stat.IO_REPARSE_TAG_MOUNT_POINT",
+            ".st_reparse_tag", "os.O_BINARY",
+            "getattr(..., 'st_file_attributes') with no default"]))
+        found = [f for rel in self.SCRIPTS
+                 for f in self._unguarded(REPO / rel, rel)]
+        self.assertEqual(found, [])
+
+    def _load(self, rel: str):
+        path = REPO / rel
+        spec = importlib.util.spec_from_file_location(
+            "glados_port_" + re.sub(r"\W", "_", path.stem), path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_link_test_answers_on_this_platform(self):
+        """_is_link in both guards and in glados.py: a file and a directory
+        are no link, a symbolic link is one, and so is a Windows junction,
+        which lstat reports as a directory."""
+        d = tmpdir("glados-port-links-")
+        write(d / "record.md", "# r\n")
+        (d / "dir").mkdir()
+        links = []
+        try:
+            os.symlink(d / "dir", d / "dir-link", target_is_directory=True)
+            links.append("dir-link")
+            os.symlink(d / "record.md", d / "file-link")
+            links.append("file-link")
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(d / "dir"), str(d / "junction"))
+            links.append("junction")
+        for rel in self.SCRIPTS:
+            mod = self._load(rel)
+            with self.subTest(script=rel):
+                self.assertFalse(mod._is_link(os.lstat(d / "record.md")))
+                self.assertFalse(mod._is_link(os.lstat(d / "dir")))
+                for name in links:
+                    self.assertTrue(mod._is_link(os.lstat(d / name)), name)
+
+    def test_the_guards_and_save_run_on_this_platform(self):
+        """A run in flight with an unsaved record and a step-artifact
+        directory: each guard blocks, `ledger save` saves both files, and
+        then each guard allows. On POSIX the guards crashed open and save
+        crashed."""
+        repo = tmpdir("glados-port-repo-")
+        for args in (("init", "-q"), ("config", "user.email", "t@example.com"),
+                     ("config", "user.name", "t"),
+                     ("config", "commit.gpgsign", "false"),
+                     ("checkout", "-q", "-b", "main")):
+            subprocess.run(["git", "-C", str(repo), *args],
+                           capture_output=True)
+        write(repo / "a.txt", "x\n")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "init"],
+                       capture_output=True)
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "r.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "stack", "r.md\n")
+
+        def guards():
+            c = subprocess.run(
+                [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+                input=json.dumps({"cwd": str(repo)}), capture_output=True,
+                text=True)
+            g = subprocess.run(
+                [sys.executable,
+                 str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+                input="{}", capture_output=True, text=True, cwd=str(repo))
+            self.assertEqual(c.returncode, 0, c.stderr)
+            self.assertNotIn("Traceback", c.stderr + g.stderr)
+            reason = (json.loads(c.stdout)["reason"] if c.stdout.strip()
+                      else "")
+            return reason, g.returncode
+
+        reason, gemini = guards()
+        self.assertIn(".glados/runs/r.evidence/log.txt", reason)
+        self.assertEqual(gemini, 2)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertEqual(guards(), ("", 0))
+
+    @staticmethod
+    def _repo_at(path: Path) -> Path:
+        path.mkdir(parents=True)
+        for args in (("init", "-q"), ("config", "user.email", "t@example.com"),
+                     ("config", "user.name", "t"),
+                     ("config", "commit.gpgsign", "false"),
+                     ("checkout", "-q", "-b", "main")):
+            subprocess.run(["git", "-C", str(path), *args],
+                           capture_output=True)
+        write(path / "a.txt", "x\n")
+        subprocess.run(["git", "-C", str(path), "add", "-A"],
+                       capture_output=True)
+        subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "init"],
+                       capture_output=True)
+        return path
+
+    def test_the_claude_guard_reads_its_event_as_utf8(self):
+        """Claude Code writes the Stop event in UTF-8. The hook read it with
+        json.load(sys.stdin), in the locale's codec: the ANSI code page on
+        Windows until Python 3.15 (cp1252, or cp1251 under a Cyrillic
+        locale). A project path with an ë or a Cyrillic letter decoded to
+        another path, one that does not exist; both markers read as absent
+        and the guard let the session end with the record unsaved. Here
+        PYTHONIOENCODING stands in for the code page on every platform,
+        and the process runs elsewhere, so falling back to its directory
+        saves nothing. A UTF-8 BOM is read too, and a cwd that is no
+        directory falls back to the process's, as a missing one does."""
+        base = tmpdir("glados-port-utf8-")
+        elsewhere = tmpdir("glados-port-elsewhere-")
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        hook = str(REPO / "hooks" / "claude-stop-hook.py")
+
+        def guard(event: bytes, cwd: Path, codec=None) -> str:
+            p = subprocess.run(
+                [sys.executable, hook], input=event, capture_output=True,
+                cwd=str(cwd),
+                env=dict(env, **({"PYTHONIOENCODING": codec} if codec
+                                 else {})))
+            out = p.stdout.decode("utf-8", "replace")
+            err = p.stderr.decode("utf-8", "replace")
+            self.assertEqual(p.returncode, 0, err)
+            self.assertNotIn("Traceback", err)
+            return json.loads(out)["decision"] if out.strip() else "allow"
+
+        for i, (name, codec) in enumerate((("Zoë-proj", None),
+                                           ("Zoë-proj", "cp1252"),
+                                           ("Проект", "cp1251"))):
+            repo = self._repo_at(base / f"{i}-{name}")
+            runs = repo / ".glados" / "runs"
+            write(runs / "r1.md", "# r1\n")
+            write(runs / "current", "r1.md\n")
+            event = json.dumps({"cwd": str(repo)},
+                               ensure_ascii=False).encode("utf-8")
+            with self.subTest(name=name, codec=codec or "this platform's"):
+                self.assertEqual(guard(event, elsewhere, codec), "block")
+                self.assertEqual(guard(b"\xef\xbb\xbf" + event, elsewhere,
+                                       codec), "block")
+                rc, out = run_cli("ledger", "save", "--no-push",
+                                  "--target", repo)
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(guard(event, elsewhere, codec), "allow")
+        repo = self._repo_at(base / "plain")
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        write(repo / ".glados" / "runs" / "current", "r1.md\n")
+        gone = json.dumps({"cwd": str(base / "no-such-dir")}).encode("utf-8")
+        self.assertEqual(guard(gone, repo), "block")
+
+    # A subprocess call named here reads its child's output as text when
+    # passed text= or universal_newlines=.
+    SUBPROCESS_CALLS = frozenset({"run", "Popen", "check_output", "call",
+                                  "check_call"})
+
+    def _locale_decoded(self, path: Path, rel: str) -> list:
+        """Each subprocess call in the script at ``path`` that reads its
+        child's output as text and leaves the codec, or what to do with a
+        byte it cannot decode, to the locale, as `<rel>:<line>: <call>`."""
+        tree = ast.parse(read(path), rel)
+        found = []
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute)
+                    and isinstance(n.func.value, ast.Name)
+                    and n.func.value.id == "subprocess"
+                    and n.func.attr in self.SUBPROCESS_CALLS):
+                continue
+            kw = {k.arg: k.value for k in n.keywords if k.arg}
+            text = any(k in kw and not (isinstance(kw[k], ast.Constant)
+                                        and not kw[k].value)
+                       for k in ("text", "universal_newlines"))
+            if text and not ("encoding" in kw and "errors" in kw):
+                found.append(f"{rel}:{n.lineno}: subprocess.{n.func.attr}")
+        return found
+
+    def test_no_child_output_is_decoded_in_the_locale_codec(self):
+        """git writes UTF-8, and a text-mode child process is decoded in the
+        locale's codec unless the call names one: cp1252 on Windows, which
+        has no character for the bytes 0x81, 0x8D, 0x8F, 0x90 and 0x9D. The
+        reader thread raised, stdout came back None, and the caller
+        crashed. Every text-mode call in bin/ and hooks/ names the codec
+        and a way past a byte it cannot decode."""
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import subprocess\n"
+              "a = subprocess.run(['git'], capture_output=True, text=True)\n"
+              "b = subprocess.run(['git'], capture_output=True, text=True,\n"
+              "                   encoding='utf-8', errors='replace')\n"
+              "c = subprocess.run(['git'], capture_output=True)\n"
+              "d = subprocess.check_output(['git'], universal_newlines=True,\n"
+              "                            encoding='utf-8')\n"
+              "e = subprocess.run(['git'], capture_output=True, text=False)\n")
+        self.assertEqual(self._locale_decoded(probe / "probe.py", "probe.py"),
+                         ["probe.py:2: subprocess.run",
+                          "probe.py:6: subprocess.check_output"])
+        found = [f for rel in self.SCRIPTS
+                 for f in self._locale_decoded(REPO / rel, rel)]
+        self.assertEqual(found, [])
+
+    # Path (and DirEntry) methods that ask what is at a path.
+    PATH_QUERIES = frozenset({"exists", "is_file", "is_dir", "is_symlink"})
+
+    def _path_queries(self, path: Path, rel: str, first=None, last=None):
+        """Each call of a PATH_QUERIES method in the script at ``path`` (from
+        the top-level function ``first`` to ``last``, when given), as
+        `<rel>:<line>: .<method>()`; os.path's functions are not methods."""
+        tree = ast.parse(read(path), rel)
+        lines = range(1, 1 << 30)
+        if first:
+            defs = {n.name: n for n in tree.body
+                    if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+            lines = range(defs[first].lineno, defs[last].end_lineno + 1)
+        return [f"{rel}:{n.lineno}: .{n.func.attr}()" for n in ast.walk(tree)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr in self.PATH_QUERIES and n.lineno in lines
+                and not (isinstance(n.func.value, ast.Attribute)
+                         and n.func.value.attr == "path"
+                         and isinstance(n.func.value.value, ast.Name)
+                         and n.func.value.value.id == "os")]
+
+    def test_the_guards_and_the_ledger_ask_os_path_what_is_there(self):
+        """Path.exists(), is_file() and is_dir() raise on Python 3.10 to
+        3.12 for any error but a missing path (permission denied, a name
+        too long for the file system), and from 3.13 answer False for any
+        error. The same tree crashed a guard on one version, which fails
+        open, and on another read a path this user cannot read as gone, so
+        `ledger save <path>` removed it from the ledger. The guards and the
+        ledger code ask os.path, which answers alike on every version, or
+        os.stat with each error handled."""
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import os\nfrom pathlib import Path\np = Path('.')\n"
+              "a = p.exists()\nb = os.path.exists(p)\nc = p.is_file()\n"
+              "d = os.path.isdir(p)\n")
+        self.assertEqual(self._path_queries(probe / "probe.py", "probe.py"),
+                         ["probe.py:4: .exists()", "probe.py:6: .is_file()"])
+        found = [f for rel in self.SCRIPTS[1:]
+                 for f in self._path_queries(REPO / rel, rel)]
+        found += self._path_queries(GLADOS_PY, "bin/glados.py",
+                                    "_first_line", "cmd_ledger_link")
+        self.assertEqual(found, [])
+
+    def test_verify_ledger_reads_git_as_utf8(self):
+        """A commit subject or a branch name holding a byte cp1252 cannot
+        decode (📝, Á, č) stopped verify-ledger, whose report never fails,
+        with a traceback on Windows."""
+        repo = self._repo_at(tmpdir("glados-port-log-") / "r")
+        for subject in ("📝 docs: update readme", "oprava: přidat čtení",
+                        "review: Ágnes signed off"):
+            subprocess.run(["git", "-C", str(repo), "commit", "-q",
+                            "--allow-empty", "-m", subject],
+                           capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b",
+                        "feat/Ágnes-čtení"], capture_output=True)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        rc, out = run_cli("verify-ledger", "--target", repo, env=env)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("feature/other branches: 1", out)
+        self.assertIn("review: Ágnes signed off", out)
+
+    @unittest.skipUnless(os.name == "nt", "the 260-character limit is "
+                         "Windows'")
+    def test_a_run_file_past_the_windows_path_limit_is_guarded_and_saved(self):
+        """A step artifact deep under `<stem>.evidence/` whose full path is
+        260 characters or more. With LongPathsEnabled at 0, Windows' default,
+        a lookup of such a path reports no such file and git says "Filename
+        too long": both guards walked past it and let the session end with
+        it unsaved, and `ledger save` never saved it, without a word, nor an
+        edit to it named on the command line. The guards and save reach it
+        by its \\\\?\\ form, and run git with core.longpaths. (Where long
+        paths are enabled, this passes either way.)"""
+        repo = self._repo_at(tmpdir("glados-port-long-") / "r")
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "stack", "r.md\n")
+        rel_dir = (".glados/runs/r.evidence/test-results/" + "d" * 100 + "/"
+                   + "e" * 100)
+        rel = rel_dir + "/result.txt"
+        full = os.path.join(str(repo), *rel.split("/"))
+        self.assertGreaterEqual(len(full), 260)
+
+        def extended(path):
+            return "\\\\?\\" + os.path.abspath(path)
+
+        here = str(repo)
+        for part in rel_dir.split("/"):
+            here = os.path.join(here, part)
+            if not os.path.isdir(extended(here)):
+                os.mkdir(extended(here))
+        self.addCleanup(shutil.rmtree, extended(runs / "r.evidence"),
+                        ignore_errors=True)
+
+        def put(text):
+            with open(extended(full), "w", encoding="utf-8",
+                      newline="\n") as f:
+                f.write(text)
+
+        def guards():
+            c = subprocess.run(
+                [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+                input=json.dumps({"cwd": str(repo)}), capture_output=True,
+                text=True, timeout=60)
+            g = subprocess.run(
+                [sys.executable,
+                 str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+                input="{}", capture_output=True, text=True, cwd=str(repo),
+                timeout=60)
+            self.assertEqual(c.returncode, 0, c.stderr)
+            self.assertNotIn("Traceback", c.stderr + g.stderr)
+            reason = (json.loads(c.stdout)["reason"] if c.stdout.strip()
+                      else "")
+            return reason, g.returncode, g.stderr
+
+        def on_ledger():
+            return subprocess.run(
+                ["git", "-C", str(repo), "-c", "core.longpaths=true", "show",
+                 "glados/ledger:" + rel], capture_output=True, text=True,
+                encoding="utf-8", errors="replace").stdout
+
+        put("v1\n")
+        reason, gemini, err = guards()
+        self.assertIn(rel, reason)
+        self.assertEqual(gemini, 2)
+        self.assertIn(rel, err)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertEqual(on_ledger(), "v1\n")
+        self.assertEqual(guards()[:2], ("", 0))
+        put("v2\n")
+        reason, gemini, err = guards()
+        self.assertIn(rel, reason)
+        self.assertEqual(gemini, 2)
+        rc, out = run_cli("ledger", "save", "--no-push", "--target", repo,
+                          full)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("saved 1 file(s)", out)
+        self.assertNotIn("removed", out)
+        self.assertEqual(on_ledger(), "v2\n")
+        self.assertEqual(guards()[:2], ("", 0))
+
+    def test_a_guard_started_with_stdin_closed_still_blocks(self):
+        """A host may start a hook with no stdin at all, and Python then
+        sets sys.stdin to None. The Gemini/agy guard's json.load raised
+        AttributeError: exit 1, a non-blocking error to both hosts, so the
+        session ended with the run's record unsaved. Both guards read no
+        event then, and block."""
+        repo = self._repo_at(tmpdir("glados-port-stdin-") / "r")
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        write(repo / ".glados" / "runs" / "current", "r1.md\n")
+        # sys.stdin as Python leaves it when the host passes no stdin.
+        none = ("import runpy, sys; p = sys.argv[1]; sys.argv = [p]; "
+                "sys.stdin = None; runpy.run_path(p, run_name='__main__')")
+        starts = [("sys.stdin None", lambda hook: dict(
+            args=[sys.executable, "-c", none, hook]))]
+        if os.name == "posix":
+            # And for real: file descriptor 0 closed before Python starts.
+            starts.append(("fd 0 closed", lambda hook: dict(
+                args=[sys.executable, hook], stdin=None,
+                preexec_fn=lambda: os.close(0))))
+        for label, how in starts:
+            for rel, blocked in (("hooks/claude-stop-hook.py", 0),
+                                 ("hooks/gemini-afteragent-guard.py", 2)):
+                with self.subTest(start=label, hook=rel):
+                    p = subprocess.run(
+                        **how(str(REPO / rel)), cwd=str(repo),
+                        capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=60)
+                    self.assertNotIn("Traceback", p.stderr)
+                    self.assertEqual(p.returncode, blocked, p.stderr)
+                    shown = p.stdout if blocked == 0 else p.stderr
+                    self.assertIn(".glados/runs/r1.md", shown)
+
+
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their
-    three states: no marker / marker + uncommitted record / committed."""
+    three states: no marker / marker + unsaved record / record saved to the
+    glados/ledger branch (v3.2: records never go on a work branch)."""
 
     def _repo(self):
         t = tmpdir("glados-hooks-")
@@ -1867,18 +7500,23 @@ class TestHookGuards(unittest.TestCase):
         git("commit", "-q", "-m", "feat: initial")
         return t, git
 
+    # A guard that never answers is killed by its host as timed out, a
+    # non-blocking error: the session ends, as if the guard had allowed.
+    HOOK_TIMEOUT = 30
+
     def _run_claude(self, repo):
         # claude-stop-hook takes the repo root from the event's "cwd" field
         return subprocess.run(
             [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
             input=json.dumps({"cwd": str(repo)}),
-            capture_output=True, text=True)
+            capture_output=True, text=True, timeout=self.HOOK_TIMEOUT)
 
     def _run_gemini(self, repo):
         # gemini-afteragent-guard uses the process cwd
         return subprocess.run(
             [sys.executable, str(REPO / "hooks" / "gemini-afteragent-guard.py")],
-            input="{}", capture_output=True, text=True, cwd=str(repo))
+            input="{}", capture_output=True, text=True, cwd=str(repo),
+            timeout=self.HOOK_TIMEOUT)
 
     def test_no_marker_allows(self):
         repo, _ = self._repo()
@@ -1902,20 +7540,659 @@ class TestHookGuards(unittest.TestCase):
         self.assertEqual(p.returncode, 2, "exit 2 retries the gemini turn")
         self.assertIn("run-1.md", p.stderr)
 
-    def test_marker_with_committed_record_allows(self):
+    def test_marker_with_saved_record_allows(self):
         repo, git = self._repo()
         write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
-        git("add", ".glados/runs/run-1.md")
-        git("commit", "-q", "-m", "chore(glados): record test run")
+        self._ledger_save(repo)
         write(repo / ".glados" / "runs" / "current", "run-1.md\n")
         p = self._run_claude(repo)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stdout.strip(), "",
-                         "committed record must not block")
+                         "saved record must not block")
         p = self._run_gemini(repo)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stderr.strip(), "",
-                         "committed record must not retry the turn")
+                         "saved record must not retry the turn")
+
+    def test_record_on_the_work_branch_is_not_saved(self):
+        """Committing the record to the branch, as before v3.2, is not the
+        save: the guard wants it on the ledger, and names the command."""
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        git("add", "-f", ".glados/runs/run-1.md")
+        git("commit", "-q", "-m", "chore(glados): record test run")
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        self._assert_blocks(repo, "run-1.md")
+        self.assertIn("ledger save", json.loads(
+            self._run_claude(repo).stdout)["reason"])
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push",
+                          ".glados/runs/run-1.md")
+        self.assertEqual(rc, 0, out)
+        self._assert_allows(repo)
+
+    def test_a_change_after_the_save_and_an_unsaved_artifact_block(self):
+        repo, _ = self._repo()
+        runs = repo / ".glados" / "runs"
+        write(runs / "run-1.md", "# run record\n")
+        self._ledger_save(repo)
+        write(runs / "stack", "run-1.md\n")
+        write(runs / "current", "run-1.md\n")
+        self._assert_allows(repo)
+        write(runs / "run-1.md", "# run record\n\n## Now\nstep 2\n")
+        self._assert_blocks(repo, "run-1.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        # a step artifact is the run's too
+        write(runs / "run-1.shape.md", "# shape\n")
+        self._assert_blocks(repo, "run-1.shape.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        # another run's file is not this run's to save, while the stack
+        # lists the runs in flight
+        write(runs / "other-run.md", "# another session's record\n")
+        self._assert_allows(repo)
+
+    def test_a_fetched_remote_ledger_counts(self):
+        """A record saved and pushed from another clone, then restored here,
+        is saved: the guard reads the remote-tracking copy too, and restore
+        neither creates nor moves this clone's own ledger branch."""
+        remote = tmpdir("glados-hooks-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        repo, git = self._repo()
+        git("remote", "add", "origin", str(remote))
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        self._ledger_save(repo, push=True)
+        other, ogit = self._repo()
+        ogit("remote", "add", "origin", str(remote))
+        rc, out = run_cli("ledger", "restore", "--target", other)
+        self.assertEqual(rc, 0, out)
+        local = subprocess.run(
+            ["git", "-C", str(other), "rev-parse", "--verify", "--quiet",
+             "refs/heads/glados/ledger"], capture_output=True, text=True)
+        self.assertNotEqual(local.returncode, 0,
+                            "restore never creates the local ledger branch")
+        write(other / ".glados" / "runs" / "current", "run-1.md\n")
+        self._assert_allows(other)
+
+    # -- nested runs: .glados/runs/stack (F2) ---------------------------------
+
+    def _ledger_save(self, repo, push=False):
+        rc, out = run_cli("ledger", "save", "--target", repo,
+                          *(() if push else ("--no-push",)))
+        self.assertEqual(rc, 0, out)
+
+    def _commit_records(self, repo, git, *names):
+        """Save each record to the ledger (the name is from when records
+        were committed to the branch)."""
+        for name in names:
+            write(repo / ".glados" / "runs" / name, f"# {name}\n")
+        self._ledger_save(repo)
+
+    def _assert_blocks(self, repo, name):
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue(p.stdout.strip(), "claude hook must block")
+        payload = json.loads(p.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn(name, payload["reason"])
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 2, "exit 2 retries the gemini turn")
+        self.assertIn(name, p.stderr)
+
+    def _assert_allows(self, repo):
+        p = self._run_claude(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.strip(), "", "claude hook must allow")
+        p = self._run_gemini(repo)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stderr.strip(), "", "gemini guard must allow")
+
+    def test_an_event_that_is_not_an_object_still_guards(self):
+        """The Claude hook read `cwd` with event.get, so an event that is
+        valid JSON but not an object (null, a list) raised AttributeError:
+        exit 1, a non-blocking error, and the session ended with a record
+        unsaved. A `cwd` that is not text crashed the same way. Both fall
+        back to the process's working directory, as a missing `cwd` does."""
+        repo, _ = self._repo()
+        write(repo / ".glados" / "runs" / "current", "run-1.md\n")
+        write(repo / ".glados" / "runs" / "run-1.md", "# run record\n")
+        for event in ("null", "[]", "3", '"x"', '{"cwd": 5}',
+                      '{"cwd": null}', '{"cwd": ["a"]}'):
+            with self.subTest(event=event):
+                p = subprocess.run(
+                    [sys.executable,
+                     str(REPO / "hooks" / "claude-stop-hook.py")],
+                    input=event, capture_output=True, text=True,
+                    cwd=str(repo))
+                self.assertEqual(p.returncode, 0, p.stderr)
+                self.assertNotIn("Traceback", p.stderr)
+                self.assertEqual(json.loads(p.stdout)["decision"], "block")
+
+    def test_a_marker_in_mixed_encodings_is_named_undecodable(self):
+        """Windows PowerShell 5.1 can leave a stack half UTF-8, half UTF-16
+        (`Set-Content`, then `>>`). It decoded as UTF-8 to names full of
+        NULs: the guard blocked, but called them missing records, put NULs
+        in its message and named one twice. A NUL is no record name: such a
+        marker is undecodable, and the message asks for a rewrite. A name
+        a marker repeats is named once, and two bad markers are "them"."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        (runs / "stack").write_bytes(
+            b"outer.md\r\n" + "inner.md\r\n".encode("utf-16-le")
+            + "inner.md\r\n".encode("utf-16-le"))
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read or "
+                                  "decoded")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertNotIn("\x00", reason)
+        self.assertNotIn("\x00", self._run_gemini(repo).stderr)
+        self.assertIn("Rewrite it as text", reason)
+        (runs / "current").write_bytes(b"\x80inner.md\n")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertIn(".glados/runs/stack and .glados/runs/current cannot "
+                      "be read", reason)
+        self.assertIn("Rewrite them as text", reason)
+        # a repeated name is named once
+        write(runs / "stack", "ghost.md\nghost.md\n")
+        write(runs / "current", "ghost.md\n")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertEqual(reason.count(".glados/runs/ghost.md"), 2, reason)
+
+    def test_stack_with_uncommitted_outer_record_blocks(self):
+        # build-feature (outer) runs plan-feature (inner): the inner record is
+        # committed, the outer one is not — the session must not end.
+        repo, git = self._repo()
+        self._commit_records(repo, git, "inner.md")
+        write(repo / ".glados" / "runs" / "outer.md", "# outer\n")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+
+    def test_stack_outer_record_never_tracked_blocks(self):
+        # The outer record is not on disk at all, so the dirty-tree check sees
+        # nothing; only reading the stack finds it. `current` alone (the
+        # pre-stack behaviour) names a committed record and would allow.
+        repo, git = self._repo()
+        self._commit_records(repo, git, "inner.md")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+
+    def test_stack_all_committed_allows(self):
+        repo, git = self._repo()
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(repo / ".glados" / "runs" / "stack", "outer.md\ninner.md\n")
+        write(repo / ".glados" / "runs" / "current", "inner.md\n")
+        self._assert_allows(repo)
+
+    def test_legacy_current_without_stack_still_guards(self):
+        # An install compiled before the stack existed writes only `current`.
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "current", "missing.md\n")
+        self._assert_blocks(repo, "missing.md")
+        self._commit_records(repo, git, "missing.md")
+        self._assert_allows(repo)
+
+    def test_stack_without_current_still_guards(self):
+        repo, git = self._repo()
+        write(repo / ".glados" / "runs" / "stack", "outer.md\n")
+        self._assert_blocks(repo, "outer.md")
+        # an empty leftover stack with no current means nothing is in flight
+        write(repo / ".glados" / "runs" / "stack", "")
+        self._assert_allows(repo)
+
+    def test_markers_in_any_shell_encoding(self):
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "run-1.md")
+        # a UTF-8 BOM must not make a committed record look untracked
+        (runs / "stack").write_bytes(b"\xef\xbb\xbfrun-1.md\n")
+        (runs / "current").write_bytes("run-1.md\n".encode("utf-8-sig"))
+        self._assert_allows(repo)
+        # UTF-16 (Windows PowerShell 5.1 redirection) naming an uncommitted
+        # record: decoded, and it blocks
+        (runs / "stack").unlink()
+        (runs / "current").write_bytes("run-2.md\r\n".encode("utf-16"))
+        write(runs / "run-2.md", "# run 2\n")
+        self._assert_blocks(repo, "run-2.md")
+        # an undecodable marker blocks, naming itself and every unsaved file
+        # under .glados/runs/, and the guard never crashes open
+        (runs / "current").write_bytes(b"\x80\x81run-2.md\n")
+        self._assert_blocks(repo, "run-2.md")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
+        (runs / "current").unlink()
+        (runs / "stack").write_bytes(b"\x80\x81run-2.md\n")
+        self._assert_blocks(repo, "run-2.md")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read")
+
+    def test_an_unreadable_marker_blocks_though_every_file_is_saved(self):
+        """A marker that exists but cannot be read or decoded hides which
+        runs are in flight, so none of them can be shown saved. It used to
+        read as no record at all: with every file on disk saved, the
+        session ended though the run it named might have no record yet."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        way_out = "delete both .glados/runs/current and .glados/runs/stack"
+        undecodable = b"\x80\x81outer.md\ninner.md\n"
+        for state in ("stack undecodable", "current undecodable",
+                      "stack unreadable, current readable"):
+            with self.subTest(state=state):
+                for name in ("stack", "current"):
+                    path = runs / name
+                    if path.is_dir():
+                        path.rmdir()
+                    elif path.exists():
+                        path.unlink()
+                if state == "stack undecodable":
+                    (runs / "stack").write_bytes(undecodable)
+                    bad = ".glados/runs/stack"
+                elif state == "current undecodable":
+                    (runs / "current").write_bytes(undecodable)
+                    bad = ".glados/runs/current"
+                else:
+                    (runs / "stack").mkdir()  # exists; reading it fails
+                    write(runs / "current", "inner.md\n")
+                    bad = ".glados/runs/stack"
+                self._assert_blocks(repo, f"{bad} cannot be read")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertIn(way_out, reason)
+                self.assertIn(way_out, self._run_gemini(repo).stderr)
+        # rewritten as text, the same saved records let the session end
+        (runs / "stack").rmdir()
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_allows(repo)
+
+    def test_an_unreadable_stack_still_guards_the_outer_run(self):
+        """With current readable, an unreadable stack used to narrow the
+        check to current's own record, so an outer run's unsaved record let
+        the session end. As before the ledger (918f16a), the guard blocks
+        while any run that may be on the stack lacks a saved record, and
+        names it."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "inner.md")
+        write(runs / "outer.md", "# outer\n")
+        (runs / "stack").write_bytes("outer.md\ninner.md\n".encode("utf-16")
+                                     [:-1])  # a truncated UTF-16 write
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, "outer.md")
+        self._assert_blocks(repo, ".glados/runs/stack cannot be read")
+        # the same outer run on a readable stack is guarded as it always was
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_blocks(repo, "outer.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+
+    def test_a_current_with_no_stack_lines_guards_every_record(self):
+        """With `current` set, a stack that is missing, empty or blank names
+        no run enclosing it (the preamble writes the stack for every run,
+        its last line equal to current), so it cannot clear one. Only
+        current's own files were checked, and an outer run's unsaved record
+        let the session end; 918f16a's dirty check covered every record."""
+        for state in ("missing", "empty", "blank lines"):
+            with self.subTest(stack=state):
+                repo, git = self._repo()
+                runs = repo / ".glados" / "runs"
+                self._commit_records(repo, git, "inner.md")
+                write(runs / "outer.md", "# outer\n")
+                write(runs / "current", "inner.md\n")
+                if state == "empty":
+                    (runs / "stack").write_bytes(b"")
+                elif state == "blank lines":
+                    (runs / "stack").write_bytes(b"\n  \r\n\t\n")
+                self._assert_blocks(repo, "outer.md")
+                self._ledger_save(repo)
+                self._assert_allows(repo)
+        # a stack that lists the runs in flight is the authority: a file no
+        # run on it owns is not this session's to save
+        write(runs / "stack", "inner.md\n")
+        write(runs / "stale.md", "# a crashed session's record\n")
+        self._assert_allows(repo)
+        (runs / "stack").unlink()
+        self._assert_blocks(repo, "stale.md")
+
+    def test_a_marker_names_a_record_by_its_exact_name(self):
+        """On Windows and macOS a name that differs in case (or, on Windows,
+        ends in a dot) opens the record, so it did not count as missing,
+        but no file matched it exactly, so none was checked and an unsaved
+        run let the session end. A marker names a record exactly, or the
+        guard blocks and says so."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "inner.md")
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "stack", "Outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, ".glados/runs/Outer.md")
+        self._assert_blocks(repo, "no file has exactly the name")
+        self._ledger_save(repo)  # saves outer.md, which is not `Outer.md`
+        self._assert_blocks(repo, ".glados/runs/Outer.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        self._assert_allows(repo)
+        # a trailing dot reaches inner.md on Windows; it names no record
+        write(runs / "inner.md", "# inner, changed since the save\n")
+        write(runs / "stack", "outer.md\ninner.md.\n")
+        write(runs / "current", "inner.md.\n")
+        self._assert_blocks(repo, ".glados/runs/inner.md.")
+
+    def _deny(self, path, listing_only=False):
+        """Take this user's access to ``path`` (only the right to list it,
+        with ``listing_only``) for the rest of the test. Skips where the
+        account ignores it (root)."""
+        if os.name == "nt":
+            user = os.environ.get("USERNAME")
+            if not user:
+                self.skipTest("no USERNAME to deny access to")
+            # Not (F): that denies this user READ_CONTROL and WRITE_DAC
+            # too, so the cleanup's /remove:d failed and every run left a
+            # directory in %TEMP% only an administrator can delete.
+            # SYNCHRONIZE, list and read-attributes are enough: opening the
+            # directory, or anything in it, fails.
+            rights = "(RD)" if listing_only else "(OI)(CI)(S,RD,RA)"
+            p = subprocess.run(["icacls", str(path), "/deny",
+                                f"{user}:{rights}"],
+                               capture_output=True, text=True)
+            if p.returncode:
+                self.skipTest(f"icacls refused: {p.stdout}{p.stderr}")
+            self.addCleanup(subprocess.run, ["icacls", str(path),
+                                             "/remove:d", user],
+                            capture_output=True)
+        else:
+            mode = path.stat().st_mode
+            os.chmod(path, 0o300 if listing_only else 0)
+            self.addCleanup(os.chmod, path, mode)
+        try:
+            os.listdir(path)
+        except PermissionError:
+            return
+        self.skipTest("this account lists a directory it was denied")
+
+    def test_a_runs_directory_that_cannot_be_read_blocks(self):
+        """A permission error on .glados/runs/ or a directory in it hid the
+        files there. From Python 3.13, Path.exists() reads it as no marker,
+        so no run was in flight; on 3.10, listing the directory raised,
+        which both hosts treat as a non-blocking error. Either way the
+        session ended with a run's record unsaved. A directory under
+        .glados/runs/ that rglob could not read was skipped the same way."""
+        for state in ("all access denied", "listing denied"):
+            with self.subTest(runs=state):
+                repo, git = self._repo()
+                runs = repo / ".glados" / "runs"
+                self._commit_records(repo, git, "inner.md")
+                write(runs / "outer.md", "# outer\n")
+                write(runs / "stack", "outer.md\ninner.md\n")
+                write(runs / "current", "inner.md\n")
+                self._deny(runs, listing_only=state == "listing denied")
+                self._assert_blocks(repo, ".glados/runs cannot be listed")
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "inner.steps" / "design.md", "# not saved\n")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_blocks(repo, "inner.steps/design.md")
+        self._deny(runs / "inner.steps", listing_only=True)
+        self._assert_blocks(repo, ".glados/runs/inner.steps cannot be listed")
+
+    def test_a_marker_that_is_a_dangling_link_blocks(self):
+        """Path.exists() follows a link, so a marker that is a link to
+        nothing counted as no marker at all."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "run.md")
+        try:
+            os.symlink(runs / "nowhere", runs / "current")
+        except (OSError, NotImplementedError):
+            self.skipTest("this account cannot make a symbolic link")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
+
+    def test_an_unreadable_current_names_files_no_run_on_the_stack_owns(self):
+        """With the stack readable and current not, current may name a run
+        the stack does not list, so every unsaved file under .glados/runs/
+        is the run's to save, and the message names each one, not only the
+        records the stack lists."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        (runs / "current").write_bytes(b"\x80\x81newest.md\n")
+        write(runs / "newest.md", "# a run current named\n")
+        self._assert_blocks(repo, ".glados/runs/current cannot be read")
+        self._assert_blocks(repo, "not saved to the glados/ledger branch: "
+                                  ".glados/runs/newest.md")
+
+    def test_a_project_in_a_subdirectory_is_guarded_by_its_own_paths(self):
+        """In a project in a subdirectory of its repository, git gave the
+        guards paths from the top level (the ledger's, and `diff`'s), so
+        no saved record matched and a tracked record changed since its
+        commit counted as unchanged: with no stack line it was let off
+        unsaved."""
+        repo, git = self._repo()
+        app = repo / "packages" / "app"
+        runs = app / ".glados" / "runs"
+        write(runs / "old.md", "# a record committed before 2.5\n")
+        git("add", "-f", "packages/app/.glados/runs/old.md")
+        git("commit", "-q", "-m", "chore(glados): record old run")
+        write(runs / "inner.md", "# inner\n")
+        rc, out = run_cli("ledger", "save", "--target", app, "--no-push")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("packages/app/.glados/runs/inner.md", out)
+        write(runs / "current", "inner.md\n")
+        self._assert_allows(app)
+        write(runs / "old.md", "# a record committed before 2.5\nedited\n")
+        self._assert_blocks(app, ".glados/runs/old.md")
+        rc, out = run_cli("ledger", "save", "--target", app, "--no-push",
+                          ".glados/runs/old.md")
+        self.assertEqual(rc, 0, out)
+        self._assert_allows(app)
+
+    # -- a record is a regular file -------------------------------------------
+
+    def _record_in_flight(self):
+        """outer.md and inner.md saved, the stack listing both: the session
+        may end. Returns (repo, runs)."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        self._commit_records(repo, git, "outer.md", "inner.md")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        self._assert_allows(repo)
+        return repo, runs
+
+    def test_a_directory_in_place_of_a_record_blocks(self):
+        """An entry with a record's exact name counted as the record, but a
+        directory yields no file to check: the guard allowed the stop with
+        no record on disk, whether or not the ledger held one. A record
+        exists only as a regular file."""
+        repo, runs = self._record_in_flight()
+        (runs / "outer.md").unlink()
+        (runs / "outer.md").mkdir()
+        not_a_record = ".glados/runs/outer.md is a directory, not a record"
+        self._assert_blocks(repo, not_a_record)
+        # a file inside it is no record either
+        write(runs / "outer.md" / "notes.md", "# notes\n")
+        self._assert_blocks(repo, not_a_record)
+        # with current alone (no stack line), and with a record never saved
+        (runs / "stack").unlink()
+        write(runs / "current", "outer.md\n")
+        self._assert_blocks(repo, not_a_record)
+        (runs / "never.md").mkdir()
+        write(runs / "current", "never.md\n")
+        self._assert_blocks(repo, ".glados/runs/never.md is a directory")
+        reason = json.loads(self._run_claude(repo).stdout)["reason"]
+        self.assertIn("put the record file there", reason)
+
+    def _link_or_skip(self, target, link):
+        """A symbolic link at ``link``, or on Windows, where an account
+        without the privilege cannot make one, a junction (to a directory
+        only). Skips when neither can be made."""
+        try:
+            os.symlink(target, link, target_is_directory=target.is_dir())
+            return
+        except (OSError, NotImplementedError):
+            pass
+        if os.name == "nt" and target.is_dir():
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        self.skipTest("this account cannot make a symbolic link")
+
+    def test_a_record_that_is_a_dangling_link_blocks(self):
+        """A record's name that is a link to nothing listed as an entry, so
+        the record was not missing, and _walk found no file under it: the
+        stop was allowed with the record gone."""
+        repo, runs = self._record_in_flight()
+        (runs / "outer.md").unlink()
+        try:
+            os.symlink(runs / "nowhere.md", runs / "outer.md")
+        except (OSError, NotImplementedError):
+            self.skipTest("this account cannot make a symbolic link")
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to "
+                                  "nothing, not a record")
+
+    def test_a_record_that_links_to_a_directory_blocks(self):
+        """A link (on Windows, a junction) to a directory under a record's
+        name is no record, and one whose directory is gone is a link to
+        nothing. Both were allowed. A junction is not walked into either:
+        one back to .glados/runs/ looped, listing outer.md/outer.md/...
+        until the path was too long (with long paths on, until the
+        recursion limit crashed the guard open)."""
+        repo, runs = self._record_in_flight()
+        elsewhere = tmpdir("glados-hooks-elsewhere-")
+        (runs / "outer.md").unlink()
+        self._link_or_skip(elsewhere, runs / "outer.md")
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to a "
+                                  "directory, not a record")
+        shutil.rmtree(elsewhere)
+        self._assert_blocks(repo, ".glados/runs/outer.md is a link to "
+                                  "nothing, not a record")
+        if os.name == "nt":
+            os.rmdir(runs / "outer.md")  # a junction or a directory link
+        else:
+            (runs / "outer.md").unlink()
+        self._link_or_skip(runs, runs / "outer.md")
+        for state in ("stack", "no stack"):
+            with self.subTest(state=state):
+                if state == "no stack":
+                    (runs / "stack").unlink()
+                    write(runs / "current", "outer.md\n")
+                self._assert_blocks(repo, ".glados/runs/outer.md is a link "
+                                          "to a directory")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertNotIn("outer.md/", reason)
+
+    def test_a_link_the_guard_cannot_follow_blocks(self):
+        """A link under .glados/runs/ whose target this user cannot reach: on
+        POSIX one into a directory it may not search, on Windows a junction
+        to a directory it was denied. The walk asked Path.is_file() of each
+        link, which on Python 3.10 to 3.12 raises every error but a missing
+        target: both guards exited 1, a non-blocking error to both hosts,
+        and the session ended with the record unsaved. A link is neither
+        saved nor walked into, so it counts as no file either way."""
+        repo, git = self._repo()
+        runs = repo / ".glados" / "runs"
+        outer = tmpdir("glados-hooks-denied-")
+        write(outer / "inner" / "notes.txt", "# notes\n")
+        write(runs / "r1.md", "# r1\n")
+        self._link_or_skip(outer / "inner", runs / "r1.evidence")
+        self._deny(outer / "inner" if os.name == "nt" else outer)
+        write(runs / "stack", "r1.md\n")
+        write(runs / "current", "r1.md\n")
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        (runs / "stack").unlink()       # current alone: every file counts
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        self._ledger_save(repo)
+        self._assert_allows(repo)
+        write(runs / "stack", "r1.md\n")
+        self._assert_allows(repo)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "this platform has no FIFO")
+    def test_a_marker_that_is_no_regular_file_blocks(self):
+        """A marker that is a FIFO made the guard's read wait for a writer
+        that never came (a link to /dev/zero, for one that never ends): the
+        host killed it as timed out, a non-blocking error, and the session
+        ended. A marker that is a device read as empty. A marker is a
+        regular file, or it cannot be read, and blocks."""
+        for name in ("current", "stack"):
+            for kind in ("FIFO", "device"):
+                with self.subTest(marker=name, kind=kind):
+                    repo, git = self._repo()
+                    runs = repo / ".glados" / "runs"
+                    self._commit_records(repo, git, "r1.md")
+                    if kind == "FIFO":
+                        os.mkfifo(runs / name)
+                    else:
+                        os.symlink(os.devnull, runs / name)
+                    try:
+                        self._assert_blocks(
+                            repo, f".glados/runs/{name} cannot be read")
+                    except subprocess.TimeoutExpired:
+                        self.fail(f"a guard waited on the {kind} {name}")
+
+    @unittest.skipIf(os.name == "nt" or sys.platform == "darwin",
+                     "this platform holds only file names in Unicode")
+    def test_a_file_name_that_is_not_utf8_is_saved_and_guarded(self):
+        """Linux holds any bytes in a file name, and a step artifact can
+        carry one in Latin-1 (caf\\xe9.txt, from an archive or a tool).
+        `ledger save` stopped with a UnicodeEncodeError traceback, and the
+        guards, which decoded git's output with replacement, could not
+        match the saved name to the file: they would have blocked forever.
+        Save, restore and both guards carry the name's bytes through."""
+        repo, git = self._repo()
+        git("remote", "add", "origin", "https://example.com/team/proj.git")
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        (runs / "r1.evidence").mkdir()
+        odd = os.fsencode(runs / "r1.evidence") + b"/caf\xe9.txt"
+        with open(odd, "wb") as fh:
+            fh.write(b"menu\n")
+        write(runs / "stack", "r1.md\n")
+        write(runs / "current", "r1.md\n")
+        self._assert_blocks(repo, ".glados/runs/r1.md")
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("saved 2 file(s)", out)
+        self.assertIn("/glados/ledger/.glados/runs/r1.evidence/caf%E9.txt",
+                      out)
+        listed = subprocess.run(
+            ["git", "-C", str(repo), "ls-tree", "-r", "-z", "--name-only",
+             "glados/ledger"], capture_output=True).stdout.split(b"\0")
+        self.assertIn(b".glados/runs/r1.evidence/caf\xe9.txt", listed)
+        self._assert_allows(repo)
+        (runs / "stack").unlink()       # current alone: every file counts
+        self._assert_allows(repo)
+        os.unlink(odd)
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        with open(odd, "rb") as fh:
+            self.assertEqual(fh.read(), b"menu\n")
+        self._assert_allows(repo)
+
+    def test_block_message_names_both_markers_and_the_way_out(self):
+        repo, _ = self._repo()
+        runs = repo / ".glados" / "runs"
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "inner.md", "# inner\n")
+        write(runs / "stack", "outer.md\ninner.md\n")
+        write(runs / "current", "inner.md\n")
+        way_out = "delete both .glados/runs/current and .glados/runs/stack"
+        for state in ("both markers", "stack only"):
+            with self.subTest(state=state):
+                if state == "stack only":
+                    # following half the hint keeps the guard on
+                    (runs / "current").unlink()
+                self._assert_blocks(repo, "outer.md")
+                reason = json.loads(self._run_claude(repo).stdout)["reason"]
+                self.assertIn(".glados/runs/stack", reason)
+                self.assertIn(way_out, reason)
+                self.assertIn(way_out, self._run_gemini(repo).stderr)
+        (runs / "stack").unlink()
+        self._assert_allows(repo)
 
     def test_toml_special_chars_roundtrip(self):
         # Backslashes, quotes and a Python triple-quote inside a core body must
@@ -1965,6 +8242,1441 @@ class TestHookGuards(unittest.TestCase):
         fm, _ = glados.split_frontmatter(
             read(t / "skills/intent/SKILL.md"), "SKILL.md")
         self.assertEqual(fm["description"], expected)
+
+
+class TestRunLedger(unittest.TestCase):
+    """v3.2 item 6: run records stay off the work branch.
+
+    The third trial run committed its record and 63 step artifacts to the
+    feature branch, so its MR showed 112 changed files, most of them process
+    records. Every run's record and step artifacts now live on the
+    glados/ledger branch (epilogue step 4, said once), moved there by
+    `glados.py ledger save`, which commits without touching the checked-out
+    branch, the index or tracked files, merges what another session pushed,
+    and pushes. These tests drive the helper against real repositories and
+    a bare remote, and pin the compiled rules that point at it."""
+
+    # -- repositories ----------------------------------------------------------
+
+    def _git(self, repo, *a, check=True):
+        p = subprocess.run(["git", "-C", str(repo), *a], capture_output=True,
+                           text=True)
+        if check:
+            self.assertEqual(p.returncode, 0, f"git {a}: {p.stderr}")
+        return p.stdout.strip()
+
+    def _remote(self):
+        remote = tmpdir("glados-ledger-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        return remote
+
+    def _clone(self, remote=None, seed=False):
+        """A work repository on `main` with one commit, its origin the bare
+        ``remote`` when given; ``seed`` pushes main there first."""
+        t = tmpdir("glados-ledger-repo-")
+        self._git(t, "init", "-q")
+        self._git(t, "config", "user.email", "t@example.com")
+        self._git(t, "config", "user.name", "t")
+        self._git(t, "config", "commit.gpgsign", "false")
+        self._git(t, "checkout", "-q", "-b", "main")
+        write(t / "app.py", "print('hi')\n")
+        self._git(t, "add", "-A")
+        self._git(t, "commit", "-q", "-m", "feat: initial")
+        if remote is not None:
+            self._git(t, "remote", "add", "origin", str(remote))
+            if seed:
+                self._git(t, "push", "-q", "origin", "main")
+        return t
+
+    def _save(self, repo, *extra, ok=True):
+        rc, out = run_cli("ledger", "save", "--target", repo, *extra)
+        if ok:
+            self.assertEqual(rc, 0, out)
+        return rc, out
+
+    def _ledger_files(self, repo, ref="glados/ledger"):
+        return set(self._git(repo, "ls-tree", "-r", "--name-only", ref)
+                   .split())
+
+    def _show(self, repo, ref, path):
+        return self._git(repo, "show", f"{ref}:{path}")
+
+    # -- the helper ------------------------------------------------------------
+
+    def test_save_leaves_the_work_branch_alone(self):
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        self._git(repo, "checkout", "-q", "-b", "feat/thing")
+        write(repo / "app.py", "print('changed')\n")      # unstaged work
+        write(repo / "lib.py", "x = 1\n")
+        self._git(repo, "add", "lib.py")                   # staged work
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-10-21-run-pipeline-x.md", "# record\n")
+        write(runs / "2026-10-21-run-pipeline-x.shape.md", "# shape\n")
+        write(runs / "2026-10-21-run-pipeline-x.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "2026-10-21-run-pipeline-x.md\n")
+        write(runs / "stack", "2026-10-21-run-pipeline-x.md\n")
+        head = self._git(repo, "rev-parse", "HEAD")
+        status = self._git(repo, "status", "--porcelain")
+        rc, out = self._save(repo)
+        self.assertIn("pushed glados/ledger to origin", out)
+        self.assertEqual(self._git(repo, "rev-parse", "HEAD"), head)
+        self.assertEqual(self._git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+                         "feat/thing")
+        # the index and the work are as they were, and nothing is new: the
+        # records are ignored through the clone's exclude file
+        self.assertEqual(self._git(repo, "diff", "--cached", "--name-only"),
+                         "lib.py")
+        self.assertIn("M app.py", self._git(repo, "status", "--porcelain"))
+        self.assertEqual(
+            set(self._git(repo, "status", "--porcelain", "-uall")
+                .splitlines()) - set(status.splitlines()), set())
+        self.assertFalse((runs / ".gitignore").exists())
+        # the ledger holds the run's files and nothing else: an orphan branch
+        # with no markers and none of the project's files
+        expected = {".glados/runs/2026-10-21-run-pipeline-x.md",
+                    ".glados/runs/2026-10-21-run-pipeline-x.shape.md",
+                    ".glados/runs/2026-10-21-run-pipeline-x.evidence/log.txt"}
+        self.assertEqual(self._ledger_files(repo), expected)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"),
+                         expected)
+        self.assertEqual(
+            self._git(repo, "rev-list", "--count", "glados/ledger"), "1")
+        # committing everything on the work branch takes no record
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "feat: the change")
+        changed = self._git(repo, "diff", "--name-only", "main", "HEAD")
+        self.assertNotIn("2026-10-21", changed)
+        self.assertEqual(set(changed.split()), {"app.py", "lib.py"})
+        # the link points at the ledger copy, never the work branch
+        self._git(repo, "remote", "set-url", "origin",
+                  "git@gitlab.example.com:group/project.git")
+        rc, out = run_cli("ledger", "link", "--target", repo,
+                          "2026-10-21-run-pipeline-x.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.strip(),
+                         "https://gitlab.example.com/group/project/-/blob/"
+                         "glados/ledger/.glados/runs/"
+                         "2026-10-21-run-pipeline-x.md")
+
+    def test_another_clone_restores_and_both_sides_survive(self):
+        """A run resumed on another machine reads the records back; saves
+        from two sessions that both moved the ledger keep both: new files
+        from each, and both sides' lines of a record they both edited."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nstep 1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"),
+                         "# r1\nstep 1\n")
+        self.assertEqual(self._git(b, "status", "--porcelain", "-uall"), "",
+                         "restored records are ignored in the new clone")
+        # both edit r1 and add a record of their own
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nstep 1\nfrom a\n")
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        write(b / ".glados" / "runs" / "r1.md", "# r1\nstep 1\nfrom b\n")
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        self._save(a)
+        rc, out = self._save(b)
+        self.assertIn("merged keeping both sides' lines", out)
+        files = self._ledger_files(b, "origin/glados/ledger")
+        self.assertEqual(files, {".glados/runs/r1.md", ".glados/runs/ra.md",
+                                 ".glados/runs/rb.md"})
+        merged = self._show(b, "origin/glados/ledger", ".glados/runs/r1.md")
+        self.assertIn("from a", merged)
+        self.assertIn("from b", merged)
+        # the merged copy is written back, so b's copy is the saved one
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md").strip(),
+                         merged)
+        # a: its own copy of r1 is an earlier version now; restore refreshes
+        # it, and a save would not write it back over the ledger's
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("from b", read(a / ".glados" / "runs" / "r1.md"))
+        self.assertTrue((a / ".glados" / "runs" / "rb.md").is_file())
+
+    def test_a_stale_copy_never_overwrites_the_ledger(self):
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\n")
+        self._save(a)
+        b = self._clone(remote)
+        run_cli("ledger", "restore", "--target", b)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\nv2\n")
+        self._save(a)
+        # b never touched r1; its save must not put v1 back
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        rc, out = self._save(b)
+        self.assertIn("earlier version", out)
+        self.assertEqual(
+            self._show(b, "origin/glados/ledger", ".glados/runs/r1.md"),
+            "# r1\nv1\nv2")
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"),
+                         "# r1\nv1\nv2\n", "the stale copy is refreshed")
+
+    def test_restore_keeps_unsaved_work_and_named_records(self):
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "2026-10-20-run-pipeline-p.md", "# parked\n")
+        write(runs / "2026-10-20-run-pipeline-p.plan.md", "# plan\n")
+        write(runs / "2026-10-19-review-mr-q.md", "# other\n")
+        self._save(a)
+        b = self._clone(remote)
+        write(b / ".glados" / "runs" / "2026-10-20-run-pipeline-p.md",
+              "# parked\nunsaved local work\n")
+        rc, out = run_cli("ledger", "restore", "--target", b,
+                          "2026-10-20-run-pipeline-p.md")
+        self.assertEqual(rc, 0, out)
+        bruns = b / ".glados" / "runs"
+        self.assertEqual(read(bruns / "2026-10-20-run-pipeline-p.md"),
+                         "# parked\nunsaved local work\n")
+        self.assertIn("kept this copy", out)
+        self.assertTrue((bruns / "2026-10-20-run-pipeline-p.plan.md").is_file(),
+                        "a named record comes back with its step artifacts")
+        self.assertFalse((bruns / "2026-10-19-review-mr-q.md").exists(),
+                         "only the named record and its artifacts")
+
+    def test_a_push_rejected_by_a_newer_remote_is_merged_and_retried(self):
+        """The remote moved between this save's fetch and its push: the push
+        is rejected, the save fetches, merges and pushes again, and neither
+        side's commit is lost (nothing is force-pushed)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        b = self._clone(remote)
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a)
+        a_tip = self._git(a, "rev-parse", "glados/ledger")
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        real_fetch = glados._ledger_fetch
+        calls = []
+
+        def stale_first(git, remote_name):
+            calls.append(remote_name)
+            if len(calls) == 1:
+                return None                 # pretend: nothing new out there
+            return real_fetch(git, remote_name)
+
+        args = argparse.Namespace(target=str(b), paths=[], remote="origin",
+                                  message=None, no_push=False)
+        buf = io.StringIO()
+        glados._ledger_fetch = stale_first
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = glados.cmd_ledger_save(args)
+        finally:
+            glados._ledger_fetch = real_fetch
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertGreaterEqual(len(calls), 2, "the rejection fetched again")
+        tip = self._git(b, "rev-parse", "origin/glados/ledger")
+        kept = subprocess.run(["git", "-C", str(b), "merge-base",
+                               "--is-ancestor", a_tip, tip])
+        self.assertEqual(kept.returncode, 0, "the other session's save is "
+                                             "an ancestor of the new tip")
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/ra.md", ".glados/runs/rb.md"})
+
+    def test_a_failed_push_keeps_the_commit_for_the_next_save(self):
+        repo = self._clone()
+        self._git(repo, "remote", "add", "origin",
+                  str(tmpdir("glados-ledger-gone-") / "missing.git"))
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        rc, out = self._save(repo, ok=False)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT pushed", out)
+        self.assertIn("the next `ledger save` pushes it", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+        remote = self._remote()
+        self._git(repo, "remote", "set-url", "origin", str(remote))
+        rc, out = self._save(repo)
+        self.assertIn("pushed glados/ledger to origin", out)
+        # it pushed a save from before, so it does not say nothing happened
+        self.assertIn("no new or changed file to save", out)
+        self.assertNotIn("nothing new", out)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"),
+                         {".glados/runs/r1.md"})
+
+    def test_a_save_that_only_merges_does_not_say_nothing_happened(self):
+        """A clone whose unpushed saves diverged from the remote's merges
+        and pushes them with no file of its own to add. The hand smoke test
+        of the final check saw this print "nothing new to save" above
+        "pushed" (final round)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a)
+        b = self._clone(remote)
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        self._save(b, "--no-push")
+        rc, out = self._save(b)
+        self.assertIn("no new or changed file to save", out)
+        self.assertIn("this clone's earlier saves were merged", out)
+        self.assertIn("pushed glados/ledger to origin", out)
+        self.assertNotIn("nothing new", out)
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/ra.md", ".glados/runs/rb.md"})
+
+    def test_a_named_path_that_is_gone_leaves_the_ledger(self):
+        """steward's compaction: a deleted record, named, is removed from the
+        ledger, and the digest that replaces it is saved with it."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "old.md", "# settled\n")
+        write(runs / "old.review-1.md", "# review\n")
+        self._save(repo, "--no-push")
+        (runs / "old.md").unlink()
+        (runs / "old.review-1.md").unlink()
+        write(runs / "DIGEST.md", "| 2026-10-01 | run-pipeline | done |\n")
+        rc, out = self._save(repo, "--no-push", ".glados/runs/old.md",
+                             "old.review-1.md", ".glados/runs/DIGEST.md")
+        self.assertIn("removed 2", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/DIGEST.md"})
+        # history keeps what compaction removed
+        self.assertIn("# settled", self._show(repo, "glados/ledger~1",
+                                              ".glados/runs/old.md"))
+        rc, out = run_cli("ledger", "save", "--target", repo, "--no-push",
+                          repo / "app.py")
+        self.assertEqual(rc, 1)
+        self.assertIn("not under .glados/runs/", out)
+
+    def test_records_a_branch_already_carries_are_left_alone(self):
+        """Migration: records committed to a branch before v3.2 stay there,
+        untouched; a save does not copy them and a restore does not
+        overwrite them, and no history is rewritten."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-06-01-build-feature-old.md", "# old record\n")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "chore(glados): record run")
+        before = self._git(repo, "rev-parse", "HEAD")
+        write(runs / "2026-10-21-build-feature-new.md", "# new record\n")
+        self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo),
+                         {".glados/runs/2026-10-21-build-feature-new.md"})
+        self.assertEqual(self._git(repo, "rev-parse", "HEAD"), before)
+        self.assertEqual(self._git(repo, "status", "--porcelain",
+                                   "--", ".glados/runs/2026-06-01-"
+                                   "build-feature-old.md"), "")
+
+    def test_refuses_to_move_a_ledger_checked_out_in_a_worktree(self):
+        repo = self._clone()
+        write(repo / ".glados" / "runs" / "r1.md", "# r1\n")
+        self._save(repo, "--no-push")
+        wt = tmpdir("glados-ledger-wt-") / "ledger"
+        self._git(repo, "worktree", "add", "-q", str(wt), "glados/ledger")
+        write(repo / ".glados" / "runs" / "r2.md", "# r2\n")
+        rc, out = self._save(repo, "--no-push", ok=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("is checked out at", out)
+        self.assertIn("remove that worktree (`git worktree remove", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+        # checked out in the main working tree, which `git worktree remove`
+        # cannot remove: the way out is to switch it to another branch
+        self._git(repo, "worktree", "remove", str(wt))
+        self._git(repo, "checkout", "-q", "glados/ledger")
+        rc, out = self._save(repo, "--no-push", ok=False)
+        self.assertEqual(rc, 1)
+        self.assertIn("switch it to another branch", out)
+        self.assertIn("main working tree", out)
+        self.assertNotIn("remove that worktree", out)
+        self._git(repo, "checkout", "-q", "main")
+        self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo),
+                         {".glados/runs/r1.md", ".glados/runs/r2.md"})
+
+    def _dir_link_or_skip(self, target, link):
+        """A directory symlink at ``link``, or on Windows without the
+        privilege a junction, which needs none; removed at cleanup without
+        touching what it points at. Skips when neither can be made."""
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                self.skipTest("this account cannot make a symbolic link")
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        self.addCleanup(lambda: os.rmdir(link) if os.name == "nt"
+                        else os.unlink(link))
+
+    def test_save_follows_no_link_or_junction_under_runs(self):
+        """save walked .glados/runs/ with rglob, which takes a Windows
+        junction for a directory: one back to .glados/runs/ saved
+        outer.loop/outer.loop/.../r.md copies to the ledger (the local-only
+        markers among them), and one to a directory outside the repository
+        saved that directory's files. The guards never walk a link or a
+        junction; save no longer does either."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r.md", "# r\n")
+        write(runs / "current", "r.md\n")
+        write(runs / "r.evidence" / "log.txt", "ok\n")
+        outside = tmpdir("glados-ledger-outside-")
+        write(outside / "secret.md", "secret\n")
+        self._dir_link_or_skip(runs, runs / "outer.loop")
+        self._dir_link_or_skip(outside, runs / "r.evidence" / "elsewhere")
+        expected = {".glados/runs/r.md", ".glados/runs/r.evidence/log.txt"}
+        for named in ((), (".glados/runs",), (".glados/runs/r.evidence",)):
+            with self.subTest(named=named):
+                rc, out = self._save(repo, "--no-push", *named)
+                self.assertEqual(self._ledger_files(repo), expected)
+                self.assertNotIn("outer.loop", out)
+                self.assertNotIn("secret", out)
+
+    def test_save_reads_a_runs_directory_that_is_itself_a_link(self):
+        """The guards list .glados/runs/ itself through a link or junction,
+        and only walk no link inside it. save, walking no link at all,
+        found no file in a linked runs directory, so it saved nothing while
+        the guard blocked on the records it saw."""
+        repo = self._clone()
+        shared = tmpdir("glados-ledger-shared-runs-")
+        write(shared / "r.md", "# r\n")
+        write(shared / "current", "r.md\n")
+        (repo / ".glados").mkdir()
+        self._dir_link_or_skip(shared, repo / ".glados" / "runs")
+        self.assertIn("r.md", self._guard(repo)[0])
+        rc, out = self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r.md"})
+        self.assertEqual(self._guard(repo), ("", 0))
+
+    def test_a_file_and_a_directory_never_share_a_name_on_the_ledger(self):
+        """A directory put where a saved record was went into one tree with
+        that record, and git kept the directory: the record left the ledger
+        while save said only "saved 1 file(s)". The record written back
+        unchanged was then an earlier version the ledger had removed, left
+        off, and the guard blocked until it was edited. Neither now
+        replaces the other: the new path is left off with a note, and the
+        ledger keeps what it held."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "outer.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "outer.md\n")
+        self._save(repo, "--no-push")
+        saved = {".glados/runs/outer.md", ".glados/runs/outer.evidence/log.txt"}
+        # a directory where the ledger has a file, saved by name too
+        (runs / "outer.md").unlink()
+        write(runs / "outer.md" / "x.md", "# x\n")
+        for named in ((), (".glados/runs/outer.md",)):
+            with self.subTest(named=named):
+                rc, out = self._save(repo, "--no-push", *named)
+                self.assertIn(".glados/runs/outer.md/x.md: the ledger has a "
+                              "file at .glados/runs/outer.md; left off the "
+                              "ledger", out)
+                self.assertNotIn("saved 1", out)
+                self.assertEqual(self._ledger_files(repo), saved)
+        self.assertIn("outer.md is a directory", self._guard(repo)[0])
+        # restore wrote the ledger's record over the directory, and crashed
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(".glados/runs/outer.md: not restored, as "
+                      ".glados/runs/outer.md is a directory here", out)
+        self.assertEqual(read(runs / "outer.md" / "x.md"), "# x\n")
+        # the record put back unchanged is the saved one
+        shutil.rmtree(runs / "outer.md")
+        write(runs / "outer.md", "# outer\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertNotIn("left off", out)
+        self.assertEqual(self._guard(repo), ("", 0))
+        # a file where the ledger has a directory
+        shutil.rmtree(runs / "outer.evidence")
+        write(runs / "outer.evidence", "a file now\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertIn(".glados/runs/outer.evidence: the ledger has a "
+                      "directory there; left off the ledger", out)
+        self.assertEqual(self._ledger_files(repo), saved)
+        # restore made the ledger's directory under the file, and crashed
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(".glados/runs/outer.evidence/log.txt: not restored, as "
+                      ".glados/runs/outer.evidence is a file here", out)
+        self.assertEqual(read(runs / "outer.evidence"), "a file now\n")
+
+    def _mktree(self, repo, files: dict) -> str:
+        """A tree object holding ``files`` (path -> bytes), built with git
+        mktree, which takes any name: an index on Windows leaves out the
+        names Windows cannot hold."""
+        def run(*a, data=b""):
+            p = subprocess.run(["git", "-C", str(repo), *a], input=data,
+                               capture_output=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return p.stdout.decode("ascii").strip()
+        subdirs: dict = {}
+        entries = []
+        for path, data in files.items():
+            head, sep, rest = path.partition("/")
+            if sep:
+                subdirs.setdefault(head, {})[rest] = data
+            else:
+                sha = run("hash-object", "-w", "--stdin", data=data)
+                entries.append(f"100644 blob {sha}\t{head}")
+        for name, sub in subdirs.items():
+            entries.append(f"040000 tree {self._mktree(repo, sub)}\t{name}")
+        return run("mktree", "-z",
+                   data="".join(e + "\0" for e in entries).encode("utf-8"))
+
+    def test_a_name_windows_cannot_hold_stays_on_the_ledger(self):
+        """A record or step artifact saved on Linux or macOS can have a name
+        Windows cannot hold: one with ? * : " < > |, one ending in a period,
+        a device name such as aux. Save wrote its tree through an index,
+        and git on Windows leaves such a path out of an index with only a
+        warning, so a Windows clone's next save, even one with nothing new,
+        dropped each of them from the ledger without a word. Restore stopped
+        at the first '?' with an OSError traceback, and wrote a ':' name as
+        an alternate data stream of an empty file, which the next save put
+        on the ledger. Save now keeps every name, and restore on Windows
+        leaves those it cannot write on the ledger, with a note."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "2026-10-23-fix-bug-ok.md", "# ok\n")
+        self._save(a)
+        odd = [".glados/runs/2026-10-23-fix-bug-why?.md",
+               ".glados/runs/2026-10-23-fix-bug-api:auth.md",
+               ".glados/runs/2026-10-23-fix-bug-ok.evidence/aux.txt",
+               ".glados/runs/2026-10-23-fix-bug-ok.evidence/v2."]
+        # a POSIX clone's save, made by plumbing so it runs anywhere
+        files = {".glados/runs/2026-10-23-fix-bug-ok.md": b"# ok\n",
+                 **{p: b"# saved on Linux\n" for p in odd}}
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        commit = self._git(a, "commit-tree", self._mktree(a, files),
+                           "-p", tip, "-m", "chore(glados): record runs")
+        self._git(a, "push", "-q", "origin", f"{commit}:refs/heads/glados/ledger")
+        b = self._clone(remote)
+        runs = b / ".glados" / "runs"
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertTrue((runs / "2026-10-23-fix-bug-ok.md").is_file())
+        if os.name == "nt":
+            for p in odd:
+                self.assertIn(f"{p}: not restored", out)
+            self.assertFalse(os.path.lexists(runs / "2026-10-23-fix-bug-api"),
+                             "':' wrote an alternate data stream")
+        else:
+            for p in odd:
+                self.assertEqual(read(b / p), "# saved on Linux\n")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self._save(b)                       # nothing new
+        write(runs / "2026-10-23-fix-bug-b.md", "# b\n")
+        self._save(b)
+        self._git(b, "fetch", "-q", "origin")
+        on_origin = self._ledger_files(b, "origin/glados/ledger")
+        for p in odd + [".glados/runs/2026-10-23-fix-bug-ok.md",
+                        ".glados/runs/2026-10-23-fix-bug-b.md"]:
+            self.assertIn(p, on_origin)
+        self.assertNotIn(".glados/runs/2026-10-23-fix-bug-api", on_origin)
+
+    def test_a_merge_never_drops_a_file_for_a_directory_of_its_name(self):
+        """B saved r.md/x.md without pushing, A pushed a record r.md, and
+        B's next save merged both ledgers into one tree, where git keeps
+        the directory and drops the file: A's record left the ledger
+        without a word (_ledger_name_clash looks only at paths this clone
+        adds), and B's restore, which writes both ledgers' files, crashed
+        on the name. The merge is now refused, naming both paths: B's saves
+        stay on its own ledger and A's record on the remote, B's restore
+        writes around the clash, and once B renames its copy the next save
+        merges and pushes both. A file here and a directory there is the
+        same clash."""
+        for here, there in ((".glados/runs/r.md/x.md", ".glados/runs/r.md"),
+                            (".glados/runs/r.md", ".glados/runs/r.md/x.md")):
+            with self.subTest(here=here, there=there):
+                remote = self._remote()
+                a = self._clone(remote, seed=True)
+                b = self._clone(remote)
+                write(b / here, "# b\n")
+                self._save(b, "--no-push")
+                write(a / there, "# a\n")
+                self._save(a)
+                write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+                rc, out = self._save(b, ok=False)
+                self.assertEqual(rc, 1, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn("NOT pushed to origin", out)
+                self.assertIn(f"{here} here and {there} on origin cannot "
+                              f"both be on the ledger", out)
+                self.assertIn("Rename .glados/runs/r.md in this clone", out)
+                # neither is dropped: A's record stays on the remote, and
+                # B's, with the record this save brought, on B's ledger
+                self.assertEqual(self._ledger_files(remote), {there})
+                self.assertEqual(self._ledger_files(b),
+                                 {here, ".glados/runs/rb.md"})
+                # restore writes around the clash and never crashes
+                rc, out = run_cli("ledger", "restore", "--target", b)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"{there}: not restored", out)
+                self.assertEqual(read(b / here), "# b\n")
+                # B renames its copy, and the next save merges and pushes
+                runs = b / ".glados" / "runs"
+                (runs / "r.md").rename(runs / "r-b.md")
+                self._save(b, "--no-push", ".glados/runs/r.md",
+                           ".glados/runs/r-b.md")
+                rc, out = self._save(b)
+                self.assertIn("pushed glados/ledger to origin", out)
+                self.assertEqual(
+                    self._ledger_files(remote),
+                    {there, here.replace("r.md", "r-b.md", 1),
+                     ".glados/runs/rb.md"})
+        # the last line: no tree with such a pair is ever written
+        blob = ("100644", "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+        with self.assertRaisesRegex(glados.Fatal, "cannot both be on the "
+                                                  "ledger"):
+            glados._ledger_write_tree(glados._LedgerGit(REPO),
+                                      {"r.md": blob, "r.md/x.md": blob})
+
+    def test_links_by_platform(self):
+        base = glados._remote_web_base
+        self.assertEqual(base("git@gitlab.com:inc/research.git"),
+                         "https://gitlab.com/inc/research")
+        self.assertEqual(base("https://user:tok@gitlab.com/inc/research.git"),
+                         "https://gitlab.com/inc/research")
+        self.assertEqual(base("ssh://git@gitlab.example.com:2222/a/b/c.git"),
+                         "https://gitlab.example.com/a/b/c")
+        self.assertEqual(base("https://github.com/o/r"), "https://github.com/o/r")
+        self.assertIsNone(base("C:/Users/x/remote.git"))
+        self.assertIsNone(base("/srv/git/remote.git"))
+        self.assertIsNone(base("file:///srv/git/remote.git"))
+        repo = self._clone()
+        self._git(repo, "remote", "add", "origin",
+                  "https://github.com/o/r.git")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a b.md")
+        self.assertEqual(out.strip(), "https://github.com/o/r/blob/glados/"
+                                      "ledger/.glados/runs/a%20b.md")
+        # a manifest's platform wins over the host name
+        write(repo / "glados.yaml", "platform: gitlab\n")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a.md")
+        self.assertEqual(out.strip(), "https://github.com/o/r/-/blob/glados/"
+                                      "ledger/.glados/runs/a.md")
+        # no web address: the git revision that reads it
+        self._git(repo, "remote", "set-url", "origin", "/srv/git/r.git")
+        rc, out = run_cli("ledger", "link", "--target", repo, "a.md")
+        self.assertEqual(out.strip(), "glados/ledger:.glados/runs/a.md")
+
+    # -- install, CI and verify-ledger ----------------------------------------
+
+    def test_records_stay_out_of_every_branch_across_checkouts(self):
+        """An ignore file inside `.glados/runs/` is tracked on some branches
+        and not others, so a checkout either aborted over an untracked copy
+        or deleted it and left every record open to `git add -A`. The
+        clone's exclude file holds on every branch and in every worktree,
+        and install vendors nothing to commit (fix round 1)."""
+        t = make_target()
+        self.assertEqual(install("direct", t)[0], 0)
+        self.assertFalse((t / ".glados" / "runs" / ".gitignore").exists(),
+                         "install vendors no ignore file")
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        self._git(repo, "checkout", "-q", "-b", "feat/old")
+        write(repo / "old.py", "x = 0\n")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-q", "-m", "feat: old work")
+        self._git(repo, "checkout", "-q", "main")
+        rc, out = run_cli("ledger", "restore", "--target", repo)
+        self.assertEqual(rc, 0, out)
+        exclude = Path(self._git(repo, "rev-parse", "--git-path",
+                                 "info/exclude"))
+        exclude = exclude if exclude.is_absolute() else repo / exclude
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        runs = repo / ".glados" / "runs"
+        write(runs / "2026-10-21-run-pipeline-x.md", "# record\n")
+        write(runs / "2026-10-21-run-pipeline-x.plan.md", "# plan\n")
+        self._save(repo)
+        for n, branch in enumerate(("feat/old", "main", "feat/old")):
+            self._git(repo, "checkout", "-q", branch)
+            self._git(repo, "checkout", "-q", "-b", f"feat/new-{n}")
+            self._git(repo, "add", "-A")
+            self.assertEqual(self._git(repo, "diff", "--cached",
+                                       "--name-only"), "",
+                             f"git add -A from {branch} stages no record")
+        self.assertTrue((runs / "2026-10-21-run-pipeline-x.md").is_file())
+        # the line is written once, however often a command runs
+        self._save(repo)
+        self.assertEqual(read(exclude).splitlines().count(glados.RUNS_EXCLUDE),
+                         1)
+        # a worktree shares it
+        wt = tmpdir("glados-ledger-wt-") / "wt"
+        self._git(repo, "worktree", "add", "-q", "-b", "feat/wt", str(wt),
+                  "main")
+        write(wt / ".glados" / "runs" / "r.md", "# r\n")
+        self.assertEqual(self._git(wt, "status", "--porcelain", "-uall"), "")
+
+    def test_install_excludes_the_projects_own_records(self):
+        """Committing `.glados/` follows an install, before any `ledger`
+        command, and an upgraded clone may hold records no save has seen:
+        install adds the exclude line for the project's own .glados/runs/,
+        at a repository's top level or in a subdirectory of it, and never
+        for the plugin build, whose target is GLaDOS itself (fix round 3).
+        A subdirectory install used to add nothing, so committing its
+        `.glados/` took its records."""
+        repo = self._clone()
+        shutil.copyfile(EXAMPLE, repo / "glados.yaml")
+        write(repo / ".glados" / "runs" / "2026-10-01-fix-bug-x.md", "# r\n")
+        exclude = repo / self._git(repo, "rev-parse", "--git-path",
+                                   "info/exclude")
+        rc, out = install("direct", repo)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"added {glados.RUNS_EXCLUDE}", out)
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        self._git(repo, "add", ".glados")
+        staged = self._git(repo, "diff", "--cached", "--name-only").split()
+        self.assertIn(".glados/glados.py", staged)
+        self.assertNotIn(".glados/runs/2026-10-01-fix-bug-x.md", staged)
+        rc, out = install("direct", repo)
+        self.assertNotIn(f"added {glados.RUNS_EXCLUDE}", out)
+        self.assertEqual(read(exclude).splitlines().count(glados.RUNS_EXCLUDE),
+                         1)
+        for sub, mode in (("packages/app", "direct"),
+                          ("", "claude-plugin")):
+            other = self._clone()
+            target = other / sub
+            name = "glados.yaml" if mode == "direct" else "glados.yaml.example"
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(EXAMPLE, target / name)
+            write(target / ".glados" / "runs" / "r.md", "# r\n")
+            rc, out = install(mode, target)
+            self.assertEqual(rc, 0, out)
+            path = other / self._git(other, "rev-parse", "--git-path",
+                                     "info/exclude")
+            lines = read(path).splitlines() if path.is_file() else []
+            self.assertNotIn(glados.RUNS_EXCLUDE, lines, mode)
+            if mode == "claude-plugin":
+                self.assertEqual([ln for ln in lines if "glados" in ln], [])
+                continue
+            self.assertIn("added /packages/app/.glados/runs/*", out)
+            self.assertEqual(lines.count("/packages/app/.glados/runs/*"), 1)
+            self._git(other, "add", "packages")
+            staged = self._git(other, "diff", "--cached", "--name-only")
+            self.assertIn("packages/app/.glados/glados.py", staged.split())
+            self.assertNotIn("packages/app/.glados/runs/r.md", staged.split())
+        # a glob character in the directory's name is matched as written
+        other = self._clone()
+        target = other / "pk[1]"
+        target.mkdir()
+        shutil.copyfile(EXAMPLE, target / "glados.yaml")
+        write(target / ".glados" / "runs" / "r.md", "# r\n")
+        write(other / "pk1" / ".glados" / "runs" / "r.md", "# r\n")
+        rc, out = install("direct", target)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("added /pk\\[1]/.glados/runs/*", out)
+        status = self._git(other, "status", "--porcelain", "-uall")
+        self.assertNotIn("pk[1]/.glados/runs/r.md", status)
+        self.assertIn("pk1/.glados/runs/r.md", status)
+
+    def _guard(self, project):
+        """Both guards run in ``project``: (claude's reason or "", gemini's
+        exit code)."""
+        c = subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+            input=json.dumps({"cwd": str(project)}), capture_output=True,
+            text=True)
+        g = subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+            input="{}", capture_output=True, text=True, cwd=str(project))
+        self.assertEqual(c.returncode, 0, c.stderr)
+        reason = json.loads(c.stdout)["reason"] if c.stdout.strip() else ""
+        self.assertEqual(bool(reason), g.returncode == 2, (reason, g.stderr))
+        return reason, g.returncode
+
+    def test_a_project_in_a_subdirectory_keeps_its_own_records(self):
+        """A project whose glados.yaml is in a subdirectory of its repository
+        (a monorepo package) keeps its runs in its own .glados/runs/. The
+        ledger commands read only the repository's top-level .glados/runs/,
+        so such a project saved no record, restored none and linked to the
+        wrong path, and its guard never found its records on the ledger.
+        Ledger paths keep the subdirectory, so two projects in one
+        repository, with records of the same name, do not collide."""
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        exclude = repo / self._git(repo, "rev-parse", "--git-path",
+                                   "info/exclude")
+        app, api = repo / "packages" / "app", repo / "packages" / "api"
+        for project in (app, api, repo):
+            write(project / "glados.yaml", read(EXAMPLE))
+            rc, out = install("direct", project)
+            self.assertEqual(rc, 0, out)
+        for line in ("/packages/app/.glados/runs/*",
+                     "/packages/api/.glados/runs/*", glados.RUNS_EXCLUDE):
+            self.assertEqual(read(exclude).splitlines().count(line), 1, line)
+        # each project saves its own record of one name, and its artifacts
+        for project, who in ((app, "app"), (api, "api"), (repo, "top")):
+            runs = project / ".glados" / "runs"
+            write(runs / "r1.md", f"# {who} r1\n")
+            write(runs / "r1.shape.md", f"# {who} shape\n")
+            write(runs / "stack", "r1.md\n")
+            write(runs / "current", "r1.md\n")
+            self.assertIn("r1.md", self._guard(project)[0])
+            rc, out = self._save(project)
+            self.assertIn("pushed glados/ledger to origin", out)
+            self.assertEqual(self._guard(project), ("", 0), who)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"), {
+            f"{p}.glados/runs/{n}" for p in ("", "packages/app/",
+                                             "packages/api/")
+            for n in ("r1.md", "r1.shape.md")})
+        for prefix, who in (("packages/app/", "app"), ("packages/api/", "api"),
+                            ("", "top")):
+            self.assertEqual(self._show(repo, "glados/ledger",
+                                        f"{prefix}.glados/runs/r1.md"),
+                             f"# {who} r1")
+        # nothing a run wrote reaches a commit of the work branch
+        self._git(repo, "add", "-A")
+        self.assertNotIn(".glados/runs/", self._git(
+            repo, "diff", "--cached", "--name-only"))
+        # the guard sees a change after the save, in its own project only
+        write(app / ".glados" / "runs" / "r1.md", "# app r1\nstep 2\n")
+        self.assertIn(".glados/runs/r1.md", self._guard(app)[0])
+        self.assertEqual(self._guard(api), ("", 0))
+        rc, out = self._save(app, ".glados/runs/r1.md")
+        self.assertIn("saved 1 file(s)", out)
+        self.assertEqual(self._guard(app), ("", 0))
+        # another clone restores each project's records into that project
+        b = self._clone(remote)
+        write(b / "packages" / "app" / "glados.yaml", read(EXAMPLE))
+        self._git(b, "add", "-A")
+        self._git(b, "commit", "-q", "-m", "feat: the app package")
+        rc, out = run_cli("ledger", "restore", "--target", b / "packages" /
+                          "app")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / "packages" / "app" / ".glados" / "runs" /
+                              "r1.md"), "# app r1\nstep 2\n")
+        self.assertFalse((b / ".glados" / "runs" / "r1.md").exists())
+        self.assertFalse((b / "packages" / "api" / ".glados").exists())
+        self.assertEqual(self._git(b, "status", "--porcelain", "-uall"), "",
+                         "restored records are ignored in the new clone")
+        rc, out = run_cli("ledger", "restore", "--target", b, "r1.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"), "# top r1\n")
+        # the link names the project's path on the ledger, from the
+        # project or a directory inside it
+        self._git(repo, "remote", "set-url", "origin",
+                  "git@gitlab.example.com:group/mono.git")
+        (app / "src").mkdir()
+        for where in (app, app / "src"):
+            rc, out = run_cli("ledger", "link", "--target", where, "r1.md")
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out.strip(),
+                             "https://gitlab.example.com/group/mono/-/blob/"
+                             "glados/ledger/packages/app/.glados/runs/r1.md")
+        # removing one project's record leaves the others'
+        (api / ".glados" / "runs" / "r1.shape.md").unlink()
+        rc, out = self._save(api, "--no-push", ".glados/runs/r1.shape.md")
+        self.assertIn("removed packages/api/.glados/runs/r1.shape.md", out)
+        files = self._ledger_files(repo)
+        self.assertNotIn("packages/api/.glados/runs/r1.shape.md", files)
+        self.assertIn("packages/app/.glados/runs/r1.shape.md", files)
+        self.assertIn(".glados/runs/r1.shape.md", files)
+
+    def test_a_reverted_copy_is_an_edit(self):
+        """A copy put back to text the ledger held before is an edit once
+        this tree has synced the path: saved, never replaced by the version
+        it reverted (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        f = a / ".glados" / "runs" / "2026-10-22-verify-feature-z.verdict.md"
+        for text in ("PASS\n", "FAIL: test gap\n", "PASS\n"):
+            write(f, text)
+            rc, out = self._save(a)
+            self.assertNotIn("earlier version", out)
+        self.assertEqual(read(f), "PASS\n")
+        self.assertEqual(self._show(a, "origin/glados/ledger",
+                                    ".glados/runs/2026-10-22-verify-feature-"
+                                    "z.verdict.md"), "PASS")
+        # restore keeps a revert not yet saved
+        write(f, "FAIL: test gap\n")
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(f), "FAIL: test gap\n")
+        self.assertIn("kept this copy", out)
+
+    def test_restore_drops_what_the_ledger_compacted(self):
+        """steward in one clone compacts a record; another clone that had
+        restored it loses its copy at the next restore, so it is neither
+        read as a prior record nor compacted twice. A copy edited since is
+        kept (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "old.md", "# settled\n")
+        write(runs / "old.review-1.md", "# review\n")
+        write(runs / "edited.md", "# settled too\n")
+        self._save(a)
+        c = self._clone(remote)
+        run_cli("ledger", "restore", "--target", c)
+        cruns = c / ".glados" / "runs"
+        self.assertTrue((cruns / "old.md").is_file())
+        write(cruns / "edited.md", "# settled too\nlocal note\n")
+        for name in ("old.md", "old.review-1.md", "edited.md"):
+            (runs / name).unlink()
+        write(runs / "DIGEST.md", "| old | edited |\n")
+        self._save(a, "old.md", "old.review-1.md", "edited.md", "DIGEST.md")
+        rc, out = run_cli("ledger", "restore", "--target", c)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("removed 2 the ledger no longer has", out)
+        self.assertFalse((cruns / "old.md").exists())
+        self.assertFalse((cruns / "old.review-1.md").exists())
+        self.assertTrue((cruns / "DIGEST.md").is_file())
+        self.assertEqual(read(cruns / "edited.md"),
+                         "# settled too\nlocal note\n")
+
+    def test_restore_removes_only_what_a_ledger_removed(self):
+        """Restore deleted a synced copy whenever the ledger it read lacked
+        the path, even when no ledger had ever removed it: after a save kept
+        local (--no-push) and `git branch -D glados/ledger`, a record's only
+        working copy went. Save read the same sync entry as a removal and
+        left the record off the ledger for good. Both ask the ledger's
+        history first."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r0.md", "# r0\n")
+        self._save(a)
+        for step in ("restore", "save"):
+            with self.subTest(after_the_branch_is_deleted=step):
+                name = f"{step}-first.md"
+                write(runs / name, "# kept local, never pushed\n")
+                self._save(a, "--no-push")
+                self._git(a, "branch", "-D", "glados/ledger")
+                if step == "restore":
+                    rc, out = run_cli("ledger", "restore", "--target", a)
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("removed", out)
+                    self.assertEqual(read(runs / name),
+                                     "# kept local, never pushed\n")
+                rc, out = self._save(a)
+                self.assertIn(f".glados/runs/{name}",
+                              self._ledger_files(a, "origin/glados/ledger"))
+
+    def test_a_rename_in_case_alone_is_restored(self):
+        """A Linux clone can rename a record in case alone on the ledger
+        (R1.md to r1.md). On Windows and macOS restore found r1.md present
+        (the synced R1.md, case aside), then removed R1.md as gone, so it
+        wrote nothing: the record was missing from disk until a second
+        restore, and a run that recreated it in between overwrote the
+        ledger's copy. Restore removes what is gone before it looks."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "R1.md", "# r1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        # the rename as a Linux clone saves it, by plumbing so it runs anywhere
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        tree = self._mktree(a, {".glados/runs/r1.md": b"# r1\n"})
+        commit = self._git(a, "commit-tree", tree, "-p", tip, "-m", "rename")
+        self._git(a, "push", "-q", "origin",
+                  f"{commit}:refs/heads/glados/ledger")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        names = os.listdir(b / ".glados" / "runs")
+        self.assertIn("r1.md", names)
+        self.assertNotIn("R1.md", names)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"), "# r1\n")
+
+    def _unwritable(self, path):
+        """Take this user's right to change ``path``: a file becomes
+        read-only (on Windows, the read-only attribute), a directory takes
+        no new entry and gives none up. Returns a function that gives it
+        back. Skips where the account ignores it (root)."""
+        mode = path.stat().st_mode
+        is_dir = path.is_dir()
+        os.chmod(path, 0o555 if is_dir else 0o444)
+
+        def undo():
+            if os.path.lexists(path):       # a test may since remove it
+                os.chmod(path, mode)
+        self.addCleanup(undo)
+        probe = path / ".glados-probe" if is_dir else path
+        try:
+            with open(probe, "ab"):
+                pass
+        except PermissionError:
+            return undo
+        undo()
+        if is_dir:
+            os.unlink(probe)
+        self.skipTest("this account changes what it was denied")
+
+    def test_a_copy_save_cannot_refresh_is_left_and_the_rest_pushed(self):
+        """Save refreshes a copy that is an earlier version of the ledger's,
+        and wrote it with no try, after its commit and before its push: a
+        read-only copy (one a container running as root wrote, say) stopped
+        every save with a traceback, so nothing reached origin, while the
+        guard counted the local ledger as saved. The copy is left with a
+        note, the rest is pushed, and the stale copy still never goes back
+        over the ledger: its sync entry stays at the version it holds."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\nv1\nv2\n")
+        self._save(a)
+        stale = b / ".glados" / "runs" / "r1.md"
+        undo = self._unwritable(stale)
+        write(b / ".glados" / "runs" / "r2.md", "# r2\n")
+        for attempt in ("first", "second"):
+            with self.subTest(save=attempt):
+                rc, out = self._save(b, ok=False)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(".glados/runs/r1.md: the ledger's newer copy "
+                              "could not be written here", out)
+                self.assertNotIn("refreshed from the ledger", out)
+                self._git(b, "fetch", "-q", "origin")
+                self.assertIn(".glados/runs/r2.md",
+                              self._ledger_files(b, "origin/glados/ledger"))
+                self.assertEqual(self._show(b, "origin/glados/ledger",
+                                            ".glados/runs/r1.md"),
+                                 "# r1\nv1\nv2")
+        undo()
+        rc, out = self._save(b)
+        self.assertIn("refreshed from the ledger", out)
+        self.assertEqual(read(stale), "# r1\nv1\nv2\n")
+
+    def test_a_copy_restore_cannot_remove_is_left_with_a_note(self):
+        """Restore removes a synced copy the ledger no longer has, and did
+        so outside any try: a copy it could not delete (read-only on
+        Windows; on Linux, in a directory this user cannot write, one a
+        container running as root made, say) stopped restore with a
+        traceback before it restored anything."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        write(runs / "r1.evidence" / "log.txt", "ok\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        shutil.rmtree(runs / "r1.evidence")
+        self._save(a, ".glados/runs/r1.evidence")
+        write(runs / "r2.md", "# r2\n")
+        self._save(a)
+        log = b / ".glados" / "runs" / "r1.evidence" / "log.txt"
+        undo = self._unwritable(log if os.name == "nt" else log.parent)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt: the ledger no longer "
+                      "has it, but this copy could not be removed", out)
+        self.assertTrue((b / ".glados" / "runs" / "r2.md").is_file())
+        self.assertTrue(log.is_file())
+        undo()
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("removed 1 the ledger no longer has", out)
+        self.assertFalse(log.exists())
+
+    def test_an_exclude_file_in_another_encoding_is_read(self):
+        """Windows PowerShell 5.1 writes `>` as UTF-16 with a BOM, and
+        Add-Content in the ANSI code page: a .git/info/exclude written
+        either way stopped install, `ledger save` and `ledger restore` with
+        a UnicodeDecodeError traceback. It is read as git reads it, as
+        bytes, and the line is added once, as UTF-8, which git reads. One
+        this user cannot write is named, not a traceback."""
+        line = glados.RUNS_EXCLUDE.encode("utf-8")
+        for name, data in (("UTF-16", "node_modules\r\n".encode("utf-16")),
+                           ("cp1252", "Entwürfe/\r\n".encode("cp1252"))):
+            with self.subTest(exclude=name):
+                a = self._clone(self._remote(), seed=True)
+                exclude = a / self._git(a, "rev-parse", "--git-path",
+                                        "info/exclude")
+                exclude.write_bytes(data)
+                write(a / ".glados" / "runs" / "r1.md", "# r1\n")
+                for command in ("save", "restore"):
+                    rc, out = run_cli("ledger", command, "--target", a)
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("Traceback", out)
+                text = exclude.read_bytes()
+                self.assertTrue(text.startswith(data))
+                self.assertEqual(text.count(line), 1)
+                self.assertEqual(
+                    self._git(a, "status", "--porcelain", "-uall"), "")
+                t = self._clone()
+                shutil.copyfile(EXAMPLE, t / "glados.yaml")
+                exclude = t / self._git(t, "rev-parse", "--git-path",
+                                        "info/exclude")
+                exclude.write_bytes(data)
+                rc, out = install("claude", t)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"added {glados.RUNS_EXCLUDE}", out)
+                self.assertEqual(exclude.read_bytes().count(line), 1)
+
+    def test_an_exclude_file_this_user_cannot_write_is_named(self):
+        """A .git/info/exclude this user cannot write (one a container
+        running as root made, say) stopped `ledger save` with a traceback
+        before it saved anything. The save goes on and says which line to
+        add by hand."""
+        a = self._clone()
+        exclude = a / self._git(a, "rev-parse", "--git-path", "info/exclude")
+        exclude.write_bytes(b"node_modules\n")
+        self._unwritable(exclude)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\n")
+        rc, out = self._save(a, "--no-push")
+        self.assertNotIn("Traceback", out)
+        self.assertIn(f"could not add {glados.RUNS_EXCLUDE}", out)
+        self.assertIn(".glados/runs/r1.md", self._ledger_files(a))
+
+    def test_a_name_too_long_for_this_file_system_stays_on_the_ledger(self):
+        """NTFS holds 255 UTF-16 units in a name, Linux and macOS 255 bytes,
+        so a Windows clone can save a name in CJK script that a POSIX clone
+        cannot hold. Restore asked Path.is_file() of it, which raises
+        ENAMETOOLONG on Python 3.12 and earlier: restore stopped before it
+        wrote anything, the other records included, so every run's first
+        step failed in that clone. The name is left on the ledger with a
+        note, and the rest is restored."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        ok = ".glados/runs/2026-10-23-fix-bug-ok.md"
+        write(a / ok, "# ok\n")
+        self._save(a)
+        long = ".glados/runs/2026-10-23-fix-bug-" + "記" * 100 + ".md"
+        tree = self._mktree(a, {ok: b"# ok\n", long: "# 記録\n".encode()})
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        commit = self._git(a, "commit-tree", tree, "-p", tip, "-m",
+                           "chore(glados): record runs")
+        self._git(a, "push", "-q", "origin",
+                  f"{commit}:refs/heads/glados/ledger")
+        b = self._clone(remote)
+        # a clone that has run before: a missing .glados/runs/ ends the
+        # lookup before the name's length is checked
+        write(b / ".glados" / "runs" / "2026-10-22-fix-bug-b.md", "# b\n")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(read(b / ok), "# ok\n")
+        if sys.platform.startswith("linux"):
+            self.assertIn(f"{long}: not restored", out)
+        elif not os.path.isfile(b / long):
+            self.assertIn(f"{long}: not restored", out)
+        self._save(b)
+        listed = subprocess.run(
+            ["git", "-C", str(b), "ls-tree", "-r", "-z", "--name-only",
+             "origin/glados/ledger"], capture_output=True).stdout
+        self.assertIn(long.encode("utf-8") + b"\0", listed)
+
+    def test_a_name_that_is_not_utf8_stays_on_the_ledger_everywhere(self):
+        """A Linux clone can save a step artifact whose name is not UTF-8
+        (caf\\xe9.txt). Restore wrote it on Windows as a name with a lone
+        surrogate in it, one no other tool reads back as that file, and
+        macOS refuses such a name. Linux restores it under its own bytes;
+        Windows and macOS leave it on the ledger with a note, and a save
+        there keeps it."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        ok = ".glados/runs/2026-10-23-fix-bug-ok.md"
+        write(a / ok, "# ok\n")
+        self._save(a)
+
+        def git(*args, data=b""):
+            p = subprocess.run(["git", "-C", str(a), *args], input=data,
+                               capture_output=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return p.stdout.decode("ascii").strip()
+        blob = git("hash-object", "-w", "--stdin", data=b"menu\n")
+        evidence = git("mktree", "-z", data=b"100644 blob " + blob.encode()
+                       + b"\tcaf\xe9.txt\0")
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        runs = git("mktree", "-z", data=(
+            f"040000 tree {evidence}\t2026-10-23-fix-bug-ok.evidence\0"
+            f"100644 blob {self._git(a, 'rev-parse', f'{tip}:{ok}')}\t"
+            f"2026-10-23-fix-bug-ok.md\0").encode())
+        dot = git("mktree", "-z", data=f"040000 tree {runs}\truns\0".encode())
+        top = git("mktree", "-z", data=f"040000 tree {dot}\t.glados\0".encode())
+        commit = git("commit-tree", top, "-p", tip, "-m", "record runs")
+        git("push", "-q", "origin", f"{commit}:refs/heads/glados/ledger")
+        odd = b".glados/runs/2026-10-23-fix-bug-ok.evidence/caf\xe9.txt"
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertEqual(read(b / ok), "# ok\n")
+        evidence_dir = b / ".glados" / "runs" / "2026-10-23-fix-bug-ok.evidence"
+        if os.name == "nt" or sys.platform == "darwin":
+            self.assertIn(": not restored, as this platform cannot hold its "
+                          "name", out)
+            self.assertEqual(os.listdir(evidence_dir)
+                             if evidence_dir.is_dir() else [], [])
+        else:
+            with open(os.fsencode(b) + b"/" + odd, "rb") as fh:
+                self.assertEqual(fh.read(), b"menu\n")
+        write(b / ".glados" / "runs" / "2026-10-23-fix-bug-b.md", "# b\n")
+        rc, out = self._save(b)
+        self.assertNotIn("Traceback", out)
+        listed = subprocess.run(
+            ["git", "-C", str(b), "ls-tree", "-r", "-z", "--name-only",
+             "origin/glados/ledger"], capture_output=True).stdout.split(b"\0")
+        self.assertIn(odd, listed)
+        self.assertIn(b".glados/runs/2026-10-23-fix-bug-b.md", listed)
+
+    @unittest.skipUnless(os.name == "nt", "only NTFS holds such a name")
+    def test_a_windows_name_that_is_not_unicode_is_named(self):
+        """NTFS holds a name with an unpaired UTF-16 surrogate in it, which
+        no UTF-8 path in git can carry: `ledger save` stopped with a
+        UnicodeEncodeError traceback. It leaves the file off with a note
+        and saves the rest; the guards, which cannot show it saved, block."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        (runs / "r1.evidence").mkdir()
+        with open(str(runs / "r1.evidence") + "\\odd\ud800.txt", "w") as fh:
+            fh.write("x\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertNotIn("Traceback", out)
+        self.assertIn("r1.evidence/odd", out)
+        self.assertIn("left off the ledger, as its name is not valid "
+                      "Unicode", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+
+    def test_a_named_path_this_user_cannot_read_is_not_removed(self):
+        """`ledger save <path>` removes a named path that is gone. It asked
+        Path.exists(), which from Python 3.13 answers False for a path in a
+        directory this user cannot search, so the file left the ledger, and
+        which on 3.10 to 3.12 raised: a traceback. Only a path that is not
+        there is removed; one that cannot be read stays, with a note."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.evidence" / "log.txt", "ok\n")
+        self._save(repo, "--no-push")
+        TestHookGuards._deny(self, runs / "r1.evidence")
+        rc, out = self._save(repo, "--no-push",
+                             ".glados/runs/r1.evidence/log.txt", ok=False)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt: cannot be read", out)
+        self.assertIn(".glados/runs/r1.evidence/log.txt",
+                      self._ledger_files(repo))
+
+    def test_a_repository_kept_as_an_artifact_is_named_not_lost(self):
+        """git leaves out of a tree, with only an "Ignoring path" warning,
+        any path with a .git component, such as a repository a run keeps
+        among its step artifacts. Save reported each of its files saved,
+        with a ledger link, and recorded them as synced though the ledger
+        held none of them, so a restore in that clone deleted them as
+        compacted away (on Windows it stopped on git's read-only objects).
+        Save leaves such paths off with one note, and stops when a tree it
+        writes lacks any path it meant to hold."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        runs = a / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        sample = runs / "r1.evidence" / "sample"
+        sample.mkdir(parents=True)
+        self._git(sample, "init", "-q")
+        nested = sorted(p for p in (sample / ".git").rglob("*") if p.is_file())
+        self.assertTrue(nested)
+        rc, out = self._save(a)
+        self.assertIn("saved 1 file(s)", out)
+        self.assertIn(".glados/runs/r1.evidence/sample/.git/: left off the "
+                      "ledger", out)
+        self.assertEqual(self._ledger_files(a), {".glados/runs/r1.md"})
+        rc, out = run_cli("ledger", "restore", "--target", a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("removed", out)
+        for p in nested:
+            self.assertTrue(p.is_file(), p)
+        # the last line: a tree git wrote without a path it was given
+        git = glados._LedgerGit(a)
+        sha = self._git(a, "rev-parse", "HEAD:app.py")
+        with self.assertRaises(glados.Fatal) as caught:
+            glados._ledger_write_tree(
+                git, {".glados/runs/r2.md": ("100644", sha),
+                      ".glados/runs/r2.evidence/x/.git/HEAD": ("100644", sha)})
+        self.assertIn(".glados/runs/r2.evidence/x/.git/HEAD", str(caught.exception))
+
+    def test_a_push_that_lost_the_ref_lock_is_retried(self):
+        """Another push landed after the remote advertised its refs, so the
+        remote could not lock the ledger ref ("[remote rejected] ... failed
+        to update ref"): the save fetches, merges and pushes again rather
+        than stopping as if a hook had refused it (fix round 1)."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "r0.md", "# r0\n")
+        self._save(a)
+        b = self._clone(remote)
+        run_cli("ledger", "restore", "--target", b)
+        # a's next save, pushed from b's pre-push hook: after the remote
+        # advertised its refs to b, before b's update lands
+        write(a / ".glados" / "runs" / "ra.md", "# ra\n")
+        self._save(a, "--no-push")
+        a_tip = self._git(a, "rev-parse", "glados/ledger")
+        hooks = tmpdir("glados-ledger-hooks-")
+        flag = hooks / "moved-once"
+        hook = hooks / "pre-push"
+        self._git(b, "config", "core.hooksPath", hooks.as_posix())
+        hook.write_text(
+            "#!/bin/sh\n"
+            "cat >/dev/null\n"
+            f"if [ ! -f '{flag.as_posix()}' ]; then\n"
+            f"  touch '{flag.as_posix()}'\n"
+            "  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE\n"
+            f"  git -C '{a.as_posix()}' push -q origin "
+            f"{a_tip}:refs/heads/glados/ledger\n"
+            "fi\n"
+            "exit 0\n", encoding="utf-8", newline="\n")
+        os.chmod(hook, 0o755)
+        write(b / ".glados" / "runs" / "rb.md", "# rb\n")
+        rc, out = self._save(b)
+        self.assertTrue(flag.exists(), "the hook moved the ledger")
+        self.assertIn("pushed glados/ledger to origin", out)
+        tip = self._git(b, "rev-parse", "origin/glados/ledger")
+        kept = subprocess.run(["git", "-C", str(b), "merge-base",
+                               "--is-ancestor", a_tip, tip])
+        self.assertEqual(kept.returncode, 0)
+        self.assertEqual(self._ledger_files(b, "origin/glados/ledger"),
+                         {".glados/runs/r0.md", ".glados/runs/ra.md",
+                          ".glados/runs/rb.md"})
+
+    def test_ci_fetches_the_ledger_before_scanning(self):
+        gitlab = read(REPO / "ci" / "glados-check.gitlab-ci.yml")
+        job = gitlab.split("glados-verify-ledger:")[1]
+        fetch = job.index("+refs/heads/glados/ledger:refs/remotes/origin/"
+                          "glados/ledger")
+        self.assertLess(job.index("before_script:"), fetch)
+        self.assertLess(fetch, job.index("  script:\n"))
+        github = read(REPO / "ci" / "glados-check.github-actions.yml")
+        self.assertIn("fetch-depth: 0", github)
+        self.assertIn("GITHUB_BASE_REF", github)
+
+    def test_verify_ledger_lists_records_a_branch_commits(self):
+        repo = self._clone()
+        write(repo / ".glados" / "runs" / "kept.md", "# history\n")
+        self._git(repo, "add", "-f", ".glados/runs/kept.md")
+        self._git(repo, "commit", "-q", "-m", "chore(glados): record run")
+        self._git(repo, "checkout", "-q", "-b", "feat/x")
+        write(repo / "lib.py", "x = 1\n")
+        write(repo / ".glados" / "runs" / "new.md", "# new\n")
+        self._git(repo, "add", "-f", "lib.py", ".glados/runs/new.md")
+        self._git(repo, "commit", "-q", "-m", "feat: x")
+        rc, out = run_cli("verify-ledger", "--target", repo, "--base", "main")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("run records this branch commits (since main): 1", out)
+        self.assertIn(".glados/runs/new.md", out)
+        self.assertNotIn("kept.md", out, "history before the base is left")
+        self.assertIn("run records belong on glados/ledger", out)
+        self.assertIn("glados/ledger is not in this clone", out)
+        write(repo / ".glados" / "runs" / "r.md", "# r\n")
+        self._save(repo, "--no-push", ".glados/runs/r.md")
+        # With no --base, verify-ledger takes the base from CI's merge or
+        # pull request; run outside one, as a developer would, or a pull
+        # request's own GITHUB_BASE_REF leaks in as this repo's base.
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("GITHUB_BASE_REF", "CI_MERGE_REQUEST_DIFF_BASE_SHA")}
+        rc, out = run_cli("verify-ledger", "--target", repo, env=env)
+        self.assertIn("ledger branch: refs/heads/glados/ledger", out)
+        self.assertIn("not checked (no base", out)
+
+    # -- the compiled rules ----------------------------------------------------
+
+    @classmethod
+    def setUpClass(cls):
+        t = make_target(read(EXAMPLE))
+        rc, out = install("direct", t)
+        assert rc == 0, out
+        cls.dir = t / "product-knowledge" / "glados"
+
+    def core(self, name):
+        return " ".join(read(self.dir / f"{name}.md").split())
+
+    def test_every_core_saves_its_record_to_the_ledger(self):
+        """Said once, in the epilogue every core carries, with the restore
+        that brings records back in the preamble: review-mr's and
+        address-review's ledger rule became the general one."""
+        for name in glados.CORES:
+            with self.subTest(core=name):
+                text = self.core(name)
+                for rule in (
+                        "after `.glados/glados.py ledger restore` copies in "
+                        "the ledger's records",
+                        "A run without a saved run record and a published "
+                        "outcome is an incomplete run",
+                        "4. **Save the record to the ledger.** Every run's "
+                        "record and step artifacts live on the "
+                        "`glados/ledger` branch, never on a work branch: the "
+                        "MR carries the change and the comment, and the "
+                        "ledger carries the trail.",
+                        # a failed push is the helper's to say, when it
+                        # happens (fix round 1)
+                        "`.glados/glados.py ledger save` commits every new or "
+                        "changed file under `.glados/runs/` there and pushes "
+                        "it. Link",
+                        "Link a record or artifact by its ledger copy (`ledger "
+                        "link <path>`), never by a work-branch path.",
+                        # the project's own rows ride the work, where SDA
+                        # reads them, and land only when the change does,
+                        # so the commit is pushed (fix round 1)
+                        "Commit and push step 3's row and claim, and any "
+                        "pending observations, on the working branch: "
+                        "`chore(glados): log <workflow> run`.",
+                        # a run on an MR someone else opened works on that
+                        # MR's unit: the opener's row is already on the
+                        # branch, so a fix pass leaves it only its change
+                        # (final round)
+                        "clears its entry in `claims.md`; review-mr and "
+                        "address-review, on another's MR, do neither.",
+                        "The epilogue clears the entry. review-mr and "
+                        "address-review claim nothing.",
+                        "Save again for any record update made in this step, "
+                        "before step 6."):
+                    self.assertIn(rule, text)
+                for gone in ("**Commit the record**",
+                             "commit their record to the `glados/ledger` "
+                             "branch instead",
+                             "ride the record commit below",
+                             "ride the step 4 commit",
+                             "if the push fails, say so in the record",
+                             "both committed with the work (step 4)",
+                             "review-mr, which never commits to the branch "
+                             "it reviews, appends none"):
+                    self.assertNotIn(gone, text)
+                self.assertEqual(text.count("Every run's record and step "
+                                            "artifacts live on"), 1)
+
+    def test_the_workflows_that_assumed_a_branch_copy(self):
+        rp = self.core("run-pipeline")
+        for rule in (
+                "A parked run leaves its work on its own branch and its "
+                "record on the ledger, which the park's `escalation` and "
+                "run-epic's ticket row name.",
+                "**Commits.** When a row ends or parks, its process files "
+                "(artifact, briefs, check results, record) go to the ledger "
+                "in one save",
+                "`human`: save first (**Commits**), commit any working diff "
+                "a step left uncommitted, and push the branch.",
+                # open-mr: the links the description carries resolve on the
+                # ledger
+                "Commit the work on the branch and push it, and save this "
+                "run's record and step artifacts so far to the ledger, so "
+                "every link the description carries resolves"):
+            self.assertIn(rule, rp)
+        for gone in ("A parked run's record is committed on its own branch",
+                     "pushes again once the epilogue has committed the record",
+                     "together with this run's record and step artifacts"):
+            self.assertNotIn(gone, rp)
+        self.assertIn("review-mr, which never commits to the branch it "
+                      "reviews, carries it in the outcome only", rp)
+        steward = self.core("steward")
+        self.assertIn("Save the digest and every deleted path to the ledger "
+                      "(`.glados/glados.py ledger save <paths>`).", steward)
+        self.assertIn("recent records alone, and any this branch tracks.",
+                      steward)
+        # the clone's exclude file keeps records out; nothing in the tree
+        # needs committing (fix round 1)
+        self.assertNotIn(".glados/runs/.gitignore",
+                         self.core("adopt-codebase"))
+        self.assertIn("update the ticket's row in `epic.progress` and save it "
+                      "to the ledger before starting the next ticket",
+                      self.core("run-epic"))
+        self.assertIn("its artifacts live beside this run's record, on the run "
+                      "ledger", self.core("spec-feature"))
 
 
 class TestInstallRobustness(unittest.TestCase):
@@ -2104,6 +9816,21 @@ class TestMigrate(unittest.TestCase):
         self.assertIn("sda: true", out)
         self.assertIn("2026-05-01-migrated-login-timeout.md", out)
         self.assertIn("2026-06-10-migrated-reporting.md", out)
+
+    def test_the_next_steps_name_a_script_that_runs(self):
+        """migrate's next steps said `python glados.py install ...`, which
+        fails as printed from a GLaDOS checkout (bin/glados.py) and from the
+        project (.glados/glados.py). They name the script migrate ran as."""
+        t, _ = self._v1_repo()
+        rc, out = self._migrate(t, "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("python glados.py", out)
+        commands = re.findall(r"python (\S+) (install|ledger save|migrate) "
+                              r"--", out)
+        self.assertEqual({c[1] for c in commands},
+                         {"install", "ledger save", "migrate"})
+        for script, _ in commands:
+            self.assertEqual(Path(script.strip('"')).resolve(), GLADOS_PY)
 
     def test_generate_convert_fail_fast_then_install(self):
         t, _ = self._v1_repo()
@@ -2273,6 +10000,20 @@ class TestMigrate(unittest.TestCase):
                       "no remote must keep the example default")
         self.assertIn("TODO", line)
 
+    def test_a_non_ascii_origin_is_read_as_utf8(self):
+        """git writes the origin URL in UTF-8. Read in cp1252, a local path
+        remote with an Á in it crashed migrate on Windows with a traceback
+        before it detected anything. It is no known host: the example's
+        default stays, with its TODO."""
+        t, _ = self._v1_repo(remote="/srv/Ádám/čtení.git")
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        rc, out = run_cli("migrate", "--target", t, "--source", REPO, env=env)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        line = re.search(r"(?m)^platform:.*$", read(t / "glados.yaml")).group(0)
+        self.assertIn("TODO", line)
+
     def test_git_date_fallback_and_create_only_records(self):
         # a) no dirname date prefix -> the dir's last commit date is used
         t, git = self._v1_repo(specs=False)
@@ -2300,6 +10041,47 @@ class TestMigrate(unittest.TestCase):
         self.assertIn("kept", out)
         self.assertIn("2026-05-01-migrated-login-timeout.md",
                       read(t2 / "product-knowledge" / "SPEC_LOG.md"))
+
+    def test_migrated_records_stay_out_of_the_commit_and_reach_the_ledger(self):
+        """migrate writes records before any `ledger` command runs, and
+        MIGRATION step 3 then commits `.glados/`. migrate adds the clone's
+        exclude line first, so that commit takes no record, and the
+        `ledger save` after it, which skips files HEAD tracks, finds them
+        all (fix round 3)."""
+        t, git = self._v1_repo()
+
+        def out(*a):
+            return subprocess.run(["git", "-C", str(t), *a],
+                                  capture_output=True, text=True).stdout
+
+        exclude = t / out("rev-parse", "--git-path", "info/exclude").strip()
+        rc, dry = self._migrate(t, "--dry-run")
+        self.assertIn(f"would add {glados.RUNS_EXCLUDE}", dry)
+        self.assertNotIn(glados.RUNS_EXCLUDE,
+                         read(exclude) if exclude.is_file() else "")
+        rc, mout = self._migrate(t)
+        self.assertEqual(rc, 0, mout)
+        self.assertIn(glados.RUNS_EXCLUDE, read(exclude).splitlines())
+        self.assertIn("ledger save --target", mout)
+        gy = read(t / "glados.yaml")
+        write(t / "glados.yaml",
+              gy.replace(glados.MIGRATE_PHASE_LINE, "phase: evolving"))
+        self.assertEqual(install("direct", t)[0], 0)
+        git("add", "glados.yaml", ".glados", "product-knowledge")
+        staged = out("diff", "--cached", "--name-only").split()
+        self.assertIn(".glados/glados.py", staged)
+        self.assertEqual([p for p in staged if p.startswith(".glados/runs/")],
+                         [], "the migration commit takes no record")
+        git("commit", "-q", "-m", "chore: migrate to glados v2")
+        remote = tmpdir("glados-migrate-remote-")
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)],
+                       capture_output=True)
+        git("remote", "set-url", "origin", str(remote))
+        rc, sout = run_cli("ledger", "save", "--target", t)
+        self.assertEqual(rc, 0, sout)
+        self.assertEqual(
+            set(out("ls-tree", "-r", "--name-only", "glados/ledger").split()),
+            {self.REC1, self.REC2})
 
 
 

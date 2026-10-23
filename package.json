@@ -1,6 +1,6 @@
 {
   "name": "glados",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "GLaDOS engineering workflows for AI coding agents. Packaged so harnesses (such as cruxcode for pi) can depend on it from git.",
   "private": true,
   "files": [
@@ -9,6 +9,7 @@
     "hooks/",
     "ci/",
     "compiled/",
+    "docs/standards/",
     "glados.yaml.example",
     "README.md"
   ]

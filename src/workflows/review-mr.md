@@ -2,9 +2,11 @@
 name: review-mr
 kind: core
 description: Run one adversarial multi-persona review pass over an open merge request
-reads: [review.reviewed-head, review.cycle, run.active-personas, manifest.merge-authority, manifest.platform]
+reads: [review.reviewed-head, review.cycle, run.active-personas, manifest.merge-authority, manifest.platform, manifest.canon, canon.digests]
 writes: [review.reviewed-head, review.cycle, review.verdicts]
-emits: [progress, verdict, escalation]
+# Canon conflicts a panelist reports are filed as an `observation` outcome
+# only: this run never commits to the branch it reviews.
+emits: [progress, verdict, escalation, observation]
 mutates: none
 requires: [mr-review-panel]
 ---
@@ -13,11 +15,10 @@ requires: [mr-review-panel]
 
 **Goal**: run one adversarial, multi-persona review pass over an open merge
 request, produce a single validated tally, and synthesize that tally down to
-its root cause before deciding. A clean pass ends the loop; a dirty pass
-hands off to the address-review workflow — forming the loop
-review-mr ⇄ address-review that runs until every panelist approves or the
-cycle bound stops it. This workflow reads the author's branch and never
-commits to it.
+its root cause before deciding. A dirty pass hands off to the
+address-review workflow, forming the loop review-mr ⇄ address-review;
+step 8 and address-review's handoff say when it ends. This workflow reads
+the author's branch and never commits to it.
 
 ## Process
 
@@ -27,10 +28,15 @@ commits to it.
   run produces an `escalation` outcome and stops.
 
 ### 2. Re-review guard
-- Compare the MR's current HEAD SHA against `review.reviewed-head`. If the
-  HEAD is unchanged since the last pass **and** the author has not responded
-  to it, there is nothing new to review: this run produces a `progress`
-  outcome saying so and stops. Do not re-review an unchanged HEAD.
+- A person's point no run of this workflow has quoted starts a new round
+  of cycles: the record notes the cycle it follows. `review.cycle` is not
+  reset, so open findings stay named. Compare the MR's current HEAD SHA
+  against `review.reviewed-head`. If the HEAD is unchanged since the last
+  pass **and** the author has not responded to it, there is nothing new to
+  review: this run produces a `progress` outcome saying so and stops,
+  handing any such point, quoted with its id, to address-review, whatever
+  that pass decided (*People on the merge request*). Do not re-review an
+  unchanged HEAD.
 
 ### 3. Check the cycle bound
 
@@ -39,10 +45,9 @@ commits to it.
 - This pass is cycle `review.cycle + 1` for this MR (cycle 1 when unset).
 
 ### 4. Assemble the review brief
-- Gather: the MR id, the diff, the changed-file list, **the merge-request
-  description**, the spec or ticket, the test commands, and the personas
-  active for this feature (`run.active-personas`, when present). The
-  description is not furniture: it is where the author states what this
+- Gather what *Assemble the brief* lists, and the personas active for this
+  feature (`run.active-personas`, when present). **The merge-request
+  description** is not furniture: it is where the author states what this
   change deliberately leaves undone, and a panel that never reads it spends
   a cycle reporting decisions back to the person who made them.
 - **Read the pipeline's JOBS, not its status.** A pipeline reports success
@@ -67,13 +72,31 @@ commits to it.
   none is itself worth one line in the record, because then nothing but the
   author's memory says where this change ends.
 - **Cycle 1 briefs the whole change** (`<base>...<head>`).
+- **Findings handed over with the MR.** When the run that opened the MR
+  hands over blocking findings it already posted on it (a self-review, or a
+  step a project workflow runs after opening the MR), cycle 1 carries them
+  in the brief, each named and open until this pass refutes or closes it;
+  a one-way question among them stays open, keeping the MR from
+  review-clean, until a person answers it on the MR. Every pass quotes,
+  with its id, each person's note no earlier pass quoted, listing them
+  again before it decides, and names each person's point still open, which
+  closes only as *People on the merge request* sets out. A handed-over
+  finding or a person's point still open after the pass joins the
+  consolidated list in step 7 at its severity, as a synthesis finding does:
+  it reaches address-review, and a `blocking` one keeps the MR from
+  review-clean.
 - **Cycle 2 and after brief the delta**: what changed since the pass that
   produced the open findings, together with that pass's findings, each one
   named and still open until this pass says otherwise. Ground a previous
   cycle already judged is not judged again — this cycle answers which open
   findings the new commits closed, and what the new commits broke.
-- **Check first that the reviewed head is still an ancestor of this one.**
-  Where it is, the delta is the commit range `<review.reviewed-head>..<head>`.
+- **Unless the work was re-planned.** When a plan, shape or spec record
+  differs between `review.reviewed-head` and this head, this cycle briefs
+  the whole change against the target branch, as cycle 1 does, with the
+  open findings still named.
+- **For a delta pass, check first that the reviewed head is still an
+  ancestor of this one.** Where it is, the delta is the commit range
+  `<review.reviewed-head>..<head>`.
   Where it is **not**, the branch was rebased or rewritten, and that range is
   not a delta at all: it lists every replayed commit as though it were new,
   which sends the panel back over the whole branch — the outcome this step
@@ -97,6 +120,13 @@ commits to it.
   one way a shorter re-review can cost more than it saves.
 - Make the brief self-contained — each panelist runs with no authoring
   context and must be able to judge from the brief alone.
+- Give each panelist the digest paths of the canon that applies at
+  `review-mr` and is seated on it, and the rules *Consulting canon* gives a
+  fresh agent, copied verbatim: paths, never summaries.
+
+<!-- glados:include vocabulary/mr-notes.md -->
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 5. Run the panel
 - Seat the panel and spawn one fresh agent per panelist, in parallel; the
@@ -123,6 +153,9 @@ commits to it.
   scale calls for, naming where the project tracks that work; the run record
   keeps what was pooled. Advisories that remain and share a cause are
   consolidated by the synthesis in step 7.
+- **File the canon conflicts.** Each `canon-conflicts` entry a panelist
+  returns is an `observation` outcome, as *Consulting canon* sets out. It is
+  never a finding and never changes the tally.
 - The tally is the **last** step permitted to shorten the list, because it is
   the only one that reads every finding at once. Downstream — the synthesis,
   the decision, the render, the publish — a finding may be reworded and
@@ -182,13 +215,16 @@ pass, before deciding anything.
   next cycle's delta, which step 4 makes cheap enough that this is a
   postponement rather than a loss.
 - **Every panelist `APPROVE` (validated), and no `blocking` synthesis
-  finding** → the MR is review-clean; the loop ends. What happens to the MR
-  next is governed by `merge-authority`, resolved from `glados.yaml` — this
-  document states no authority, and this workflow never merges.
+  finding** → the MR is review-clean, unless a one-way question step 4
+  carries is still open, which leaves it waiting on that person; the loop
+  ends, once address-review has answered any person's point still open.
+  What happens to the MR next is governed by `merge-authority`, resolved
+  from `glados.yaml` — this document states no authority, and this
+  workflow never merges.
 - **Any `REQUEST_CHANGES`, or a `blocking` synthesis finding** → run the
   address-review workflow against the **consolidated** findings — a cluster
-  goes over as its one consolidated finding, never as its members — then
-  re-enter this workflow for the next cycle.
+  goes over as its one consolidated finding, never as its members; its
+  handoff starts the next cycle.
 - **Any `ESCALATE`, or a failed validation above** → this run produces an
   `escalation` outcome carrying the open verdicts and stops the loop.
 

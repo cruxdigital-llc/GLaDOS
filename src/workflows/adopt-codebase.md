@@ -19,8 +19,6 @@ greenfield workflow; with no codebase yet, start from the intent workflow.
 ## Process
 
 ### 1. Scaffold GLaDOS state
-- Create `.glados/runs/` if absent — the run-ledger home every workflow's
-  record lands in.
 - If `glados.yaml` is absent at the repo root, copy `glados.yaml.example`
   there as `glados.yaml` and fill it **with the team** — every value is a team
   statement, never an agent guess:

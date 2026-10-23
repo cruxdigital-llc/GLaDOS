@@ -21,9 +21,21 @@ wherever it differs — and, if the repo has none, to stop and create one
 ## Prerequisites
 
 - Claude Code installed (`claude` on your PATH).
+- Python 3.10 or newer on your PATH: runs save and restore their records
+  with the plugin's `bin/glados.py`, and the guard hook is a Python script.
+  Where only `python3` is on the PATH (macOS, and Debian or Ubuntu without
+  `python-is-python3`), write `python3` wherever this page says `python`,
+  and in the hook command you wire: a hook that cannot start lets the
+  session end.
 - A checkout (or your team's fork) of the GLaDOS repository — the repository
   itself is the plugin: it carries `.claude-plugin/plugin.json` plus the
   pre-compiled artifacts.
+- Each consuming repo is a git repository whose clone can push a
+  `glados/ledger` branch to `origin`: every run commits its record to that
+  branch and pushes it. A branch-protection rule that covers `glados/ledger`
+  refuses the push, and the records then stay in that one clone. A project
+  in a subdirectory of its repository (a monorepo package) works too: keep
+  its `glados.yaml` in that directory and run Claude Code there.
 
 ## Install (consumer)
 
@@ -51,10 +63,14 @@ maintainer command below — consumers never run the compiler:
 ```
 GLaDOS/  (the plugin)
 ├── .claude-plugin/plugin.json       # plugin manifest (name: glados)
-├── skills/<name>/SKILL.md           # 25 entry points: 15 workflows + 10
+├── skills/<name>/SKILL.md           # 26 entry points: 16 workflows + 10
 │                                    #   renamed-v1-name shims (+ init)
-├── compiled/claude-plugin/*.md      # the 15 compiled workflow bodies the
+├── compiled/claude-plugin/*.md      # the 16 compiled workflow bodies the
 │                                    #   skills point at via ${CLAUDE_PLUGIN_ROOT}
+├── bin/glados.py                    # the toolchain (`validate` runs from here,
+│                                    #   and so do the `ledger` commands and
+│                                    #   `effective-config` in repos with no
+│                                    #   `.glados/glados.py`)
 └── glados.yaml.example              # template /glados:init copies into repos
 ```
 
@@ -65,10 +81,16 @@ The plugin brings the *workflows*; each consuming repo still owns its state:
 - **`glados.yaml`** — created per repo. Run `/glados:init` (ships with the
   plugin) to copy the template in, set the required `phase:`, and scaffold
   `product-knowledge/`.
-- **`.glados/runs/`** — run records are committed to the repo the run
-  happened in, never to the plugin.
-- **`product-knowledge/`** — the project's own standards, personas, and
-  status file.
+- **`.glados/runs/`** — run records are written in the repo the run
+  happened in, never in the plugin, and saved to that repo's
+  `glados/ledger` branch. A plugin-only repo has no `.glados/glados.py`, so
+  the workflows run the plugin's own: `python /path/to/GLaDOS/bin/glados.py
+  ledger save` (and `ledger restore`, which every run starts with). The
+  first `ledger save` or `ledger restore` adds `/.glados/runs/*` to the
+  clone's git exclude file, so no work-branch commit picks the records up.
+- **`product-knowledge/`** — the project's own standards, personas, status
+  file, the bodies of its own pipeline steps (`product-knowledge/steps/`),
+  and the digests of its canon (`product-knowledge/canon/`).
 
 ## First run
 
@@ -86,26 +108,73 @@ then a read-only first workflow:
 
 Plugin skills use the same `/glados:<name>` syntax as the script install.
 
+## Your own workflows
+
+A project can declare its own workflows under `pipelines:` in its
+`glados.yaml`: ordered lists of GLaDOS's steps and steps the project writes
+(`steps:`, bodies in `product-knowledge/steps/`). The plugin runs them with
+one skill, naming the pipeline first:
+
+```
+/glados:run-pipeline backend-feature Add rate limiting to the export endpoint
+```
+
+The plugin is compiled once, from GLaDOS's own template, so it has no
+per-pipeline shortcut such as `/glados:backend-feature`; script installs do.
+`run-pipeline` reads the declarations live and checks them before its first
+step. To check them yourself, or in CI, run the plugin's own toolchain
+against the repo. It needs no install:
+
+```bash
+python /path/to/GLaDOS/bin/glados.py validate --target .
+```
+
+It exits 1 on any error and writes nothing. See
+[guides/pipelines.md](../guides/pipelines.md).
+
+A plugin-only repo has no `.glados/presets.yaml`, so the defaults for every
+key its `glados.yaml` leaves out (loop bounds, decision rights) come from the
+plugin's own preset table, and updating the plugin can change them. A
+`run-pipeline` run pins the configuration it starts with, those defaults
+included (`python /path/to/GLaDOS/bin/glados.py effective-config --target .`
+prints its digest), and re-checks it before each step and when it resumes.
+A change, from an edited `glados.yaml` or a plugin update mid-run, stops the
+run with an escalation rather than changing its rules partway.
+
 ## Verify
 
-The plugin repo itself carries a vendored checker; from the GLaDOS checkout:
+The GLaDOS repo commits no `.glados/` (its `.gitignore` keeps it out):
+`compile-plugin` (see the maintainer corner below) vendors an untracked copy
+into the checkout's root. After running it, from the GLaDOS checkout:
 
 ```bash
 python .glados/glados.py check --target .
 ```
 
-Expected: `glados check: OK — no drift, checks pass, manifest hash current`.
-In consuming repos there is nothing compiled to check — the bootstrap guard
-plus each repo's `glados.yaml` do the work at run time.
+Expected: `glados check: OK — no drift, checks pass, manifest hash current`,
+and `git diff compiled/ skills/` printing nothing shows the checked-in
+artifacts were already current. In consuming repos there is nothing compiled
+to check — the bootstrap guard plus each repo's `glados.yaml` do the work at
+run time.
 
 ## Guard hook
 
-Claude Code's Stop hook (blocks a session ending mid-run without a committed
+Claude Code's Stop hook (blocks a session ending mid-run without a saved
 run record) is wired per consuming repo in `.claude/settings.json` — snippet
 in [hooks/README.md](../../hooks/README.md). The snippet expects the guard
 script at `.glados/hooks/claude-stop-hook.py`, which plugin-only repos don't
-have; copy `hooks/claude-stop-hook.py` from the GLaDOS checkout to that path
-(or point the snippet wherever you keep it).
+have. Copy `hooks/claude-stop-hook.py` from the GLaDOS checkout to that path
+(or point the snippet wherever you keep it), and copy it again whenever you
+upgrade GLaDOS, since nothing refreshes the copy for you. The current hook
+checks that every run in flight, nested runs and the runs enclosing them, is
+saved to the `glados/ledger` branch, and it blocks when it cannot tell what
+is in flight: a marker in `.glados/runs/` it cannot read or decode, or a
+marker naming something that is not a regular record file.
+[claude-code.md](claude-code.md#guard-hook) describes what it blocks on. The
+save command its block message names, `python .glados/glados.py ledger save`,
+becomes `python /path/to/GLaDOS/bin/glados.py ledger save` in a plugin-only
+repo; to release a run you have abandoned, delete both `.glados/runs/current`
+and `.glados/runs/stack`.
 
 ## Maintainer corner: regenerating the artifacts
 

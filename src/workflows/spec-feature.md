@@ -2,9 +2,9 @@
 name: spec-feature
 kind: core
 description: Turn one feature's plan into finalized requirements and an implementable specification
-reads: [run.active-personas, manifest.panel-personas]
-writes: []
-emits: [progress]
+reads: [run.active-personas, manifest.panel-personas, manifest.canon, canon.digests]
+writes: [observations.pending]
+emits: [progress, observation]
 mutates: none
 requires: [standards-gate]
 ---
@@ -15,8 +15,8 @@ requires: [standards-gate]
 implement without further product decisions: finalized requirements plus a
 technical specification. plan-feature decided *what* and *why*; this core
 decides the contract; implement-feature writes the code. It touches no branch,
-and its artifacts live in the run-record directory, beside this run's record
-— never in a standalone spec directory.
+and its artifacts live beside this run's record, on the run ledger — never in
+a standalone spec directory.
 
 ## Process
 
@@ -53,9 +53,15 @@ diverges from it, say why in the spec. Write the result to
 - Each persona presses the question the plan assigned it, plus its own
   mandate: what does this contract get wrong, leave undefined, or make
   expensive later?
+- The pass also presses each principle of the canon that applies at
+  `spec-feature`, from the seat it names, as *Consulting canon* sets out.
+  The spec names by canon id each principle it relies on or departs from,
+  with the reason for a departure.
 - Fold fixes into the spec; note declined objections in the spec with a
   one-line reason. This pass shapes the artifact — it is not the adversarial
   review loop, which runs later against the diff.
+
+<!-- glados:include vocabulary/canon.md -->
 
 ### 5. Gate before implementation
 This is the standards gate's pre-implementation checkpoint: the specification

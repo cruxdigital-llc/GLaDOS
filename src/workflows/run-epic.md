@@ -2,7 +2,7 @@
 name: run-epic
 kind: core
 description: Drive a multi-ticket epic or the backlog to one human-reviewable integration MR
-reads: [intent.status, manifest.branching, manifest.merge-authority, manifest.platform, epic.progress]
+reads: [intent.status, manifest.branching, manifest.merge-authority, manifest.platform, manifest.pipelines, epic.progress]
 writes: [epic.progress, epic.integration-branch, work.base-sha]
 emits: [progress, escalation, decision]
 mutates: board
@@ -12,11 +12,13 @@ requires: [mr-review-panel, standards-gate]
 # (GLaDOS) Run Epic
 
 **Goal**: drive a multi-ticket effort unattended: establish the ticket queue,
-run the per-feature loop (build-feature → review-mr ⇄ address-review → merge)
-on each ticket in dependency order, and finish with one consolidated diff for
-a human. This core adds what a single feature lacks — sub-tickets, an
-integration branch, sequential merges, and epic state durable enough that any
-fresh session can pick up mid-epic.
+run the per-feature loop (build → review-mr ⇄ address-review → merge) on each
+ticket in dependency order, and finish with one consolidated diff for a
+human. A ticket is built by build-feature or, when `glados.yaml` declares
+`pipelines:`, by the project workflow assigned to it. This core adds what a
+single feature lacks — sub-tickets, an integration branch, sequential
+merges, and epic state durable enough that any fresh session can pick up
+mid-epic.
 
 ## Process
 
@@ -37,23 +39,53 @@ fresh session can pick up mid-epic.
     status file (`intent.status`), taken top-down. Each item is already a
     ticket — no decomposition, no integration branch; MRs target
     `branching.default-target`.
-- The decomposition (or backlog selection order) is a scoping call: this step
-  produces a `decision` outcome recording the ticket breakdown.
+- **Pipeline per ticket** (only when `glados.yaml` declares `pipelines:`
+  and run-pipeline is enabled): give each ticket the pipeline that fits it,
+  matching the ticket against each pipeline's `when:`. An epic integrates
+  MRs, so only a pipeline whose sequence contains `open-mr`, and not as
+  `optional`, qualifies; a ticket none fits gets `build-feature`. In
+  `--backlog` mode, assign it as each item is taken. With run-pipeline in
+  the effective `disabled-workflows` (the phase preset's list included),
+  every ticket gets `build-feature`.
+  Write a pipeline you chose as `<name> (agent)`. A value without that mark
+  was set by a person (in the ticket table or on the tracker) and is never
+  overwritten.
+- The decomposition (or backlog selection order), with each ticket's
+  pipeline, is a scoping call: this step produces a `decision` outcome
+  recording the ticket breakdown.
 - **Integration branch** (epic mode): resolve `branching.epic-integration`
   from `glados.yaml`, cut it from `branching.default-target`, push it, and
   record it as `epic.integration-branch`. Every child MR targets it, keeping
   the default branch releasable. The commit it is cut from is this run's base
   (`work.base-sha`, recorded at run start).
 - **Write `epic.progress`** to the ledger: the mandate, the ticket table
-  (`id | depends-on | holder | status`), the integration branch, operating
-  rules, and any environment facts a resuming session needs.
+  (`id | depends-on | pipeline | holder | status`; with no `pipelines:`
+  declared, or run-pipeline disabled, every pipeline cell is
+  `build-feature`), the integration branch,
+  operating rules, and any environment facts a resuming session needs.
 
 ### 2. Per-ticket loop (sequential, dependency order)
 For each ticket, on a working branch off the integration branch (named per
-`branching.feature`):
+`branching.feature`); a parked ticket resumes on the branch its row notes:
 
-1. **Build** — run the build-feature workflow; its MR targets the integration
-   branch.
+1. **Build** — run the run-pipeline workflow for the ticket, handing it the
+   ticket's row (its pipeline included) as caller context, never the
+   pipeline name as an argument; a `build-feature` row runs the
+   build-feature workflow instead. Either way the MR targets the
+   integration branch. When the run switched an
+   `(agent)` pipeline (its record says so), update the row to the new one,
+   still marked `(agent)`. A ticket whose run parks, at a checkpoint or on
+   a question, waits for its approval or answer: mark its row
+   `awaiting-approval:<step>` and note the parked branch and record the
+   park's escalation names, hold its dependents, and carry on with tickets
+   that do not depend on it. Once no other ticket can run, check each
+   parked ticket once for its approval or answer and resume those that
+   have one. When every remaining row is parked or waits on a parked row,
+   end this run with a `progress` outcome listing each parked row and the
+   approval or answer it waits for; a later run-epic run resumes them
+   through step 0. This run has not finished the epic: it keeps its claim
+   and appends no work-unit row, as *Before ending this run* sets out.
+   Never loop over the queue again within one run.
 2. **Review** — run the review-mr workflow.
 3. **Address** — while the panel's verdict demands changes, run the
    address-review workflow, then re-review. Bounds and stalemate handling:
@@ -65,13 +97,15 @@ For each ticket, on a working branch off the integration branch (named per
    permits for a child→integration merge. Poll the pipeline and merge the
    moment it passes rather than blocking; verify the MR state actually
    flipped to merged.
-5. **Record** — update the ticket's row in `epic.progress` and commit the
-   update before starting the next ticket: resume durability is per ticket,
-   not per run. Each landed ticket produces a `progress` outcome.
+5. **Record** — update the ticket's row in `epic.progress` and save it to
+   the ledger before starting the next ticket: resume durability is per
+   ticket, not per run. Each landed ticket produces a `progress` outcome.
 
 ### 3. Close the epic
-- Queue exhausted (epic mode): confirm the integration branch contains exactly
-  the epic's tickets; run the full test suite on it.
+- Queue exhausted (epic mode): no row may still be `awaiting-approval`; the
+  epic closes only once every parked ticket has landed or been dropped by a
+  person. Then confirm the integration branch contains exactly the epic's
+  tickets; run the full test suite on it.
 - Open one integration→`branching.default-target` MR via the project platform
   CLI, with an epic-level `## Summary` and `## Test plan`. Resolve
   `merge-authority` for that scope; where the resolved value does not permit
@@ -100,7 +134,7 @@ For each ticket, on a working branch off the integration branch (named per
 <!-- glados:include vocabulary/git-conventions.md -->
 
 ### Exit
-- Stop when the ticket queue is exhausted, or when a blocking call genuinely
-  needs a human — a product decision, an irreversible action, a review
-  stalemate per the bounds above; the latter produces an `escalation` outcome
-  carrying the open question.
+- Stop when the ticket queue is exhausted, when only parked tickets remain
+  (step 2), or when a blocking call genuinely needs a human — a product
+  decision, an irreversible action, a review stalemate per the bounds above;
+  the latter produces an `escalation` outcome carrying the open question.

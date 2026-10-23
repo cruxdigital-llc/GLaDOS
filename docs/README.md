@@ -5,7 +5,8 @@ install it into a project workspace, and it compiles a set of slash
 commands (for example `/glados:build-feature`) tailored to that project's
 configuration. When your agent runs one, it follows a disciplined,
 team-visible process — reviews get posted, decisions get recorded, and
-every run leaves a committed record — instead of improvising.
+every run leaves a record on the repo's `glados/ledger` branch — instead of
+improvising.
 
 The pages below are ordered from most to least accessible. Start at the
 top; each layer assumes you have read the ones above it, never the ones
@@ -16,9 +17,10 @@ below. If you landed here without any context, the
 
 - [getting-started/](getting-started/) — pick your agent runtime — Claude
   Code, Gemini CLI (Google's open-source terminal agent), Google
-  Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google), or
-  Google AI Studio (aistudio.google.com) — and install GLaDOS into a
-  project. No prior GLaDOS knowledge needed.
+  Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google), pi
+  (pi.dev, a terminal coding agent), or Google AI Studio
+  (aistudio.google.com) — and install GLaDOS into a project. No prior
+  GLaDOS knowledge needed.
 
 ## Learn by example
 
@@ -31,6 +33,12 @@ below. If you landed here without any context, the
 - [guides/](guides/) — platform recipes for running GLaDOS on GitHub or
   GitLab: where reviews get posted, how the CI check is enabled, and how
   merge/pull requests flow.
+- [guides/pipelines.md](guides/pipelines.md) — your project's own
+  workflows: declare an ordered list of GLaDOS's steps and your own under
+  `pipelines:`, and run it with `run-pipeline`.
+- [guides/canon.md](guides/canon.md) — the reference works your team
+  follows: declare them under `canon:`, write a digest of each, and have
+  planning, speccing, verification and review cite their principles.
 - [../PLAYBOOK.md](../PLAYBOOK.md) — the team-adoption playbook: rolling
   GLaDOS out across a team, week by week.
 
@@ -57,10 +65,27 @@ after its opening paragraph.
 - [overlays.md](overlays.md) — v1's customization mechanism, now
   retired, and what replaced it in v2.
 - [standards/](standards/) — the SDA (Structured Development Artifacts)
-  Standard v1.0 and the GLaDOS Profiles: v2.0 (how a v2 install conforms —
-  the current mapping, enabled by `sda: true`) and v1.0 (historical).
+  Standard v1.0 and the GLaDOS Profiles: v2.1 (how a v2 install conforms,
+  the current mapping, enabled by `sda: true`), v2.0 (which v2.1 amends) and
+  v1.0 (historical).
 - [V2_STRATEGY.md](V2_STRATEGY.md) — design rationale for v2: the audit
   evidence and the nine load-bearing decisions. The deep end.
+- [proposals/composable-workflows.md](proposals/composable-workflows.md) —
+  design rationale for 2.5: project workflows, the shape step, and canon,
+  with the decisions taken and what was left for later.
+- [proposals/review-inputs.md](proposals/review-inputs.md) — why what a
+  fresh reviewer is given is core text, and what 2.5 changed in it.
+- [proposals/design-loop.md](proposals/design-loop.md) — why a question for
+  a person parks instead of failing a gate, and why a stalled revise loop
+  parks for a person (revised by v3.md: only a one-way door parks now, and a
+  two-way door takes its default for the person to confirm later).
+- [proposals/v3.md](proposals/v3.md) — what the first trial runs of a
+  plain-first pipeline changed next: a stall parks for a person, questions
+  turn on named outcomes, an author cannot defer an outcome a person set,
+  and the record and test runs got lighter.
 - [../MIGRATION.md](../MIGRATION.md) — for v1 users: the guided migration
   path — `glados.py migrate` does the mechanical work; the guide covers
   the one decision it leaves to you and what changed conceptually.
+- [Upgrading a v2 install to 2.5](../MIGRATION.md#upgrading-a-v2-install-to-25)
+  — for 2.x users: the manifests that need a look before you reinstall, and
+  how to check them first.

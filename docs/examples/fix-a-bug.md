@@ -102,15 +102,21 @@ $ glab mr create --source-branch feat/quoted-search-500 --target-branch main \
 ```
 
 Its description links the three artifacts the pipeline produced: the bug
-issue (#213), the reproduction, and the verification result. The bug is
+issue (#213), the reproduction, and the verification result. The last is
+never on the MR's branch: the evaluator writes it beside the run record
+(`.glados/runs/2026-07-03-fix-bug-quoted-search-500.evaluation.md`), and it
+is saved to the `glados/ledger` branch with the record, so the description
+links that copy (`python .glados/glados.py ledger link <path>` prints the
+link). The bug is
 closed by the **pair** — the fix MR plus its verified verdict; neither alone
 closes it. Merging stays with whoever `merge-authority` in the manifest
 names; the workflow never merges.
 
 ## What the run ledger shows
 
-Like every workflow run, this one leaves a single committed record in
-`.glados/runs/` (the run ledger — the project's durable memory).
+Like every workflow run, this one leaves a single record, saved from
+`.glados/runs/` to the `glados/ledger` branch (the run ledger — the project's
+durable memory).
 Illustrative but shape-accurate:
 
 ```bash

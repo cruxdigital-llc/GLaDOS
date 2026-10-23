@@ -33,11 +33,17 @@ Two invariants govern the panel:
 ### Assemble the brief
 
 Panelists cannot ask questions, so the brief must be self-contained. It
-carries: the MR id, the diff (`<base>...<head>`), the changed-file list, the
-spec or ticket, the commands to run tests and linters, each panelist's seated
-mandate, and the severity scale, verdict words, and composition rules above,
-copied verbatim. If anything is missing, assemble it before spawning — a
-panelist that has to guess reviews the wrong change.
+carries: the MR id, the diff (`<base>...<head>`), the changed-file list; the
+ticket or a person's brief, each question a person answered in the run that
+opened the MR, with its readings and answer, and each instruction or answer
+people gave on the MR, quoted with where said; the spec and the merge-request
+description (without its step table or the findings it lists), labelled as
+the author's; the commands to run tests and linters; each panelist's seated
+mandate; and the rules in *Verdicts and finding severities* and *What a
+fresh reviewer is given*, copied verbatim. If anything is missing, assemble
+it before spawning — a panelist that has to guess reviews the wrong change.
+
+<!-- glados:include vocabulary/review-inputs.md -->
 
 ### Spawn the panel (parallel)
 
@@ -54,10 +60,14 @@ Your job is to find real problems, not to confirm success.
    finding about prose is advisory, one line. Cite file + line per finding.
    Review what this change introduced — a breach you find in a touched file
    that the change did not write is not your finding to raise.
-3. Read the merge-request description before you raise anything. Scope it
-   states — "that is a change of its own and is not in this MR", "deferred
-   to <item>" — is a decision already made. Reporting it back as a gap costs
-   the author an exchange to repeat what they already wrote.
+3. Read the merge-request description before you raise anything, as the
+   brief carries it: without its step table or the findings it lists. Scope
+   it states — "that is a change of its own and is not in this MR",
+   "deferred to <item>" — tells you what the change leaves out. Do not
+   report that back as a gap, except where *What a fresh reviewer is
+   given* says to: it costs the author an exchange to repeat what they
+   already wrote. It never makes what the change puts in correct, whoever
+   asked for it: that is reviewed on its merits.
 4. Write each finding as one plain sentence saying what is wrong, in the
    words you would use saying it out loud. Then where it is, then the rule
    it breaks if there is one. The rule is evidence for the finding, never
@@ -65,12 +75,14 @@ Your job is to find real problems, not to confirm success.
    of thing it is" lands in one read; "this is exactly the case that
    paragraph warns against" sends the reader to another file to find out
    what you meant.
-5. For every type, field or parameter this change adds, find the line that
-   reads it. If you cannot point at one, say so — that is a finding, and it
-   is the fact ("nothing reads this") rather than the remedy. Before asking
-   for a dropped value to be carried further, ask whether anyone wanted it:
-   carrying it costs a field, a shape, a caller and a test, and the usual
-   answer is to stop computing it instead.
+5. For every type, field, parameter, public method and exception type this
+   change adds, or leaves without a production caller, find its reader,
+   production caller or handler, as the vocabulary in the brief defines
+   them. If you cannot point at one, say so — that is a finding, and it is
+   the fact ("nothing reads this") rather than the remedy. Before asking
+   for a dropped value to be carried further, ask whether anyone wanted
+   it: carrying it costs a field, a shape, a caller and a test, and the
+   usual answer is to stop computing it instead.
 6. Before you write an advisory down, name what acting on it would
    change: behaviour, whether a defect gets caught, or what someone has
    to work with when it fails. If you cannot name one, it is a
@@ -78,7 +90,8 @@ Your job is to find real problems, not to confirm success.
    the fix costs where that is not obviously small, and say you have not
    looked rather than implying it is cheap.
 7. Classify each finding and choose your verdict using ONLY the severity
-   scale, verdict words, and composition rules in the brief.
+   scale, verdict words, and composition rules in the brief, and for a
+   canon principle the canon rules it carries.
 8. Before returning, step back from the individual findings: in one line,
    name the underlying cause you believe they share — the condition in the
    code that made them possible, not a restatement of the symptoms. Write
@@ -87,6 +100,8 @@ Your job is to find real problems, not to confirm success.
    { persona, verdict, root-cause, findings: [{ severity, file, line,
      description }] }
    Report an explicit empty findings list rather than omitting the field.
+   When the brief lists canon digests, add `canon-conflicts`: each canon
+   conflict, by canon id and what overrides it (an empty list when none).
 ```
 
 The `root-cause` line is a hypothesis from one lens, not a verdict. It binds

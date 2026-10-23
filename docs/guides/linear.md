@@ -29,13 +29,15 @@ git-host variants. Keep `platform:` set to your actual git host.)
 GLaDOS defines *contracts*, not integrations. The manifest's `channels:`
 section routes each **outcome type** (a kind of result a workflow produces —
 a review verdict, a discovered bug, an escalation) to one or more **sinks**
-(places the team can see it). The sink vocabulary is closed:
+(places the team can see it). Five sinks are built in, and a project may
+declare more under `sinks:` (see [sinks.md](sinks.md)):
 
 - `mr-comment` — a comment on the open merge request / pull request
 - `issue` — a new ticket in the project's issue tracker
 - `issue-comment` — a comment on an existing ticket
 - `label` — a label applied to the MR/PR or ticket
-- `ledger` — a committed file under `.glados/runs/` in the repo
+- `ledger` — a file under `.glados/runs/`, saved to the repo's
+  `glados/ledger` branch
 
 Notice what `issue` does *not* say: it does not say "GitHub issue" or "GitLab
 issue". GLaDOS never wires a platform API itself — the **agent brings its own
@@ -85,7 +87,8 @@ python bin/glados.py install --mode claude --target /path/to/your/project
 (`--mode claude` targets Claude Code; other modes: `claude-plugin`, `direct`,
 `gemini` for Gemini CLI — Google's open-source terminal agent, `antigravity`
 for Google Antigravity — Google's agentic IDE, CLI `agy`, antigravity.google
-— and `aistudio` for Google AI Studio, aistudio.google.com.)
+— `pi` for pi, the terminal coding agent, pi.dev — and `aistudio` for Google
+AI Studio, aistudio.google.com.)
 
 ## What is NOT automated — plainly
 
@@ -102,9 +105,11 @@ for Google Antigravity — Google's agentic IDE, CLI `agy`, antigravity.google
   templates recompute the compile and scan the run ledger; they do not verify
   that a `bug` outcome produced a Linear issue.
 - **Code review stays on the git host.** `mr-comment` verdicts have no Linear
-  equivalent — the review conversation belongs on the MR/PR, and pointing
-  `verdict:` away from it would need an explicit confession
-  (`visibility-acknowledged`) to pass the installer.
+  equivalent — the review conversation belongs on the MR/PR, where review-mr
+  and address-review also read the team's own comments. The installer
+  accepts `verdict:` bound to any team-visible sink, `issue` included, so
+  keeping it on `mr-comment` is your call; only a binding with no
+  team-visible sink at all needs the `visibility-acknowledged` confession.
 - **No agent Linear tooling = manual posting.** On runtimes without hands,
   workflows emit the issue title/body text and a human (or a runner script)
   creates the Linear issue.
@@ -114,7 +119,7 @@ for Google Antigravity — Google's agentic IDE, CLI `agy`, antigravity.google
 | | |
 |---|---|
 | **Works today** | `platform: github` or `gitlab` + issue-kind sinks satisfied by the agent's own Linear MCP tooling, directed by your agent instructions file; Linear URLs recorded in the run ledger |
-| **Coming in v2.1–v2.2** | Nothing Linear-specific is planned; v2.1's issue-claim lease backend (humans assigning tickets act as leases) targets the git host's tracker, not Linear |
+| **Coming later** | Nothing Linear-specific is planned; the planned issue-claim lease backend (humans assigning tickets act as leases) targets the git host's tracker, not Linear |
 | **Your responsibility** | Connect and authenticate the Linear MCP for the agent; write the tracker instructions in `CLAUDE.md`; spot-check that filed outcomes actually appear in Linear — no GLaDOS check will catch a silent Linear failure |
 
 See also: [github.md](github.md) / [gitlab.md](gitlab.md) for the git-host

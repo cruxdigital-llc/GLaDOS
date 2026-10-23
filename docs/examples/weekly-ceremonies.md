@@ -19,32 +19,42 @@ page is illustrative; commands, file paths, and scheduling recipes are real.
 
 Steward keeps the project's memory honest. On one dated cleanup branch it:
 
-1. **Compacts the run ledger.** Every workflow run commits a record to
-   `.glados/runs/` (the run ledger — the project's durable memory). Steward
-   folds *settled* records — runs whose linked MR is merged or closed — into
-   `.glados/runs/DIGEST.md` at one line per run, then deletes the originals.
+1. **Compacts the run ledger.** Every workflow run saves a record to the
+   `glados/ledger` branch (the run ledger — the project's durable memory).
+   Steward folds *settled* records — runs whose linked MR is merged or
+   closed — into `.glados/runs/DIGEST.md` at one line per run, then deletes
+   the originals, on the ledger itself rather than in the cleanup MR.
    In-flight records are left alone; when in doubt, it keeps the record.
 2. **Refreshes stale documentation**, bottom-up: per-directory READMEs first,
    then the top-level README and the project status file. It updates what
    drifted and leaves accurate text alone.
-3. **Promotes pending observations.** Other workflows accumulate candidate
+3. **Refreshes canon digests**, when `glados.yaml` declares `canon:`.
+   Steward is the one workflow that fetches a canon source: it fetches
+   each `url`, compares its hash with the one the digest records, updates
+   a digest only where a principle it summarizes changed (in the team's
+   words, keeping each **Here, specifically:**),
+   reports each digest's age, and lists recall drafts awaiting a person's
+   confirmation and any missing digest. Digest edits ride the cleanup MR.
+4. **Promotes pending observations.** Other workflows accumulate candidate
    patterns ("we always wrap handlers in X") in a pending file. Steward
    decides each one: promote it into a written standard the review panel will
    enforce, or discard it with a one-line reason. Nothing stays pending
    without a reason.
-4. **Sanity-checks the test suite.** A full run, captured for the MR's test
+5. **Sanity-checks the test suite.** A full run, captured for the MR's test
    plan. Breakage is *not* fixed inline — each distinct failure is filed as a
    bug (via `glados.yaml`'s `bug: [issue]` routing), because a fix on a
    housekeeping branch muddies both the fix and the cleanup.
 
-Everything rides one MR. If nothing settled, nothing drifted, and nothing was
-pending, steward skips the MR rather than manufacture one. Illustrative MR:
+Everything else rides one MR. If nothing drifted and nothing was pending,
+steward skips the MR rather than manufacture one (compaction happens on the
+ledger and never needs one), and its `progress` outcome carries the canon
+report instead. Illustrative MR:
 
 > **chore: weekly steward pass 2026-07-04** (!58)
-> Summary: compacted 9 settled run records into DIGEST.md; refreshed
-> `api/README.md` (endpoint table drifted); promoted 1 observation to
-> `standards/error-envelopes.md`, discarded 2; suite green (412 passed,
-> 3 skipped). Filed #219 for the flaky websocket test.
+> Summary: compacted 9 settled run records into DIGEST.md on the ledger;
+> refreshed `api/README.md` (endpoint table drifted); promoted 1
+> observation to `standards/error-envelopes.md`, discarded 2; suite green
+> (412 passed, 3 skipped). Filed #219 for the flaky websocket test.
 
 ## Brunch: the critique roundtable
 
@@ -114,8 +124,10 @@ a terminal, so always request structured output to a file:
 ```
 
 **CI schedules** — any runner works, since the ceremonies only need a git
-checkout and the agent CLI. GitLab: a scheduled pipeline
-(CI/CD → Schedules) running a job like:
+checkout and the agent CLI, with credentials that can push the cleanup
+branch and the `glados/ledger` branch: every run saves its record there, and
+steward compacts there. GitLab: a scheduled pipeline (CI/CD → Schedules)
+running a job like:
 
 ```yaml
 steward:
@@ -135,7 +147,7 @@ or operator to execute.
 
 Whatever the runtime, the result lands in the same places: one MR per
 ceremony to review Monday morning, outcomes posted where `glados.yaml` routes
-them, and a committed run record in `.glados/runs/` either way — even a no-op
+them, and a run record on the `glados/ledger` branch either way — even a no-op
 steward pass says so on the record.
 
 ## If you knew GLaDOS v1

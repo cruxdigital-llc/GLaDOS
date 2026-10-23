@@ -20,8 +20,16 @@ is a planning/review/spec surface, not a hands-on-keyboard one.
 ## Prerequisites
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
+  Where only `python3` is on the PATH (macOS, and Debian or Ubuntu without
+  `python-is-python3`), write `python3` wherever this page says `python`.
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed files).
+- Your project is in a git repository, at its top level or in a subdirectory
+  such as a monorepo package (CI enforcement is supported only at the top
+  level; [details](README.md#what-a-run-leaves-behind)),
+  and its clone can push a `glados/ledger` branch to `origin`: every run
+  commits its record to that branch (`ledger save`) and pushes it. A
+  branch-protection rule that covers `glados/ledger` refuses the push, and the
+  records then stay in that one clone.
 - A Google account for AI Studio; a Gemini API key only if you use the
   bundled script runner.
 
@@ -39,6 +47,17 @@ cp glados.yaml.example /path/to/your/project/glados.yaml
 python bin/glados.py install --mode aistudio --target /path/to/your/project
 ```
 
+For `production` or `sunset`, delete the copy's `decisions:` block and the
+`relaxation-acknowledged: [delete-code]` line after it before you install.
+Both are written for `evolving`: install refuses each decision laxer than
+the phase's preset, and a confession left behind is restated in every
+assembly report. With both gone, the phase's preset governs. For `sunset`,
+delete `disabled-workflows: []` as well: it would re-enable `build-feature`
+and `run-pipeline`, which that phase turns off. Under `nascent` both may
+stay: where the block is stricter than nascent's preset
+(`schema-migration: record`, where nascent has `agent`) its value applies,
+and the confession relaxes nothing. Delete both to take nascent's own.
+
 ## What got installed
 
 ```
@@ -46,7 +65,7 @@ your-project/
 ├── glados.yaml                      # your config (you created this)
 ├── glados/adapters/aistudio/
 │   ├── README.md                    # the paste flow, step by step
-│   ├── MANIFEST.md                  # bundle list + the config fingerprint
+│   ├── MANIFEST.md                  # bundle list + the structural-key fingerprint
 │   │                                #   each bundle was compiled from
 │   ├── bundles/                     # 7 paste bundles (intent, plan-feature,
 │   │   ├── plan-feature.aistudio.md #   spec-feature, review-mr,
@@ -70,8 +89,9 @@ Commit all of it.
 2. Paste the contents of
    `glados/adapters/aistudio/bundles/review-codebase.aistudio.md` into the
    **System Instructions** field.
-3. Paste the repo context the workflow needs (relevant files, the issue
-   text) as your first user message, then run.
+3. Paste the repo context the workflow needs (your current `glados.yaml`
+   and `.glados/presets.yaml`, the relevant files, the issue text) as your
+   first user message, then run.
 4. Save the prompt to reuse the workflow later (AI Studio autosaves prompts
    to your Google Drive).
 
@@ -96,16 +116,29 @@ response with a mandatory run-record checklist, and
 `schemas/run_record.schema.json` can be set as the structured-output schema
 so omitting the run record is a schema violation. The CI check vendored to
 `.glados/ci/` (the installer prints the enable stanza) is the real backstop —
-context in [hooks/README.md](../../hooks/README.md).
+context in [hooks/README.md](../../hooks/README.md). A project in a
+subdirectory of its repository has no CI check: CI enforcement is supported
+only for a project at the repository root
+([details](README.md#what-a-run-leaves-behind)), so there the checklist, the
+schema and running `check` and `verify-ledger` yourself are all there is.
 
 ## Gotcha: the model has no hands — you are the executor
 
 Every bundle opens with a runtime contract: the model must emit a fenced
 block headed `=== WRITE FILE: <repo-relative-path> ===` for any file it wants
 written, and `=== RUN: ===` for any git or platform command. **Nothing has
-happened until you apply those blocks yourself** — including committing the
-run record to `.glados/runs/`. Don't read a transcript as work done. Two
-related cautions: bundles inline your `glados.yaml` values at compile time,
-so re-run the install whenever the config changes (`MANIFEST.md` records the
-fingerprint); and pasting proprietary code into free-tier AI Studio may
-expose it to product-improvement use — check your tier's data policy first.
+happened until you apply those blocks yourself** — including saving the
+run record to the `glados/ledger` branch (`python .glados/glados.py ledger
+save`). Don't read a transcript as work done. Two
+related cautions: bundles are compiled from your `glados.yaml`, so re-run the
+install whenever a structural key changes (`phase`, `optimize-for`,
+`default-modules`, `workflows`, `disabled-workflows`, `sda`, and pipeline
+names and descriptions; `MANIFEST.md` records the fingerprint of those keys
+only). The live keys (`channels`,
+`decisions`, `merge-authority`, `params`, `sinks`, `branching`, `canon`) are
+not baked into the bundle, so paste your current `glados.yaml` with the repo
+context, together with `.glados/presets.yaml` (the defaults of any key the
+manifest leaves unset), and when it declares `canon:`, the digest files the
+workflow consults (the model cannot open them itself); and pasting proprietary code
+into free-tier AI Studio may expose it to product-improvement use — check
+your tier's data policy first.

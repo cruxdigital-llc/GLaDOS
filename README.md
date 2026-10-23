@@ -11,8 +11,8 @@ generates a set of slash commands — `/glados:build-feature`,
 `/glados:fix-bug`, `/glados:review-mr` — tailored to that project. When your
 agent runs one, it follows a disciplined, team-visible process instead of
 improvising: reviews get posted where the team can see them, decisions get
-written down with their reasons, and every run leaves a committed record in
-your repo.
+written down with their reasons, and every run leaves a record on your
+repo's `glados/ledger` branch.
 
 What you get:
 
@@ -22,7 +22,8 @@ What you get:
 - **Nothing important lives only in a chat transcript.** Review verdicts land
   as merge-request comments (a merge request, or MR, is GitLab's name for a
   pull request), problems become issues, and every run writes a record file
-  into `.glados/runs/` that is committed alongside the work.
+  into `.glados/runs/` and saves it to the repo's `glados/ledger` branch,
+  never to the work's branch, so a merge request's diff is the change.
 - **One config file controls behavior.** `glados.yaml` declares who may merge,
   which decisions the agent may make on its own, and where each kind of result
   gets posted. The installer refuses any configuration under which a result
@@ -32,7 +33,9 @@ What you get:
 
 Coming from GLaDOS v1? Run `python bin/glados.py migrate --target
 /path/to/your/project` instead — [MIGRATION.md](MIGRATION.md) is the guided
-path. Otherwise, from a clone of this repository:
+path. Otherwise you need Python 3.10 or newer, and a project in a git
+repository whose clone can push a `glados/ledger` branch to `origin`: every
+run saves its record there. From a clone of this repository:
 
 ```bash
 cp glados.yaml.example /path/to/your/project/glados.yaml
@@ -42,7 +45,16 @@ Open the copy and set two keys. `platform:` is `gitlab` or `github`. `phase:`
 is a one-word honest answer to "who gets hurt if the agent gets something
 wrong?" — `nascent` (nobody; no users yet), `evolving` (early adopters),
 `production` (real users), or `sunset` (winding down) — describe reality, not
-ambition, because the word tunes how much caution gets compiled in.
+ambition, because the word tunes how much caution gets compiled in. The copy's
+`decisions:` block, and the `relaxation-acknowledged: [delete-code]` line after
+it, are written for `evolving`: for `production` or `sunset`, delete both so
+the phase's preset governs. Otherwise install refuses each value laxer than the
+preset's, and a confession left behind is restated in every assembly report.
+For `sunset`, delete `disabled-workflows: []` as well: it would re-enable
+`build-feature` and `run-pipeline`, which that phase turns off. Under
+`nascent` both may stay: where the block is stricter than nascent's preset
+(`schema-migration: record`, where nascent has `agent`) its value applies,
+and the confession relaxes nothing. Delete both to take nascent's own.
 
 Then install for your agent's runtime (here: Claude Code):
 
@@ -61,8 +73,8 @@ Now open your agent inside the project and run your first command:
 
 The agent studies your codebase, writes what it learns (structure,
 conventions, candidate coding standards) into `product-knowledge/`, and leaves
-a record of the run in `.glados/runs/` — ordinary files you review and commit
-like any other change.
+a record of the run, saved to the repo's `glados/ledger` branch. The
+knowledge tree is ordinary files you review and commit like any other change.
 
 ## What a run looks like
 
@@ -71,19 +83,34 @@ jump straight to editing code: it first reproduces the bug and writes down
 how; it fixes the root cause rather than the symptom; then a second, fresh
 agent session — one that never saw the fix being written — independently
 verifies it. What you end up with is a merge request with the review verdict
-posted as a comment on it, plus a committed record in `.glados/runs/` saying
-what was decided and why. Six months later, `git log` still knows the whole
-story.
+posted as a comment on it, plus a record on the `glados/ledger` branch
+saying what was decided and why. Six months later, `git log glados/ledger`
+still knows the whole story.
 
-`fix-bug` is one of fifteen commands. The everyday ones are `build-feature`
+`fix-bug` is one of sixteen commands. The everyday ones are `build-feature`
 (one feature from plan to a verified merge request in one sitting),
 `review-mr` and `address-review` (the review loop), and `run-epic` (a whole
 ticket queue). The full list, with what each does, is in
 [docs/workflows.md](docs/workflows.md).
 
+Your team's process can differ from build-feature's fixed plan, spec,
+implement, verify order. Declare your own workflows under `pipelines:` in
+`glados.yaml`, mixing GLaDOS's steps with steps you write, and run them with
+`/glados:run-pipeline <name> <brief>`. Every step is tracked in the run
+record whatever the order. See
+[docs/guides/pipelines.md](docs/guides/pipelines.md).
+
+If your team follows reference works (a book on architecture, say), declare
+them under `canon:` and write a short digest of each in your own words.
+Planning, speccing, verification and review then cite their principles by
+id, as advice unless a standard of yours adopts one. See
+[docs/guides/canon.md](docs/guides/canon.md).
+
 ## Where things land in your repo
 
-Everything is installed into your project workspace and committed to git:
+Everything is installed into your project workspace and committed to git
+with your code, except the run records, which are committed to the
+`glados/ledger` branch instead:
 
 ```
 your-project/
@@ -91,15 +118,20 @@ your-project/
 ├── .claude/commands/glados/     # the compiled slash commands (this dir is
 │                                #   per-runtime — see the table below)
 ├── .glados/                     # GLaDOS working state, committed to git
-│   ├── runs/                    # one record file per run (created on first run)
+│   ├── runs/                    # run records: written here, kept out of every
+│   │                            #   branch's commits by the clone's git exclude
+│   │                            #   file, and saved to the glados/ledger branch
 │   ├── assembly-report.md       # what the installer resolved, and from where
 │   ├── personas/                # reviewer viewpoints: security, architecture, QA…
-│   ├── ci/                      # optional CI job that catches config drift
+│   ├── ci/                      # optional CI jobs: the config drift check and the
+│   │                            #   verify-ledger run-record backstop
 │   └── src/                     # copies of the sources, so installs are reproducible
 └── product-knowledge/           # your project's written knowledge
     ├── standards/               # rules the agent's work is checked against
     ├── philosophies/            # high-level principles
     ├── personas/                # your own reviewer viewpoints (override shipped ones)
+    ├── steps/                   # bodies of your own pipeline steps
+    ├── canon/                   # your digests of the reference works you follow
     └── observations/            # recurring patterns noticed, awaiting promotion
 ```
 
@@ -126,11 +158,12 @@ One compiled output feeds every mode, so behavior matches across runtimes.
 Two commands are standing weekly jobs rather than things you run when you
 think of them:
 
-- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses old
-  run records into a short digest, refreshes stale docs, reviews the
-  accumulated observations and promotes the real patterns into written
-  standards, and sanity-checks the tests. Ships as one small cleanup merge
-  request.
+- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses
+  settled run records into a short digest on the `glados/ledger` branch,
+  refreshes stale docs and, when `glados.yaml` declares `canon:`, the canon
+  digests, reviews the accumulated observations and promotes the real
+  patterns into written standards, and sanity-checks the tests. Ships as one
+  small cleanup merge request.
 - **`/glados:brunch`** (typically Sunday) — a critique roundtable. Several
   reviewer personas examine the codebase in parallel (after actually running
   the project first), a moderator ranks the findings by impact against
@@ -162,13 +195,16 @@ In increasing depth:
    walkthrough and your first week.
 2. **[docs/examples/](docs/examples/)** — worked, end-to-end examples of real
    runs.
-3. **[docs/guides/](docs/guides/)** — task-oriented guides, including SDA
-   conformance (`sda: true` in `glados.yaml` — claims + work-unit log
-   maintained by every run) and the Wheatley board; see also
+3. **[docs/guides/](docs/guides/)** — task-oriented guides, including your
+   own workflows ([pipelines.md](docs/guides/pipelines.md)), canon
+   ([canon.md](docs/guides/canon.md)), SDA
+   conformance (`sda: true` in `glados.yaml` — one claim and one work-unit
+   row per unit of work, recorded by its outermost run) and the Wheatley
+   board; see also
    [PLAYBOOK.md](PLAYBOOK.md) for adopting GLaDOS across a team.
 4. **[docs/concepts.md](docs/concepts.md)** — how the compiler, the config
    file, and the run records actually work.
-5. **Reference** — [docs/workflows.md](docs/workflows.md) (all fifteen
+5. **Reference** — [docs/workflows.md](docs/workflows.md) (all sixteen
    commands and the v1→v2 name map), [docs/modules.md](docs/modules.md),
    [docs/personas.md](docs/personas.md), [docs/src.md](docs/src.md), and
    [docs/V2_STRATEGY.md](docs/V2_STRATEGY.md) (design rationale — the deep
@@ -176,4 +212,5 @@ In increasing depth:
 
 Upgrading from GLaDOS v1? Every old command name keeps working as an alias,
 and `python bin/glados.py migrate` converts the rest;
-[MIGRATION.md](MIGRATION.md) is the guided path.
+[MIGRATION.md](MIGRATION.md) is the guided path. Upgrading a v2 install to
+2.5? See [its upgrade notes](MIGRATION.md#upgrading-a-v2-install-to-25).

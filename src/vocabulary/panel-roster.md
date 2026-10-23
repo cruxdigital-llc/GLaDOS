@@ -14,7 +14,7 @@ line, and no lens blocks on one.
 | **UAT** | Does the change actually do what the spec/ticket promises? Exercise it as a user would; verify each acceptance criterion. |
 | **Adversarial** | Attack the change: edge cases, error paths, race conditions, auth/tenancy holes, injection, data loss. |
 | **Standards** | Audit the change against the project's standards tree, citing the standard. A breach blocks only when it changes behaviour or crosses a boundary the standard draws; otherwise it is one advisory line. |
-| **Philosophy** | Audit the change's behaviour and structure against the project's philosophies — fail-fast, root-cause-not-symptom, and the project's stated values. |
+| **Philosophy** | Audit the change's behaviour and structure against the project's philosophies — fail-fast, root-cause-not-symptom, and the project's stated values — and, when the workflow consults canon, against the canon digests seated on this lens. |
 | **Dead-code** | Hunt leftovers in the code: unused symbols, orphaned files, debug artifacts, commented-out code. |
 
 **Project personas:** resolve `params.review-panel.personas` from `glados.yaml`;

@@ -27,9 +27,11 @@ contention between two people (or agents) grabbing the same card.
 
 One path wrinkle: Wheatley's server reads the claims file at
 `product-knowledge/claims.md`, while GLaDOS's SDA support (see
-[sda.md](sda.md)) scaffolds and writes `claims.md` at the repo root. If you
-use both, keep the claims file where Wheatley looks — under
-`product-knowledge/`.
+[sda.md](sda.md)) scaffolds and writes `claims.md` at the project's root
+(the directory holding `glados.yaml`), and only there: runs append to that
+file and a re-install re-creates it. So do not move it. If you use both,
+link `product-knowledge/claims.md` to that file (`ln -s ../claims.md
+product-knowledge/claims.md` in sidecar mode).
 
 ## What works on a GLaDOS v2 project today
 
@@ -43,8 +45,10 @@ Three of the four inputs are alive and well in v2:
   maintains it. The *unclaimed / backlog* column works.
 - **The claims file — when `glados.yaml` sets `sda: true`.** SDA conformance
   is a first-class manifest key in v2: install scaffolds `claims.md`, and the
-  compiled preamble/epilogue of every workflow record a claim before mutating
-  and clear it at run end. The *who's working on what* overlay works, and
+  compiled preamble and epilogue record one claim and one work-unit row per
+  unit of work, made by its outermost run (a run nested inside it adds
+  neither), claiming before the first mutation and clearing the claim when
+  the unit ends. The *who's working on what* overlay works, and
   stays current by construction rather than by convention. (Mind the path
   wrinkle above.)
 
@@ -57,14 +61,16 @@ One input is a v1 artifact that v2 deliberately retired, and one setting is
 still required:
 
 - **`specs/` is gone.** v1 wrote a per-feature trace directory under
-  `specs/`; v2 replaced that with the **run ledger** — exactly one committed
-  record per workflow run under `.glados/runs/`. The v2 `migrate` command
+  `specs/`; v2 replaced that with the **run ledger** — exactly one record
+  per workflow run, written under `.glados/runs/` and saved to the
+  `glados/ledger` branch. The v2 `migrate` command
   ([MIGRATION.md](../../MIGRATION.md)) converts live `specs/` dirs into
   ledger entries, and its `--clean` flag deletes the tree. Wheatley reads
   `specs/`, so its *in-flight* columns (Planning through Verifying) are empty
-  on a v2 repo. Closing this needs Wheatley-side work (reading
-  `.glados/runs/`) planned alongside the GLaDOS v2.1 coordination release —
-  not shipped in either project.
+  on a v2 repo. Closing this needs Wheatley-side work (reading the run
+  ledger, which from GLaDOS 2.5 lives on the `glados/ledger` branch rather
+  than in a checkout's `.glados/runs/`) planned alongside a later GLaDOS
+  coordination release — not shipped in either project.
 - **`claims.md` exists only when `sda: true`.** The key is explicit-only and
   defaults to false; without it, v2's concurrency answer is the invisible
   base-SHA yield rule and the claims overlay is empty.
@@ -75,30 +81,44 @@ file doesn't exist just renders empty.
 
 ## Direction, not shipped
 
-The intended reconciliation pairs Wheatley's v2 support with the GLaDOS
-**v2.1 coordination release**:
+The intended reconciliation pairs Wheatley's v2 support with a later GLaDOS
+**coordination release**:
 
-- v2.1 introduces the **lease module** (lockfile backend): a lease is a
+- That release introduces the **lease module** (lockfile backend): a lease is a
   committed file saying *who* holds *what scope*, with an intent and a TTL.
   When `sda: true`, the lockfile backend will write `claims.md`-compatible
   entries — the claims file becomes a view over enforced leases instead of a
   kernel-prose convention.
-- `.glados/runs/` becomes the in-flight data source: the run ledger already
-  records which workflow (plan, spec, implement, verify) each run executed,
+- The run ledger (`.glados/runs/` on the `glados/ledger` branch) becomes
+  the in-flight data source: it already records which workflow (plan, spec,
+  implement, verify) each run executed,
   which is the phase information Wheatley used to infer from `specs/`
   directory contents.
 
 Treat this as direction: none of it is shipped in Wheatley or in GLaDOS
-v2.0.0 today. What ships today is the claims overlay via `sda: true` — see
+today. What ships today is the claims overlay via `sda: true` — see
 [sda.md](sda.md).
+
+### Project workflows on the board
+
+A project's own workflows ([pipelines.md](pipelines.md)) add no columns. The
+columns stay the six SDA phases: the
+[v2.1 profile](../standards/sda-profile-glados-v2.1.md) reads a pipeline
+run's phase as the `stage` of the first row in its step table that is not
+done, skipped or waived, until the work-unit row marks it done. A card can
+also show the pipeline's name, its current step, and an awaiting-approval
+badge while the run is parked for a person (at a human checkpoint, on a
+one-way question, or on a stalled check). Like the other in-flight columns,
+this needs Wheatley to read the `glados/ledger` branch, which is direction,
+not shipped.
 
 ## Summary
 
 | | |
 |---|---|
-| **Works today** | Backlog column from `product-knowledge/ROADMAP.md` (maintained by the `intent` workflow); active tasks from `product-knowledge/PROJECT_STATUS.md`; claims overlay on repos with `sda: true` (kernel-maintained `claims.md` — keep it under `product-knowledge/` for Wheatley) |
-| **Coming in v2.1–v2.2** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading `.glados/runs/` as in-flight state — stated direction, not shipped in either project |
-| **Your responsibility** | Run Wheatley (Docker) and mount/point it at the repo; set `sda: true` if you want the claims overlay; keep `claims.md` where Wheatley looks; don't expect in-flight columns on a v2 repo yet |
+| **Works today** | Backlog column from `product-knowledge/ROADMAP.md` (maintained by the `intent` workflow); active tasks from `product-knowledge/PROJECT_STATUS.md`; claims overlay on repos with `sda: true` (kernel-maintained `claims.md` at the project's root, linked under `product-knowledge/` for Wheatley) |
+| **Coming later** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading the run ledger (the `glados/ledger` branch) as in-flight state — stated direction, not shipped in either project |
+| **Your responsibility** | Run Wheatley (Docker) and mount/point it at the repo; set `sda: true` if you want the claims overlay; keep `claims.md` at the project's root and link it where Wheatley looks; don't expect in-flight columns on a v2 repo yet |
 
 See also: [sda.md](sda.md) for the `sda:` key and the artifacts Wheatley
 reads, and [../../MIGRATION.md](../../MIGRATION.md) for why v2 retired
