@@ -6234,11 +6234,10 @@ def cmd_ledger_restore(args) -> int:
         for name in unmatched:
             notes.append(f"{name}: no file on the ledger matches it")
     head = _ledger_tree(git, git.rev("HEAD"), git.runs)
-    # os.path, never Path.is_file(): on Python 3.10 to 3.12 that raised for
-    # a ledger name this file system cannot hold (a component over 255
-    # bytes, which a Windows clone can save), and restore wrote nothing.
-    present = [p for p in tree if os.path.isfile(git.root / p)]
-    hashes = _hash_files(git, present)
+    # What is gone goes first: on Windows and macOS a path the ledger
+    # renamed in case alone (R1.md to r1.md, saved on Linux) is one file
+    # here, which, looked at first, was present and then removed, so
+    # nothing was written.
     on_disk = [p for p in gone
                if p not in head and os.path.isfile(git.root / p)]
     history = [c for c in (local, remote_tip) if c]
@@ -6266,6 +6265,11 @@ def cmd_ledger_restore(args) -> int:
     for p in gone:
         if p in removed or not os.path.exists(git.root / p):
             sync.pop(p, None)
+    # os.path, never Path.is_file(): on Python 3.10 to 3.12 that raised for
+    # a ledger name this file system cannot hold (a component over 255
+    # bytes, which a Windows clone can save), and restore wrote nothing.
+    present = [p for p in tree if os.path.isfile(git.root / p)]
+    hashes = _hash_files(git, present)
     written, refreshed, kept, tracked = [], [], [], 0
     for p, (_mode, sha) in sorted(tree.items()):
         if _unholdable_here(p):

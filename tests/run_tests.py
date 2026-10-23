@@ -8944,6 +8944,33 @@ class TestRunLedger(unittest.TestCase):
                 self.assertIn(f".glados/runs/{name}",
                               self._ledger_files(a, "origin/glados/ledger"))
 
+    def test_a_rename_in_case_alone_is_restored(self):
+        """A Linux clone can rename a record in case alone on the ledger
+        (R1.md to r1.md). On Windows and macOS restore found r1.md present
+        (the synced R1.md, case aside), then removed R1.md as gone, so it
+        wrote nothing: the record was missing from disk until a second
+        restore, and a run that recreated it in between overwrote the
+        ledger's copy. Restore removes what is gone before it looks."""
+        remote = self._remote()
+        a = self._clone(remote, seed=True)
+        write(a / ".glados" / "runs" / "R1.md", "# r1\n")
+        self._save(a)
+        b = self._clone(remote)
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        # the rename as a Linux clone saves it, by plumbing so it runs anywhere
+        tip = self._git(a, "rev-parse", "glados/ledger")
+        tree = self._mktree(a, {".glados/runs/r1.md": b"# r1\n"})
+        commit = self._git(a, "commit-tree", tree, "-p", tip, "-m", "rename")
+        self._git(a, "push", "-q", "origin",
+                  f"{commit}:refs/heads/glados/ledger")
+        rc, out = run_cli("ledger", "restore", "--target", b)
+        self.assertEqual(rc, 0, out)
+        names = os.listdir(b / ".glados" / "runs")
+        self.assertIn("r1.md", names)
+        self.assertNotIn("R1.md", names)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"), "# r1\n")
+
     def _unwritable(self, path):
         """Take this user's right to change ``path``: a file becomes
         read-only (on Windows, the read-only attribute), a directory takes
