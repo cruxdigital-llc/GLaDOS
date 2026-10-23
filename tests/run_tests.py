@@ -7685,7 +7685,12 @@ class TestHookGuards(unittest.TestCase):
             user = os.environ.get("USERNAME")
             if not user:
                 self.skipTest("no USERNAME to deny access to")
-            rights = "(RD)" if listing_only else "(OI)(CI)(F)"
+            # Not (F): that denies this user READ_CONTROL and WRITE_DAC
+            # too, so the cleanup's /remove:d failed and every run left a
+            # directory in %TEMP% only an administrator can delete.
+            # SYNCHRONIZE, list and read-attributes are enough: opening the
+            # directory, or anything in it, fails.
+            rights = "(RD)" if listing_only else "(OI)(CI)(S,RD,RA)"
             p = subprocess.run(["icacls", str(path), "/deny",
                                 f"{user}:{rights}"],
                                capture_output=True, text=True)
