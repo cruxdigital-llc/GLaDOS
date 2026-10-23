@@ -5289,23 +5289,37 @@ def _ensure_runs_ignored(git: _LedgerGit, write: bool = True) -> str:
     (preamble step 1), and install and migrate write it too
     (_exclude_runs_at), so a clone has the line before it has a record.
     Returns the line when it was missing, else ''; ``write`` false only
-    checks."""
+    checks.
+
+    The file is read as git reads it, as bytes (a UTF-8 BOM skipped), and
+    the line goes in as UTF-8. Windows PowerShell 5.1 writes `>` as UTF-16
+    and Add-Content in the ANSI code page: read as UTF-8 text, either
+    raised UnicodeDecodeError, a traceback in install, save and restore.
+    A file this user cannot write is named on stderr instead."""
     line = _exclude_line(git.runs)
+    want = line.encode("utf-8")
     rel = Path(git.out("rev-parse", "--git-path", "info/exclude"))
     path = rel if rel.is_absolute() else git.root / rel
     try:
-        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        data = path.read_bytes() if os.path.isfile(path) else b""
     except OSError:
-        text = ""
-    if line in (ln.strip() for ln in text.splitlines()):
+        data = b""
+    if want in (ln.strip() for ln in
+                data.removeprefix(b"\xef\xbb\xbf").split(b"\n")):
         return ""
     if not write:
         return line
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(("" if text.endswith("\n") or not text else "\n")
-                 + "# glados: run records live on the glados/ledger branch\n"
-                 + line + "\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as fh:
+            fh.write((b"" if data.endswith(b"\n") or not data else b"\n")
+                     + b"# glados: run records live on the glados/ledger "
+                       b"branch\n" + want + b"\n")
+    except OSError as exc:
+        print(f"glados: could not add {line} to {path} "
+              f"({exc.strerror or exc}): add that line by hand, or a commit "
+              f"of everything can take the run records", file=sys.stderr)
+        return ""
     return line
 
 

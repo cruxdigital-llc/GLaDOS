@@ -8847,6 +8847,57 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn("removed 1 the ledger no longer has", out)
         self.assertFalse(log.exists())
 
+    def test_an_exclude_file_in_another_encoding_is_read(self):
+        """Windows PowerShell 5.1 writes `>` as UTF-16 with a BOM, and
+        Add-Content in the ANSI code page: a .git/info/exclude written
+        either way stopped install, `ledger save` and `ledger restore` with
+        a UnicodeDecodeError traceback. It is read as git reads it, as
+        bytes, and the line is added once, as UTF-8, which git reads. One
+        this user cannot write is named, not a traceback."""
+        line = glados.RUNS_EXCLUDE.encode("utf-8")
+        for name, data in (("UTF-16", "node_modules\r\n".encode("utf-16")),
+                           ("cp1252", "Entwürfe/\r\n".encode("cp1252"))):
+            with self.subTest(exclude=name):
+                a = self._clone(self._remote(), seed=True)
+                exclude = a / self._git(a, "rev-parse", "--git-path",
+                                        "info/exclude")
+                exclude.write_bytes(data)
+                write(a / ".glados" / "runs" / "r1.md", "# r1\n")
+                for command in ("save", "restore"):
+                    rc, out = run_cli("ledger", command, "--target", a)
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("Traceback", out)
+                text = exclude.read_bytes()
+                self.assertTrue(text.startswith(data))
+                self.assertEqual(text.count(line), 1)
+                self.assertEqual(
+                    self._git(a, "status", "--porcelain", "-uall"), "")
+                t = self._clone()
+                shutil.copyfile(EXAMPLE, t / "glados.yaml")
+                exclude = t / self._git(t, "rev-parse", "--git-path",
+                                        "info/exclude")
+                exclude.write_bytes(data)
+                rc, out = install("claude", t)
+                self.assertEqual(rc, 0, out)
+                self.assertNotIn("Traceback", out)
+                self.assertIn(f"added {glados.RUNS_EXCLUDE}", out)
+                self.assertEqual(exclude.read_bytes().count(line), 1)
+
+    def test_an_exclude_file_this_user_cannot_write_is_named(self):
+        """A .git/info/exclude this user cannot write (one a container
+        running as root made, say) stopped `ledger save` with a traceback
+        before it saved anything. The save goes on and says which line to
+        add by hand."""
+        a = self._clone()
+        exclude = a / self._git(a, "rev-parse", "--git-path", "info/exclude")
+        exclude.write_bytes(b"node_modules\n")
+        self._unwritable(exclude)
+        write(a / ".glados" / "runs" / "r1.md", "# r1\n")
+        rc, out = self._save(a, "--no-push")
+        self.assertNotIn("Traceback", out)
+        self.assertIn(f"could not add {glados.RUNS_EXCLUDE}", out)
+        self.assertIn(".glados/runs/r1.md", self._ledger_files(a))
+
     def test_a_push_that_lost_the_ref_lock_is_retried(self):
         """Another push landed after the remote advertised its refs, so the
         remote could not lock the ledger ref ("[remote rejected] ... failed
