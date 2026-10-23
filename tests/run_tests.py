@@ -9184,6 +9184,25 @@ class TestRunLedger(unittest.TestCase):
         self.assertIn(odd, listed)
         self.assertIn(b".glados/runs/2026-10-23-fix-bug-b.md", listed)
 
+    @unittest.skipUnless(os.name == "nt", "only NTFS holds such a name")
+    def test_a_windows_name_that_is_not_unicode_is_named(self):
+        """NTFS holds a name with an unpaired UTF-16 surrogate in it, which
+        no UTF-8 path in git can carry: `ledger save` stopped with a
+        UnicodeEncodeError traceback. It leaves the file off with a note
+        and saves the rest; the guards, which cannot show it saved, block."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "r1.md", "# r1\n")
+        (runs / "r1.evidence").mkdir()
+        with open(str(runs / "r1.evidence") + "\\odd\ud800.txt", "w") as fh:
+            fh.write("x\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertNotIn("Traceback", out)
+        self.assertIn("r1.evidence/odd", out)
+        self.assertIn("left off the ledger, as its name is not valid "
+                      "Unicode", out)
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r1.md"})
+
     def test_a_named_path_this_user_cannot_read_is_not_removed(self):
         """`ledger save <path>` removes a named path that is gone. It asked
         Path.exists(), which from Python 3.13 answers False for a path in a

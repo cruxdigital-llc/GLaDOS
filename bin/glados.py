@@ -5219,13 +5219,12 @@ class _LedgerGit:
             full_env = dict(os.environ)
             full_env.update(env)
         if isinstance(input, str):
-            # A path's bytes, as os.fsencode gives them: on Linux a file
-            # name need not be UTF-8 (caf\xe9.txt), and os.scandir hands
-            # such a byte back as a lone surrogate, which strict UTF-8
-            # refused with a traceback. On Windows, surrogatepass makes a
-            # name git cannot find, a clean error.
-            input = input.encode("utf-8", "surrogatepass" if os.name == "nt"
-                                 else "surrogateescape")
+            # A path's bytes, as os.fsencode gives them on POSIX: on Linux a
+            # file name need not be UTF-8 (caf\xe9.txt), and os.scandir
+            # hands such a byte back as a lone surrogate, which strict UTF-8
+            # refused with a traceback. (A Windows name with an unpaired
+            # surrogate never gets here: _ledger_plan_local leaves it off.)
+            input = input.encode("utf-8", "surrogateescape")
         try:
             proc = subprocess.run(["git", "-C", str(self.root), *args],
                                   input=input, capture_output=True,
@@ -5755,6 +5754,15 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
         at = _dot_git_at(p)
         if at:
             dot_git.setdefault(at, []).append(p)
+    # NTFS holds a name with an unpaired UTF-16 surrogate in it, which no
+    # UTF-8 path in git carries: save stopped with a UnicodeEncodeError.
+    if os.name == "nt":
+        for p in files:
+            if any("\ud800" <= c <= "\udfff" for c in p):
+                notes.append(f"{p}: left off the ledger, as its name is not "
+                             f"valid Unicode — rename it")
+        files = [p for p in files
+                 if not any("\ud800" <= c <= "\udfff" for c in p)]
     if dot_git:
         files = [p for p in files if not _dot_git_at(p)]
         for at, under in sorted(dot_git.items()):
