@@ -5575,6 +5575,28 @@ def _ledger_arg_paths(git: _LedgerGit, args_paths) -> list[str]:
     return out
 
 
+def _ledger_name_clash(entries: dict, updates: dict, path: str):
+    """The note for a path new to the ledger whose name a file or a
+    directory the ledger keeps already takes, or None. Both in one tree,
+    git keeps the directory and drops the file without a word, so a record
+    replaced by a directory left the ledger while save named only what it
+    added."""
+    def kept(p):
+        return p in entries and not (p in updates and updates[p] is None)
+    parts = path.split("/")
+    for i in range(1, len(parts)):
+        above = "/".join(parts[:i])
+        if kept(above):
+            return (f"{path}: the ledger has a file at {above}; left off the "
+                    f"ledger, where a file and a directory cannot share a "
+                    f"name — rename one of them")
+    if any(p.startswith(path + "/") and kept(p) for p in entries):
+        return (f"{path}: the ledger has a directory there; left off the "
+                f"ledger, where a file and a directory cannot share a name "
+                f"— rename one of them")
+    return None
+
+
 def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
     """What the working tree's files change on the ledger tree ``entries``.
 
@@ -5640,6 +5662,10 @@ def _ledger_plan_local(git, root, entries, sync, explicit, history, notes):
                              f"earlier version; left off the ledger")
             continue
         if t is None:
+            clash = _ledger_name_clash(entries, updates, p)
+            if clash:
+                notes.append(clash)
+                continue
             updates[p] = ("100644", w)
             synced[p] = w
             continue

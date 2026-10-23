@@ -7765,6 +7765,47 @@ class TestRunLedger(unittest.TestCase):
                 self.assertNotIn("outer.loop", out)
                 self.assertNotIn("secret", out)
 
+    def test_a_file_and_a_directory_never_share_a_name_on_the_ledger(self):
+        """A directory put where a saved record was went into one tree with
+        that record, and git kept the directory: the record left the ledger
+        while save said only "saved 1 file(s)". The record written back
+        unchanged was then an earlier version the ledger had removed, left
+        off, and the guard blocked until it was edited. Neither now
+        replaces the other: the new path is left off with a note, and the
+        ledger keeps what it held."""
+        repo = self._clone()
+        runs = repo / ".glados" / "runs"
+        write(runs / "outer.md", "# outer\n")
+        write(runs / "outer.evidence" / "log.txt", "ok\n")
+        write(runs / "current", "outer.md\n")
+        self._save(repo, "--no-push")
+        saved = {".glados/runs/outer.md", ".glados/runs/outer.evidence/log.txt"}
+        # a directory where the ledger has a file, saved by name too
+        (runs / "outer.md").unlink()
+        write(runs / "outer.md" / "x.md", "# x\n")
+        for named in ((), (".glados/runs/outer.md",)):
+            with self.subTest(named=named):
+                rc, out = self._save(repo, "--no-push", *named)
+                self.assertIn(".glados/runs/outer.md/x.md: the ledger has a "
+                              "file at .glados/runs/outer.md; left off the "
+                              "ledger", out)
+                self.assertNotIn("saved 1", out)
+                self.assertEqual(self._ledger_files(repo), saved)
+        self.assertIn("outer.md is a directory", self._guard(repo)[0])
+        # the record put back unchanged is the saved one
+        shutil.rmtree(runs / "outer.md")
+        write(runs / "outer.md", "# outer\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertNotIn("left off", out)
+        self.assertEqual(self._guard(repo), ("", 0))
+        # a file where the ledger has a directory
+        shutil.rmtree(runs / "outer.evidence")
+        write(runs / "outer.evidence", "a file now\n")
+        rc, out = self._save(repo, "--no-push")
+        self.assertIn(".glados/runs/outer.evidence: the ledger has a "
+                      "directory there; left off the ledger", out)
+        self.assertEqual(self._ledger_files(repo), saved)
+
     def test_links_by_platform(self):
         base = glados._remote_web_base
         self.assertEqual(base("git@gitlab.com:inc/research.git"),
