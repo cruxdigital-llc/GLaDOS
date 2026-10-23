@@ -9565,6 +9565,21 @@ class TestMigrate(unittest.TestCase):
         self.assertIn("2026-05-01-migrated-login-timeout.md", out)
         self.assertIn("2026-06-10-migrated-reporting.md", out)
 
+    def test_the_next_steps_name_a_script_that_runs(self):
+        """migrate's next steps said `python glados.py install ...`, which
+        fails as printed from a GLaDOS checkout (bin/glados.py) and from the
+        project (.glados/glados.py). They name the script migrate ran as."""
+        t, _ = self._v1_repo()
+        rc, out = self._migrate(t, "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("python glados.py", out)
+        commands = re.findall(r"python (\S+) (install|ledger save|migrate) "
+                              r"--", out)
+        self.assertEqual({c[1] for c in commands},
+                         {"install", "ledger save", "migrate"})
+        for script, _ in commands:
+            self.assertEqual(Path(script.strip('"')).resolve(), GLADOS_PY)
+
     def test_generate_convert_fail_fast_then_install(self):
         t, _ = self._v1_repo()
         rc, out = self._migrate(t)

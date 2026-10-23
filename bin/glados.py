@@ -6707,6 +6707,20 @@ def _migrate_clean(target: Path, layouts: dict, conversions: list) -> list[str]:
     return removed
 
 
+def _this_script() -> str:
+    """This script's path as the user can type it here: relative to the
+    working directory when under it (`bin/glados.py` from a GLaDOS
+    checkout), else absolute; quoted when it holds a space. migrate's next
+    steps said `python glados.py`, which runs from no directory a user is
+    in: the checkout has bin/glados.py, the project .glados/glados.py."""
+    me = Path(__file__).resolve()
+    try:
+        shown = me.relative_to(Path.cwd().resolve()).as_posix()
+    except (ValueError, OSError):
+        shown = me.as_posix()
+    return f'"{shown}"' if " " in shown else shown
+
+
 def cmd_migrate(args) -> int:
     target = Path(args.target).resolve()
     if not target.is_dir():
@@ -6894,14 +6908,15 @@ def cmd_migrate(args) -> int:
     if phase_unset:
         steps.append("edit glados.yaml — set phase: (one of: "
                      + ", ".join(PHASES) + ")")
-    steps.append(f"python glados.py install --mode {suggested or '<mode>'} "
+    me = _this_script()
+    steps.append(f"python {me} install --mode {suggested or '<mode>'} "
                  f"--target {target}")
     steps.append("commit the migrated tree")
     if conversions:
         steps.append(f"save the converted records to the {LEDGER_BRANCH} "
-                     f"branch: python glados.py ledger save --target {target}")
+                     f"branch: python {me} ledger save --target {target}")
     if not args.clean:
-        steps.append(f"re-run: python glados.py migrate --target {target} "
+        steps.append(f"re-run: python {me} migrate --target {target} "
                      f"--clean (removes the converted specs/ dirs and v1 "
                      f"layouts)")
     for i, step in enumerate(steps, 1):
