@@ -7765,6 +7765,22 @@ class TestRunLedger(unittest.TestCase):
                 self.assertNotIn("outer.loop", out)
                 self.assertNotIn("secret", out)
 
+    def test_save_reads_a_runs_directory_that_is_itself_a_link(self):
+        """The guards list .glados/runs/ itself through a link or junction,
+        and only walk no link inside it. save, walking no link at all,
+        found no file in a linked runs directory, so it saved nothing while
+        the guard blocked on the records it saw."""
+        repo = self._clone()
+        shared = tmpdir("glados-ledger-shared-runs-")
+        write(shared / "r.md", "# r\n")
+        write(shared / "current", "r.md\n")
+        (repo / ".glados").mkdir()
+        self._dir_link_or_skip(shared, repo / ".glados" / "runs")
+        self.assertIn("r.md", self._guard(repo)[0])
+        rc, out = self._save(repo, "--no-push")
+        self.assertEqual(self._ledger_files(repo), {".glados/runs/r.md"})
+        self.assertEqual(self._guard(repo), ("", 0))
+
     def test_a_file_and_a_directory_never_share_a_name_on_the_ledger(self):
         """A directory put where a saved record was went into one tree with
         that record, and git kept the directory: the record left the ledger

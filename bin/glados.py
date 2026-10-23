@@ -5380,17 +5380,20 @@ def _is_link(st: os.stat_result) -> bool:
             == stat.IO_REPARSE_TAG_MOUNT_POINT)
 
 
-def _runs_walk(entry: Path) -> list[Path]:
+def _runs_walk(entry: Path, top: bool = False) -> list[Path]:
     """The regular files at or under ``entry``, walked by hand. A link or a
-    junction is neither saved nor walked into, as the guards walk it:
-    rglob took a junction for a directory, so one back to .glados/runs/
-    saved outer.loop/outer.loop/... copies, and one to a directory outside
-    the repository saved its files."""
+    junction under it is neither saved nor walked into, as the guards walk
+    .glados/runs/: rglob took a junction for a directory, so one back to
+    .glados/runs/ saved outer.loop/outer.loop/... copies, and one to a
+    directory outside the repository saved its files. With ``top``,
+    ``entry`` itself is followed, as the guards list .glados/runs/ through
+    a link (a named path arrives resolved, so only the runs directory can
+    be one)."""
     try:
-        st = os.lstat(entry)
+        st = os.stat(entry) if top else os.lstat(entry)
     except OSError:
         return []
-    if _is_link(st):
+    if not top and _is_link(st):
         return []
     if stat.S_ISREG(st.st_mode):
         return [entry]
@@ -5409,7 +5412,7 @@ def _runs_files(root: Path, sub: str = RUNS_DIR,
     """Repo-relative paths of the regular files under ``sub`` (a path under
     the project's runs directory ``runs``), the local-only ones left out."""
     out = []
-    for f in _runs_walk(root / sub):
+    for f in _runs_walk(root / sub, top=True):
         rel = f.relative_to(root).as_posix()
         if not _runs_local_only(rel, runs):
             out.append(rel)
