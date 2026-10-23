@@ -19,7 +19,7 @@ scripts; the update flow is simply re-running install.
 | `doctor` | Staleness + wiring report (never fails). |
 | `migrate` | Guided v1 to v2 migration: detect v1 layouts, generate `glados.yaml` (phase left for a human), convert `specs/` history to run records. Non-destructive by default; `--dry-run` writes nothing, `--clean` removes the converted `specs/` dirs and the detected v1 command layouts. |
 | `verify-ledger` | Scan git history for silent-loss candidates, and list any run record a branch commits since `--base` (report-only). |
-| `ledger` | `save` commits run records from `.glados/runs/` onto the `glados/ledger` branch without touching the checked-out branch or the index, merges what another session pushed, and pushes; `restore` copies them back into `.glados/runs/`; `link` prints a record's web link on the ledger. |
+| `ledger` | `save` commits run records from `.glados/runs/` onto the `glados/ledger` branch without touching the checked-out branch or the index, merges what another session pushed, and pushes; `restore` copies them back into `.glados/runs/`; `link` prints a record's web link on the ledger. Each works on the `.glados/runs/` of the project `--target` is in (the nearest directory up to the repository's top level with `glados.yaml` or `.glados/`), so a project in a subdirectory keeps its records under that subdirectory's path on the ledger. |
 | `compile-plugin` | Shorthand for `install --mode claude-plugin --target <repo>`. |
 
 **Usage**:

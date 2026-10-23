@@ -155,21 +155,33 @@ def unreadable_markers(root: Path) -> list:
             if _present(runs / name) and _marker_lines(runs / name) is None]
 
 
-def _ledger_blobs(root: Path) -> dict:
-    """path -> every blob the ledger holds for it, on the local glados/ledger
-    branch and on each remote's copy this clone has fetched."""
+def _prefix(root: Path) -> str:
+    """``root``'s directory inside its repository, with a trailing '/' ('' at
+    the top level). A project in a subdirectory (a monorepo package) keeps
+    its records in its own .glados/runs/, and `ledger save` puts them on the
+    ledger under this prefix; git reads --full-tree paths and
+    hash-object --stdin-paths from the top level, whatever the cwd."""
+    return _git(root, "rev-parse", "--show-prefix").rstrip("\r\n")
+
+
+def _ledger_blobs(root: Path, prefix: str) -> dict:
+    """path (from ``root``) -> every blob the ledger holds for it, on the
+    local glados/ledger branch and on each remote's copy this clone has
+    fetched."""
     refs = ["refs/heads/" + LEDGER]
     refs += [r for r in _git(root, "for-each-ref", "--format=%(refname)",
                              "refs/remotes").split()
              if r.endswith("/" + LEDGER)]
     blobs: dict = {}
     for ref in refs:
-        out = _git(root, "ls-tree", "-r", "-z", "--full-tree", ref, "--", RUNS)
+        out = _git(root, "ls-tree", "-r", "-z", "--full-tree", ref, "--",
+                   prefix + RUNS)
         for rec in out.split("\0"):
             meta, _, path = rec.partition("\t")
             parts = meta.split()
-            if len(parts) == 3 and parts[1] == "blob":
-                blobs.setdefault(path, set()).add(parts[2])
+            if len(parts) == 3 and parts[1] == "blob" and \
+                    path.startswith(prefix):
+                blobs.setdefault(path[len(prefix):], set()).add(parts[2])
     return blobs
 
 
@@ -253,8 +265,10 @@ def _files_to_check(root: Path, refs, sweep: bool):
     files, missing = [], []
     if sweep:
         tracked = set(_git(root, "ls-files", "-z", "--", RUNS).split("\0"))
-        changed = set(_git(root, "diff", "--name-only", "-z", "HEAD", "--",
-                           RUNS).split("\0"))
+        # --relative: from ``root``, as ls-files and `rel` are, not from
+        # the top level, for a project in a subdirectory.
+        changed = set(_git(root, "diff", "--name-only", "--relative", "-z",
+                           "HEAD", "--", RUNS).split("\0"))
         for entry in entries:
             if entry.name in LOCAL_ONLY:
                 continue
@@ -296,9 +310,11 @@ def in_flight_without_record(root: Path):
     unreadable = unreadable_markers(root)
     files, missing, not_records, unlistable = _files_to_check(
         root, refs, sweep or bool(unreadable))
-    ledger = _ledger_blobs(root)
+    prefix = _prefix(root)
+    ledger = _ledger_blobs(root, prefix)
     shas = _git(root, "hash-object", "--stdin-paths",
-                stdin="".join(f + "\n" for f in files)).split() if files else []
+                stdin="".join(prefix + f + "\n" for f in files)
+                ).split() if files else []
     hashes = dict(zip(files, shas))
     absent = list(dict.fromkeys(m for m in missing if m not in ledger))
     # A record name whose entry is no record is unsaved, whatever the

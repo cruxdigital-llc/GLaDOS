@@ -98,11 +98,16 @@ what was decided, how it ended — into `.glados/runs/`, beside its step
 artifacts. Example: `.glados/runs/2026-07-03-fix-bug-login-timeout.md`. The
 run saves them to the repo's `glados/ledger` branch (`glados.py ledger save`),
 never to the work's branch: a merge request's diff is the change, and the
-ledger carries the trail. Install, migrate and every `ledger` command add
-`/.glados/runs/*` to the clone's git exclude file, which keeps them out of
-every other branch's commits. That branch is the run ledger: a fresh session, a
-teammate, or a CI job resumes an epic or audits a decision from it alone
-(`glados.py ledger restore`), with no access to anyone's chat transcript.
+ledger carries the trail. Install, migrate, `ledger save` and `ledger
+restore` add `/.glados/runs/*` to the clone's git exclude file, which keeps
+them out of every other branch's commits. That branch is the run ledger: a
+fresh session, a teammate, or a CI job resumes an epic or audits a decision
+from it alone (`glados.py ledger restore`), with no access to anyone's chat
+transcript. A project in a subdirectory of its repository (a monorepo
+package) keeps its own `.glados/runs/`: its exclude line is
+`/<dir>/.glados/runs/*`, and its records go on the ledger under
+`<dir>/.glados/runs/`, so two projects in one repository never share a
+path.
 
 On enforcement: at run start the workflow writes in-flight marker files
 (never committed). `.glados/runs/current` names the run in flight and

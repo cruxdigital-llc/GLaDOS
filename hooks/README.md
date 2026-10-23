@@ -34,6 +34,11 @@ that is not saved, as the guards did before records moved to the ledger.
 Either marker on its own means a run is in flight, so to release a run you
 have abandoned, delete both `.glados/runs/current` and `.glados/runs/stack`.
 
+The guards read `.glados/runs/` in the directory the agent runs in. For a
+project in a subdirectory of its repository (a monorepo package), run the
+agent there: the guards then look for its records on the ledger under that
+subdirectory's path, which is where `ledger save` puts them.
+
 The guards read the markers whatever encoding the agent's shell wrote them
 in: a UTF-8 byte-order mark is ignored, UTF-16 (Windows PowerShell 5.1
 redirection) is decoded. A marker that exists but cannot be read or

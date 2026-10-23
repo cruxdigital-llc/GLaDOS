@@ -113,7 +113,7 @@ One person installs GLaDOS, uses it for a sprint, and documents the experience. 
 Expand to a small group. This is where you discover which standards are truly shared vs. personal preference, and whether the personas need tuning for your domain. **Key action**: review a `steward` promotion MR together — arguing over whether an observation deserves to be a standard naturally surfaces disagreements and builds consensus.
 
 #### Stage 3: Team (Full Adoption)
-- Commit `glados.yaml`, `product-knowledge/`, and `.glados/` to version control. Runs save their records to the `glados/ledger` branch and push it themselves; install, like every `ledger` command, adds `/.glados/runs/*` to the clone's git exclude file, which keeps them off every other branch.
+- Commit `glados.yaml`, `product-knowledge/`, and `.glados/` to version control. Runs save their records to the `glados/ledger` branch and push it themselves; install, like every `ledger` command, adds `/.glados/runs/*` to the clone's git exclude file (`/<dir>/.glados/runs/*` for a project in a subdirectory of its repository), which keeps them off every other branch.
 - Add the GLaDOS install to your onboarding docs.
 - Use `adopt-codebase` for any new team member's first session — guided analysis is a great way to learn a codebase.
 

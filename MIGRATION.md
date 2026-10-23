@@ -544,7 +544,9 @@ merge request's diff is the change; review-mr and address-review already
 did this. The 2.5 install, like every `ledger` command, adds
 `/.glados/runs/*` to the clone's git exclude file (`.git/info/exclude`), so
 committing the reinstalled `.glados/` takes no record, and nothing is
-committed for it. Nothing is migrated or rewritten. Records your branches
+committed for it. A project in a subdirectory of its repository (a
+monorepo package) gets `/<dir>/.glados/runs/*`, and its records go on the
+ledger under `<dir>/.glados/runs/`. Nothing is migrated or rewritten. Records your branches
 already carry stay there as history; a save does not copy them and a restore does
 not overwrite them. A `glados/ledger` branch that already exists (cut from
 the main line, as review-mr's commits made it) is built on as it is. The

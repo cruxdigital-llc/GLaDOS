@@ -7206,6 +7206,31 @@ class TestHookGuards(unittest.TestCase):
         self._assert_blocks(repo, "not saved to the glados/ledger branch: "
                                   ".glados/runs/newest.md")
 
+    def test_a_project_in_a_subdirectory_is_guarded_by_its_own_paths(self):
+        """In a project in a subdirectory of its repository, git gave the
+        guards paths from the top level (the ledger's, and `diff`'s), so
+        no saved record matched and a tracked record changed since its
+        commit counted as unchanged: with no stack line it was let off
+        unsaved."""
+        repo, git = self._repo()
+        app = repo / "packages" / "app"
+        runs = app / ".glados" / "runs"
+        write(runs / "old.md", "# a record committed before 2.5\n")
+        git("add", "-f", "packages/app/.glados/runs/old.md")
+        git("commit", "-q", "-m", "chore(glados): record old run")
+        write(runs / "inner.md", "# inner\n")
+        rc, out = run_cli("ledger", "save", "--target", app, "--no-push")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("packages/app/.glados/runs/inner.md", out)
+        write(runs / "current", "inner.md\n")
+        self._assert_allows(app)
+        write(runs / "old.md", "# a record committed before 2.5\nedited\n")
+        self._assert_blocks(app, ".glados/runs/old.md")
+        rc, out = run_cli("ledger", "save", "--target", app, "--no-push",
+                          ".glados/runs/old.md")
+        self.assertEqual(rc, 0, out)
+        self._assert_allows(app)
+
     # -- a record is a regular file -------------------------------------------
 
     def _record_in_flight(self):
@@ -7778,12 +7803,14 @@ class TestRunLedger(unittest.TestCase):
         write(wt / ".glados" / "runs" / "r.md", "# r\n")
         self.assertEqual(self._git(wt, "status", "--porcelain", "-uall"), "")
 
-    def test_install_excludes_records_at_a_repository_top_level(self):
+    def test_install_excludes_the_projects_own_records(self):
         """Committing `.glados/` follows an install, before any `ledger`
         command, and an upgraded clone may hold records no save has seen:
-        install adds the exclude line, but only at a repository's top
-        level, the one place it covers, and never for the plugin build,
-        whose target is GLaDOS itself (fix round 3)."""
+        install adds the exclude line for the project's own .glados/runs/,
+        at a repository's top level or in a subdirectory of it, and never
+        for the plugin build, whose target is GLaDOS itself (fix round 3).
+        A subdirectory install used to add nothing, so committing its
+        `.glados/` took its records."""
         repo = self._clone()
         shutil.copyfile(EXAMPLE, repo / "glados.yaml")
         write(repo / ".glados" / "runs" / "2026-10-01-fix-bug-x.md", "# r\n")
@@ -7801,18 +7828,145 @@ class TestRunLedger(unittest.TestCase):
         self.assertNotIn(f"added {glados.RUNS_EXCLUDE}", out)
         self.assertEqual(read(exclude).splitlines().count(glados.RUNS_EXCLUDE),
                          1)
-        for sub, mode in (("sub", "direct"), ("plugin", "claude-plugin")):
+        for sub, mode in (("packages/app", "direct"),
+                          ("", "claude-plugin")):
             other = self._clone()
-            target = other / sub if sub == "sub" else other
+            target = other / sub
             name = "glados.yaml" if mode == "direct" else "glados.yaml.example"
-            target.mkdir(exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(EXAMPLE, target / name)
+            write(target / ".glados" / "runs" / "r.md", "# r\n")
             rc, out = install(mode, target)
             self.assertEqual(rc, 0, out)
             path = other / self._git(other, "rev-parse", "--git-path",
                                      "info/exclude")
-            self.assertNotIn(glados.RUNS_EXCLUDE,
-                             read(path) if path.is_file() else "", mode)
+            lines = read(path).splitlines() if path.is_file() else []
+            self.assertNotIn(glados.RUNS_EXCLUDE, lines, mode)
+            if mode == "claude-plugin":
+                self.assertEqual([ln for ln in lines if "glados" in ln], [])
+                continue
+            self.assertIn("added /packages/app/.glados/runs/*", out)
+            self.assertEqual(lines.count("/packages/app/.glados/runs/*"), 1)
+            self._git(other, "add", "packages")
+            staged = self._git(other, "diff", "--cached", "--name-only")
+            self.assertIn("packages/app/.glados/glados.py", staged.split())
+            self.assertNotIn("packages/app/.glados/runs/r.md", staged.split())
+        # a glob character in the directory's name is matched as written
+        other = self._clone()
+        target = other / "pk[1]"
+        target.mkdir()
+        shutil.copyfile(EXAMPLE, target / "glados.yaml")
+        write(target / ".glados" / "runs" / "r.md", "# r\n")
+        write(other / "pk1" / ".glados" / "runs" / "r.md", "# r\n")
+        rc, out = install("direct", target)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("added /pk\\[1]/.glados/runs/*", out)
+        status = self._git(other, "status", "--porcelain", "-uall")
+        self.assertNotIn("pk[1]/.glados/runs/r.md", status)
+        self.assertIn("pk1/.glados/runs/r.md", status)
+
+    def _guard(self, project):
+        """Both guards run in ``project``: (claude's reason or "", gemini's
+        exit code)."""
+        c = subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "claude-stop-hook.py")],
+            input=json.dumps({"cwd": str(project)}), capture_output=True,
+            text=True)
+        g = subprocess.run(
+            [sys.executable, str(REPO / "hooks" / "gemini-afteragent-guard.py")],
+            input="{}", capture_output=True, text=True, cwd=str(project))
+        self.assertEqual(c.returncode, 0, c.stderr)
+        reason = json.loads(c.stdout)["reason"] if c.stdout.strip() else ""
+        self.assertEqual(bool(reason), g.returncode == 2, (reason, g.stderr))
+        return reason, g.returncode
+
+    def test_a_project_in_a_subdirectory_keeps_its_own_records(self):
+        """A project whose glados.yaml is in a subdirectory of its repository
+        (a monorepo package) keeps its runs in its own .glados/runs/. The
+        ledger commands read only the repository's top-level .glados/runs/,
+        so such a project saved no record, restored none and linked to the
+        wrong path, and its guard never found its records on the ledger.
+        Ledger paths keep the subdirectory, so two projects in one
+        repository, with records of the same name, do not collide."""
+        remote = self._remote()
+        repo = self._clone(remote, seed=True)
+        exclude = repo / self._git(repo, "rev-parse", "--git-path",
+                                   "info/exclude")
+        app, api = repo / "packages" / "app", repo / "packages" / "api"
+        for project in (app, api, repo):
+            write(project / "glados.yaml", read(EXAMPLE))
+            rc, out = install("direct", project)
+            self.assertEqual(rc, 0, out)
+        for line in ("/packages/app/.glados/runs/*",
+                     "/packages/api/.glados/runs/*", glados.RUNS_EXCLUDE):
+            self.assertEqual(read(exclude).splitlines().count(line), 1, line)
+        # each project saves its own record of one name, and its artifacts
+        for project, who in ((app, "app"), (api, "api"), (repo, "top")):
+            runs = project / ".glados" / "runs"
+            write(runs / "r1.md", f"# {who} r1\n")
+            write(runs / "r1.shape.md", f"# {who} shape\n")
+            write(runs / "stack", "r1.md\n")
+            write(runs / "current", "r1.md\n")
+            self.assertIn("r1.md", self._guard(project)[0])
+            rc, out = self._save(project)
+            self.assertIn("pushed glados/ledger to origin", out)
+            self.assertEqual(self._guard(project), ("", 0), who)
+        self.assertEqual(self._ledger_files(repo, "origin/glados/ledger"), {
+            f"{p}.glados/runs/{n}" for p in ("", "packages/app/",
+                                             "packages/api/")
+            for n in ("r1.md", "r1.shape.md")})
+        for prefix, who in (("packages/app/", "app"), ("packages/api/", "api"),
+                            ("", "top")):
+            self.assertEqual(self._show(repo, "glados/ledger",
+                                        f"{prefix}.glados/runs/r1.md"),
+                             f"# {who} r1")
+        # nothing a run wrote reaches a commit of the work branch
+        self._git(repo, "add", "-A")
+        self.assertNotIn(".glados/runs/", self._git(
+            repo, "diff", "--cached", "--name-only"))
+        # the guard sees a change after the save, in its own project only
+        write(app / ".glados" / "runs" / "r1.md", "# app r1\nstep 2\n")
+        self.assertIn(".glados/runs/r1.md", self._guard(app)[0])
+        self.assertEqual(self._guard(api), ("", 0))
+        rc, out = self._save(app, ".glados/runs/r1.md")
+        self.assertIn("saved 1 file(s)", out)
+        self.assertEqual(self._guard(app), ("", 0))
+        # another clone restores each project's records into that project
+        b = self._clone(remote)
+        write(b / "packages" / "app" / "glados.yaml", read(EXAMPLE))
+        self._git(b, "add", "-A")
+        self._git(b, "commit", "-q", "-m", "feat: the app package")
+        rc, out = run_cli("ledger", "restore", "--target", b / "packages" /
+                          "app")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / "packages" / "app" / ".glados" / "runs" /
+                              "r1.md"), "# app r1\nstep 2\n")
+        self.assertFalse((b / ".glados" / "runs" / "r1.md").exists())
+        self.assertFalse((b / "packages" / "api" / ".glados").exists())
+        self.assertEqual(self._git(b, "status", "--porcelain", "-uall"), "",
+                         "restored records are ignored in the new clone")
+        rc, out = run_cli("ledger", "restore", "--target", b, "r1.md")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(read(b / ".glados" / "runs" / "r1.md"), "# top r1\n")
+        # the link names the project's path on the ledger, from the
+        # project or a directory inside it
+        self._git(repo, "remote", "set-url", "origin",
+                  "git@gitlab.example.com:group/mono.git")
+        (app / "src").mkdir()
+        for where in (app, app / "src"):
+            rc, out = run_cli("ledger", "link", "--target", where, "r1.md")
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out.strip(),
+                             "https://gitlab.example.com/group/mono/-/blob/"
+                             "glados/ledger/packages/app/.glados/runs/r1.md")
+        # removing one project's record leaves the others'
+        (api / ".glados" / "runs" / "r1.shape.md").unlink()
+        rc, out = self._save(api, "--no-push", ".glados/runs/r1.shape.md")
+        self.assertIn("removed packages/api/.glados/runs/r1.shape.md", out)
+        files = self._ledger_files(repo)
+        self.assertNotIn("packages/api/.glados/runs/r1.shape.md", files)
+        self.assertIn("packages/app/.glados/runs/r1.shape.md", files)
+        self.assertIn(".glados/runs/r1.shape.md", files)
 
     def test_a_reverted_copy_is_an_edit(self):
         """A copy put back to text the ledger held before is an edit once
