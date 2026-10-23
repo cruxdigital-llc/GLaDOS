@@ -493,8 +493,13 @@ before you reinstall:
   `key:value` with no space (YAML reads it as one string); `: ` inside an
   unquoted value; an integer with a leading zero (`010`, octal to some
   readers); a block scalar with an indentation number (`|2`); an unknown
-  escape (`\q`); and lines left of the first line, which 2.4 dropped. Quote
-  the value, or write it plainly.
+  escape (`\q`); lines left of the first line, which 2.4 dropped; and,
+  after a block scalar (`|` or `>`), a line indented less than its text but
+  deeper than its key, which 2.4 read into the text with its first
+  characters cut off, so the keys on it (a bound included) vanished. Quote
+  the value, or write it plainly. A comment indented less than a block
+  scalar's text now ends the scalar, as in YAML, where 2.4 read it in as
+  text.
 
 Two changes print a warning and fail nothing. A top-level key GLaDOS does
 not read (usually a typo, such as `sinsk:`) is named at install, check and

@@ -503,9 +503,11 @@ class CheckFailed(Fatal):
 # quote, `k:v` (one plain scalar to YAML), ': ' inside an unquoted value (an
 # error to YAML), a key YAML reads as a null, bool, number or date, an
 # integer with a leading zero (octal to YAML 1.1), a tab outside quotes,
-# lines left of the first line (it used to drop them), and characters YAML
-# does not allow. A value YAML would type (yes, 1.5, 2026-10-22) stays the
-# text it is written as; every check that wants a number or bool refuses it.
+# lines left of the first line (it used to drop them), a line after a block
+# scalar deeper than its key (it used to read that into the text), and
+# characters YAML does not allow. A value YAML would type (yes, 1.5,
+# 2026-10-22) stays the text it is written as; every check that wants a
+# number or bool refuses it.
 # Anything outside the subset raises YamlError('<file>:<line>: <reason>').
 
 
@@ -891,21 +893,58 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
             i += 1
         return i
 
-    def parse_block_scalar(i: int, parent_indent: int, style: str):
+    def parse_block_scalar(i: int, parent_indent: int, style: str,
+                           opener: str):
+        """The block scalar whose text starts at line i, as YAML reads it.
+        Its indent is its first text line's, or a blank line's above that
+        when deeper (YAML takes the deepest), and the first line indented
+        less ends it. That line is then read as what it is: a comment, the
+        next key or item, or, deeper than ``opener`` (the key or '-' at
+        ``parent_indent``), an error to YAML and here. It used to be read
+        into the text with its first characters cut off, so the keys on
+        it (`max-cycles: true`) vanished."""
+        header = i  # 1-based: the line before i
         collected: list[str] = []
         base = None
+        lead = parent_indent + 1  # deeper than the opener, at least
+        blank_lead = 0            # the deepest blank line above the text
+        first = 0                 # the first text line's indent
         while i < n:
             if lines[i].strip(" \t") == "":
+                if base is None:
+                    blank_lead = max(blank_lead, len(lines[i]))
                 collected.append("")
                 i += 1
                 continue
             ci = _indent_of(lines[i])
-            if ci <= parent_indent:
-                break
             if base is None:
-                base = ci
+                first = ci
+                base = max(ci, lead, blank_lead)
+            if ci < base:
+                break
             collected.append(lines[i][base:])
             i += 1
+        after = next_meaningful(i)
+        if after < n and _indent_of(lines[after]) > parent_indent:
+            def spaces(k: int) -> str:
+                return f"{k} space" + ("" if k == 1 else "s")
+            if parent_indent < first < blank_lead:
+                why = (f": a blank line above its text has "
+                       f"{spaces(blank_lead)}, and YAML takes the scalar's "
+                       f"indent from the deepest such line")
+                fix = "remove the spaces from that blank line"
+            else:
+                kind = " a comment" if after != i else ""
+                why = (f",{kind} indented less than its text "
+                       f"({spaces(base)})")
+                fix = (f"indent every line of the scalar at least "
+                       f"{spaces(base)}, comments included, or outdent this "
+                       f"line to a key's indent")
+            raise YamlError(f"{filename}:{after + 1}: YAML refuses this "
+                            f"line: the block scalar that line {header} "
+                            f"opens ended at line {i + 1}{why}, and nothing "
+                            f"after the scalar may sit deeper than its "
+                            f"{opener} ({spaces(parent_indent)}) — {fix}")
         while collected and collected[-1] == "":
             collected.pop()
         if style[0] == ">":
@@ -957,7 +996,7 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
             if kind == "none":
                 result[key], i = nested_block(i, base)
             elif kind == "block":
-                result[key], i = parse_block_scalar(i, base, value)
+                result[key], i = parse_block_scalar(i, base, value, "key")
             else:
                 result[key] = value
         return result, i
@@ -1000,7 +1039,7 @@ def parse_yaml(text: str, filename: str = "<yaml>"):
             if kind == "none":
                 value, i = nested_block(i, base)
             elif kind == "block":
-                value, i = parse_block_scalar(i, base, value)
+                value, i = parse_block_scalar(i, base, value, "'-'")
             result.append(value)
         return result, i
 

@@ -1081,6 +1081,43 @@ class TestParamsResolution(unittest.TestCase):
                     self.assertNotIn("Traceback", out)
                     self.assertNotIn("passes every check", out)
 
+    def test_a_key_under_a_block_scalar_is_not_swallowed(self):
+        """A line indented less than a block scalar's text but more than
+        its key was read into the text with its first characters cut off,
+        so the keys on it vanished: `max-cycles: true` under it passed
+        validate, effective-config, install, check and doctor while the
+        inherited 8 stayed in force. YAML ends the scalar at that line and
+        refuses it; so does the parser, naming the line."""
+        cases = {
+            "optimize-for": (self.MINIMAL + "optimize-for: |\n"
+                             "    Optimize for doing no harm.\n"
+                             "  params:\n    pipeline:\n"
+                             "      max-cycles: true\n", 9),
+            "why": (self.MINIMAL + "params:\n  pipeline:\n    why: |\n"
+                    "        Fewer cycles.\n      max-cycles: true\n", 11),
+        }
+        installed = make_target(self.MINIMAL)
+        rc, out = install("claude", installed)
+        self.assertEqual(rc, 0, out)
+        for name, (manifest, line) in cases.items():
+            t = make_target(manifest)
+            write(installed / "glados.yaml", manifest)
+            needle = (f"glados.yaml:{line}: YAML refuses this line: the block "
+                      f"scalar that line {line - 2} opens ended at line "
+                      f"{line}")
+            for args, code in ((("validate", "--target", t), 1),
+                               (("effective-config", "--target", t), 1),
+                               (("install", "--mode", "claude", "--target",
+                                 t), 1),
+                               (("check", "--target", installed), 1),
+                               (("doctor", "--target", installed), 0)):
+                with self.subTest(case=name, command=args[0]):
+                    rc, out = run_cli(*args, "--source", REPO)
+                    self.assertEqual(rc, code, out)
+                    self.assertIn(needle, out)
+                    self.assertNotIn("Traceback", out)
+                    self.assertNotIn("passes every check", out)
+
     def test_a_preset_table_out_of_shape_is_named_not_a_traceback(self):
         """A preset layer that is not a mapping, or whose params, channels
         or decisions are not, crashed resolution with an AttributeError or
@@ -1453,6 +1490,120 @@ class TestYamlParserAttacks(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(glados.parse_yaml(text, "t"), expected)
 
+    def test_a_block_scalar_ends_at_its_first_shallower_line(self):
+        """A block scalar's text is every line indented at least as far as
+        its first text line, and the first line indented less ends it, as
+        in YAML: a comment there is a comment, a key or item at the outer
+        indent is the next entry, and a line deeper than the scalar's key
+        is an error to YAML and here. Such a line used to be read into the
+        text with its first characters cut off: `  # note` became `note`,
+        and the keys on `  params:` vanished, bound and all."""
+        for text, expected in (
+                # a comment indented less than the text is a comment
+                ("k: |\n    text\n  # note\nz: 1\n", {"k": "text", "z": 1}),
+                ("k: |\n    text\n  # note\n      # more\nz: 1\n",
+                 {"k": "text", "z": 1}),
+                ("k: >-\n    a\n    b\n # note\nz: 1\n", {"k": "a b", "z": 1}),
+                ("l:\n  - |\n      text\n    # note\n  - x\n",
+                 {"l": ["text", "x"]}),
+                ("m:\n  - k: |\n        text\n      # note\n    z: 1\n",
+                 {"m": [{"k": "text", "z": 1}]}),
+                # a comment at the text's indent is text, as before
+                ("k: |\n    text\n    # kept\nz: 1\n",
+                 {"k": "text\n# kept", "z": 1}),
+                # a line deeper than the text stays in it, as before
+                ("k: |\n    text\n      more\nz: 1\n",
+                 {"k": "text\n  more", "z": 1}),
+                # blank lines inside the text, a shallow one included
+                ("k: |\n    a\n\n  \n    b\nz: 1\n",
+                 {"k": "a\n\n\nb", "z": 1}),
+                # a blank line above the text, no deeper than it
+                ("k: |\n  \n    text\nz: 1\n", {"k": "\ntext", "z": 1})):
+            with self.subTest(text=text):
+                self.assertEqual(glados.parse_yaml(text, "t"), expected)
+        opens = "YAML refuses this line: the block scalar that line"
+        for text, line, needle in (
+                # a bound under a scalar's text, at the top level and in a
+                # namespace
+                ("optimize-for: |\n    Optimize for doing no harm.\n"
+                 "  params:\n    pipeline:\n      max-cycles: true\n", 3,
+                 f"{opens} 1 opens ended at line 3, indented less than its "
+                 f"text (4 spaces)"),
+                ("params:\n  pipeline:\n    why: |\n        Fewer cycles.\n"
+                 "      max-cycles: true\n", 5,
+                 f"{opens} 3 opens ended at line 5"),
+                ("k: >-\n    a\n  b: 1\n", 3, f"{opens} 1 opens"),
+                ("l:\n  - |\n      text\n    - x\n", 4, f"{opens} 2 opens"),
+                ("- k: |\n      text\n    z: 1\n", 3, f"{opens} 1 opens"),
+                # text again after a comment that ended the scalar
+                ("k: |\n    text\n  # note\n    more\nz: 1\n", 4,
+                 "ended at line 3, a comment indented less than its text"),
+                # a blank line above the text, deeper than it: YAML takes
+                # the scalar's indent from that line
+                ("k: |\n      \n  text\nz: 1\n", 3,
+                 "a blank line above its text has 6 spaces"),
+                ("optimize-for: |\n        \n  params:\n    x: 1\n", 3,
+                 "a blank line above its text has 8 spaces")):
+            with self.subTest(text=text):
+                self._refused(text, line, needle)
+
+    def test_shipped_block_scalars_read_whole(self):
+        """Ending a block scalar at its first shallower line changes
+        nothing for a well-formed one: every block scalar in the preset
+        table, the state registry, glados.yaml.example's commented examples
+        and the pipelines guide is indented evenly and reads as its whole
+        text."""
+        sources = {p.name: read(p) for p in (
+            REPO / "src" / "kernel" / "presets" / "phases.yaml",
+            REPO / "src" / "kernel" / "state-registry.yaml")}
+        example = read(EXAMPLE).splitlines()
+        for opener in ("# sinks:", "# steps:"):
+            block = []
+            for line in example[example.index(opener):]:
+                if not line.startswith("#"):
+                    break
+                block.append(line[2:] if line.startswith("# ") else line[1:])
+            sources[f"example {opener[2:]}"] = "\n".join(block) + "\n"
+        guide = read(REPO / "docs" / "guides" / "pipelines.md")
+        for j, block in enumerate(re.findall(r"```yaml\n(.*?)```", guide,
+                                             re.S)):
+            sources[f"pipelines.md block {j}"] = block
+        header = re.compile(r"( *)(- )?[^#:\s][^#:]*: ([|>])-?(?: +#.*)?")
+
+        def strings(node):
+            if isinstance(node, dict):
+                return set().union(*map(strings, node.values()), set())
+            if isinstance(node, list):
+                return set().union(*map(strings, node), set())
+            return {node} if isinstance(node, str) else set()
+
+        found = 0
+        for name, text in sources.items():
+            read_as = strings(glados.parse_yaml(text, name))
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                m = header.fullmatch(line)
+                if not m:
+                    continue
+                key_at = len(m.group(1)) + (2 if m.group(2) else 0)
+                body = []
+                for nxt in lines[i + 1:]:
+                    if nxt.strip() and glados._indent_of(nxt) <= key_at:
+                        break
+                    body.append(nxt)
+                while body and not body[-1].strip():
+                    body.pop()
+                indents = {glados._indent_of(b) for b in body if b.strip()}
+                with self.subTest(source=name, line=i + 1):
+                    self.assertEqual(len(indents), 1, body)
+                    if m.group(3) == ">":
+                        whole = " ".join(b.strip() for b in body)
+                    else:
+                        whole = "\n".join(b[min(indents):] for b in body)
+                    self.assertIn(whole, read_as)
+                    found += 1
+        self.assertGreaterEqual(found, 30)
+
     def test_what_the_subset_reads_a_yaml_reader_reads_too(self):
         """The property behind the cases above, checked against a YAML
         reader when one is installed (PyYAML; the suite needs none): what
@@ -1493,9 +1644,31 @@ class TestYamlParserAttacks(unittest.TestCase):
                      "{k}: {v}\n  one\n  two\nz: 1\n"]
         item_templates = ["l:\n  - {v}\n  - z\n", "l:\n- {v}\n",
                           "l:\n  - {v}\n    one\n  - z\n"]
+        # a block scalar's text and the lines after it, at every indent
+        # around the text's: shallower, deeper, a comment. Blank lines and
+        # deeper lines go under literal scalars only: the subset does not
+        # fold those.
+        block_templates = [
+            "{k}: {v}\n    one\n  two\nz: 1\n",
+            "{k}: {v}\n    one\n  # c\nz: 1\n",
+            "{k}: {v}\n    one\n  # c\n    two\nz: 1\n",
+            "{k}: {v}\n    one\n    two\n # c\n   # d\nz: 1\n",
+            "m:\n  {k}: {v}\n      one\n    two: 1\n",
+            "m:\n  {k}: {v}\n      one\n    # c\n  z: 1\n",
+            "l:\n  - {v}\n      one\n    - z\n",
+            "l:\n  - {v}\n      one\n    # c\n  - z\n",
+            "l:\n  - {k}: {v}\n        one\n      z: 1\n"]
+        literal_templates = [
+            "{k}: {v}\n    one\n      two\n # c\n   # d\nz: 1\n",
+            "{k}: {v}\n      \n  one\nz: 1\n",
+            "{k}: {v}\n  \n    one\n\n  \n    two\nz: 1\n"]
         corpus = [t.format(k=k, v=v) for t in templates
                   for k in keys for v in values]
         corpus += [t.format(v=v) for t in item_templates for v in values]
+        corpus += [t.format(k=k, v=v) for t in block_templates
+                   for k in keys for v in values if v[:1] in "|>"]
+        corpus += [t.format(k=k, v=v) for t in literal_templates
+                   for k in keys for v in values if v[:1] == "|"]
         corpus += [read(p) for p in (
             EXAMPLE, REPO / "src" / "kernel" / "presets" / "phases.yaml",
             REPO / "src" / "kernel" / "state-registry.yaml",
