@@ -38,8 +38,8 @@ numbers.
 
 | Core | Mutates | Emits | Does |
 |---|---|---|---|
-| `review-mr` | none | progress, verdict, escalation, observation | Run one adversarial multi-persona review pass over an open merge request. |
-| `address-review` | branch | progress, escalation | Resolve every open review finding in one coherent fix pass, then hand back for re-review. |
+| `review-mr` | none | progress, verdict, escalation, observation | Run one adversarial multi-persona review pass over an open merge request, reading each note a person with a role on the project left on it (one not starting `(GLaDOS <workflow>)`) as their review. |
+| `address-review` | branch | progress, escalation | Resolve every open review finding, and every point a person raised on the MR, in one coherent fix pass, then hand back for re-review. |
 | `fix-bug` | branch | progress, bug, verdict, escalation | Take one bug from report through reproduction to a verified root-cause fix MR. |
 
 ### Scale
@@ -53,7 +53,7 @@ numbers.
 | Core | Mutates | Emits | Does |
 |---|---|---|---|
 | `retrospect` | none | progress, observation | Review recent work to harvest observed standards, philosophies, and phase-fitness signals. |
-| `steward` | branch | progress, observation, bug | The standing gardening pass — compact the run ledger, refresh stale docs and canon digests, promote pending observations, sanity-check the test suite, ship one cleanup MR. |
+| `steward` | branch | progress, observation, bug | The standing gardening pass — compact the run ledger (saved straight to the `glados/ledger` branch), refresh stale docs and canon digests, promote pending observations, sanity-check the test suite, ship one cleanup MR for what changed on its branch. |
 | `brunch` | branch | progress, verdict, bug, observation, escalation | The codebase critique roundtable — evidence pre-flight, parallel persona reviewers, a moderator ranking impact×effort, one surgical fix MR. |
 
 ## Project workflows
@@ -65,7 +65,14 @@ different process declares its own workflows under `pipelines:` in
 (`steps:`, with bodies in `product-knowledge/steps/`). `run-pipeline` runs any
 of them: `/glados:run-pipeline <name> <brief>`, and script installs also get
 one shortcut per pipeline (`/glados:<name>`, or `/glados-<name>` in
-Antigravity and pi). build-feature and fix-bug are unchanged. The full guide is
+Antigravity and pi). Before its first step a run validates the manifest
+and pins `glados.yaml`, the step bodies and the configuration they resolve
+to with the preset table (`glados.py effective-config`); a change to any of
+them mid-run, or across a resume, escalates. run-epic gives each ticket the
+declared pipeline whose `when:` fits it (only one whose sequence always
+opens an MR), writing it in the ticket table's `pipeline` column, and builds
+the ticket through run-pipeline; a ticket none fits gets build-feature.
+build-feature and fix-bug are unchanged. The full guide is
 [guides/pipelines.md](guides/pipelines.md).
 
 ## v1 aliases

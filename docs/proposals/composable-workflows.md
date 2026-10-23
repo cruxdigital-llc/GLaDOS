@@ -80,8 +80,11 @@ Pipeline definitions are lane 2 (read live), which bends the v2 rule that
 what the agent must not skip is compiled. The plugin leaves no choice. Every
 rule about steps is compiled into `run-pipeline`, and skipping is made
 visible: a step table written before any work, pinned hashes of
-`glados.yaml` and step bodies, the table in the MR description, and
-`glados.py validate` runnable with no install (including from the plugin).
+`glados.yaml`, of the step bodies and of the configuration in effect
+(`glados.yaml` over the preset table, from `glados.py effective-config`),
+re-checked before each step, before finishing and on resume, the table in
+the MR description, and `glados.py validate` runnable with no install
+(including from the plugin).
 
 ### Verification before an MR is not forced
 
@@ -124,14 +127,25 @@ release:
 ## Choices made during implementation
 
 - A pipeline that changes code, or has a `human` checkpoint, works on its own
-  branch from its first step, so nested runs' record commits and a parked
-  run's artifacts have somewhere to go.
+  branch from its first step, so its change and a parked run's work have
+  somewhere to go. Its records and step artifacts go to the `glados/ledger`
+  branch, never to the work branch ([v3.md](v3.md), *Records on the
+  ledger*).
 - Under `decisions.pipeline-discretion: escalate`, a person names the
   pipeline; the agent does not choose from `when:` matches.
 - A refusal at a `human` checkpoint sends the step back for revision whatever
   its modifier; a person who says stop ends the run.
 - In YAML, `- key: value` list items now parse as mappings (standard YAML);
-  lists that hold names reject them with a named error.
+  lists that hold names reject them with a named error. A quoted or
+  escaped key reads as the key it spells, and syntax the toolchain's subset
+  would read differently from YAML (anchors, tags, merge keys, a line
+  after a block scalar indented less than its text but deeper than its
+  key) is refused, naming the line, so no check passes a key the agent
+  reads as another.
+- A loop bound, `params.pipeline.max-cycles` among them, must be a whole
+  number of 1 or more: install, check, validate and `effective-config`
+  refuse any other value, and a run that reads one escalates instead of
+  starting the loop.
 
 ## Left for later
 

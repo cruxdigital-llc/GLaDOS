@@ -109,10 +109,11 @@ READER_FALLBACKS = {
 PREAMBLE_OWNED_WRITES = ["work.base-sha", "run.record"]
 
 # Built-in sinks and whether each makes an outcome team-visible. Teams extend
-# this set by declaring sinks under `sinks:` in glados.yaml — a declared sink is
-# team-visible by default (it names an external destination people see), opt out
-# with `team-visible: false`. The sink *name* set is therefore OPEN; only the
-# built-ins are fixed. ``ledger`` is the one built-in that is NOT team-visible:
+# this set by declaring sinks under `sinks:` in glados.yaml — a declared sink
+# must state `team-visible: true` or `team-visible: false` (run_type_checks
+# fails it otherwise, and _sink_is_team_visible reads a missing one as not
+# visible). The sink *name* set is therefore OPEN; only the built-ins are
+# fixed. ``ledger`` is the one built-in that is NOT team-visible:
 # it is the run record on the glados/ledger branch, valid alone only for
 # progress/decision/observation.
 BUILTIN_SINKS = {
@@ -5227,7 +5228,8 @@ RUNS_IGNORE_FILE = RUNS_DIR + "/.gitignore"
 # Files directly under RUNS_DIR that never leave the working tree: the
 # in-flight markers, and an ignore file a project may keep there.
 RUNS_LOCAL_ONLY = frozenset({"current", "stack", ".gitignore"})
-# The line every ledger command puts in the clone's exclude file.
+# The line `ledger save`, `ledger restore`, install and migrate put in the
+# clone's exclude file (`ledger link` writes none).
 RUNS_EXCLUDE = "/" + RUNS_DIR + "/*"
 LEDGER_SYNC_FILE = "glados-ledger.json"
 LEDGER_PUSH_ATTEMPTS = 5

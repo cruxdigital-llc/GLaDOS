@@ -4054,6 +4054,33 @@ class TestSinkConfig(unittest.TestCase):
         self.assertIn("lines)", mr[0], "multi-line body must be summarized")
         self.assertNotIn("No praise", mr[0], "body must not be inlined")
 
+    def test_example_and_guide_sink_blocks_validate(self):
+        """The commented sinks: block in glados.yaml.example, uncommented,
+        and each yaml block in docs/guides/sinks.md over a minimal manifest
+        pass validate as written. Both declared a slack sink with no
+        team-visible:, so a copy of either failed validate, install and
+        check."""
+        lines = read(EXAMPLE).splitlines()
+        start = lines.index("# sinks:")
+        block = []
+        for line in lines[start:]:
+            if not line.startswith("#"):
+                break
+            block.append(line[2:] if line.startswith("# ") else line[1:])
+        self.assertIn("  slack:", block)
+        t = make_target(read(EXAMPLE) + "\n" + "\n".join(block) + "\n")
+        rc, out = run_cli("validate", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+        guide = read(REPO / "docs" / "guides" / "sinks.md")
+        blocks = re.findall(r"```yaml\n(.*?)```", guide, re.S)
+        self.assertGreaterEqual(len(blocks), 3)
+        for i, text in enumerate(blocks):
+            with self.subTest(block=i):
+                t = make_target("glados: 2\nplatform: gitlab\n"
+                                "phase: evolving\n" + text)
+                rc, out = run_cli("validate", "--target", t, "--source", REPO)
+                self.assertEqual(rc, 0, out)
+
     def test_compiled_core_escalates_on_a_failed_sink(self):
         # The compiled core is the artifact the agent actually reads; a bound
         # sink that fails must escalate, never downgrade to a warning because

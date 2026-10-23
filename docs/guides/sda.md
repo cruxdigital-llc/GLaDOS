@@ -51,8 +51,9 @@ documents a manual fallback with the same result.
 With `sda: true`, the installer scaffolds the SDA artifacts — **create-only,
 never clobbering** an existing file:
 
-- **`claims.md`** at the repo root — the coordination file recording who has
-  claimed what
+- **`claims.md`** at the project's root (the directory holding `glados.yaml`,
+  which for a project in a subdirectory of its repository is that
+  subdirectory) — the coordination file recording who has claimed what
 - **`product-knowledge/SPEC_LOG.md`** — the work-unit log, created with the
   standard's table header
 - an **`<!-- SDA: v1.0 -->` header** prepended to
@@ -95,10 +96,13 @@ only the scaffolding is install-time):
   that opened it committed the one row with the work, and a person's MR is
   not a GLaDOS unit to log. So a fix pass leaves the MR's branch only its
   change, and its record goes to the ledger like any other.
-- **Parked runs** (a pipeline waiting at a `human` checkpoint with nobody in
-  the session to ask) keep their claim and append no row: the work is not
-  finished. The run that resumes it after the approval clears the claim and
-  appends the row when the unit ends.
+- **Parked runs** (a pipeline step waiting for a person: at a `human`
+  checkpoint, on a one-way question, or on a stalled check, when the run
+  ends before the answer; a run resuming a park that has no approval or
+  answer yet; and run-epic ending with only parked tickets left) keep their
+  claim and append no row: the work is not finished. The run that resumes it
+  after the approval or answer clears the claim and appends the row when the
+  unit ends.
 - **Pipeline records** carry a step table whose statuses are words, never
   checkboxes, and the v2.1 profile reads a pipeline's phase from it: the
   `stage` of its first row that is not done, skipped or waived, until the
@@ -122,7 +126,10 @@ in [src/kernel/state-registry.yaml](../../src/kernel/state-registry.yaml).
   for pipeline records, step artifacts and units of work. From 2.5 those
   records live on the `glados/ledger` branch rather than on work branches or
   the target (a merge request's diff is the change), so a tool that reads
-  them reads that branch; records committed before stay where they are.
+  them reads that branch, or runs `python .glados/glados.py ledger restore`
+  first to copy them into `.glados/runs/`; records committed before stay
+  where they are. A project in a subdirectory of its repository keeps its
+  records under `<dir>/.glados/runs/` on the ledger.
 - **`SPEC_LOG.md` complements the ledger rather than duplicating it by
   hand.** The ledger is one file per run; the work-unit log is the one-line
   audit trail across runs — and because the epilogue writes it, it stays
@@ -136,8 +143,10 @@ in [src/kernel/state-registry.yaml](../../src/kernel/state-registry.yaml).
 - **You run Wheatley.** The companion Kanban board renders its claims overlay
   from the claims file and its backlog from the SDA roadmap — see
   [wheatley.md](wheatley.md), including the path note (Wheatley reads the
-  claims file under `product-knowledge/`, while GLaDOS writes it at the repo
-  root — keep it where Wheatley looks if you use both).
+  claims file under `product-knowledge/`, while GLaDOS reads and writes it
+  only at the project's root, and re-creates it there on install, so do not move
+  it: if you use both, link `product-knowledge/claims.md` to the root file
+  instead).
 - **You have an existing SDA repo.** Set the key and the artifacts carry
   over; scaffolding only creates what is missing and adds headers. (Coming
   from GLaDOS v1, `glados.py migrate` detects the artifacts and sets the key
@@ -160,7 +169,7 @@ cover a single-team, single-agent project.
 |---|---|
 | **Works today** | `sda: true` in `glados.yaml`: install scaffolds `claims.md`, `SPEC_LOG.md`, `SDA: v1.0` headers, and the standards docs (create-only); one claim and one `SPEC_LOG` work-unit row per unit of work, recorded by the outermost run (runs nested inside it add neither; each ticket run-epic builds is a unit of its own) — native kernel behavior, no recompile to flip |
 | **Coming later** | The lease module's lockfile backend writes `claims.md`-compatible entries when `sda: true` — claims become a view over enforced leases (direction, not shipped) |
-| **Your responsibility** | Set the key explicitly (no phase sets it for you) and re-run install to scaffold; keep `ROADMAP.md` inside the SDA grammar if consumers key on item IDs; relocate `claims.md` under `product-knowledge/` if pairing with Wheatley |
+| **Your responsibility** | Set the key explicitly (no phase sets it for you) and re-run install to scaffold; keep `ROADMAP.md` inside the SDA grammar if consumers key on item IDs; keep `claims.md` at the project's root, and link it under `product-knowledge/` if pairing with Wheatley |
 
 See also: [wheatley.md](wheatley.md) for the board that consumes these
 artifacts, the [v2.1 profile](../standards/sda-profile-glados-v2.1.md) (and

@@ -10,7 +10,7 @@ Personas define specific viewpoints and responsibilities that the agent adopts d
 
 | Type | Description |
 |---|---|
-| **review** | Seated on review panels (`mr-review-panel`, `brunch`) — a specific *lens* applied during review |
+| **review** | Seated on review panels (`mr-review-panel`, `brunch`), consulted by the `evaluator-spawn` evaluator, and seated in spec-feature's and `run-pipeline`'s persona passes and `run-pipeline`'s fresh-agent design reviews — a specific *lens* applied during review |
 | **operating** | Drives agent *behavior* during execution — priorities, tone, tool preferences |
 | **hybrid** | Works as both review and operating persona |
 | **moderator** | Seated only as `brunch`'s roundtable moderator — ranks and prunes the reviewers' findings, never reviews itself. The library ships exactly one: `brunch-moderator`. |

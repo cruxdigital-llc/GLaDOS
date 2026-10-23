@@ -1,5 +1,5 @@
 # glados.yaml — the one project-owned GLaDOS configuration file.
-# Copy to your repo root as `glados.yaml` and edit. Lane-2 keys (channels,
+# Copy to your project's root as `glados.yaml` and edit. Lane-2 keys (channels,
 # decisions, merge-authority, params (including the review-panel personas),
 # sinks, branching) are read LIVE at run time: editing them changes agent
 # behavior on the next run, with no reinstall, and never makes the compile
@@ -12,7 +12,12 @@
 # hash of them alone into the compiled output; `glados.py check` and
 # `glados.py doctor` flag a stale compile when one of them changed. Keys this
 # file omits take their defaults from the preset table (.glados/presets.yaml
-# after install).
+# after install; in a plugin-only repo, the plugin's own copy). A
+# run-pipeline run pins this file, each step body it uses and the
+# configuration in effect (this file over that table, as
+# `glados.py effective-config` prints it), checks them again before each
+# step, before it finishes and on resume, and stops with an escalation if
+# one changed: a live edit reaches the next run.
 
 glados: 2
 
@@ -40,7 +45,9 @@ channels:
   observation: [ledger]
 
 # Sinks — where outcomes physically land. Built-in sinks (mr-comment, issue,
-# issue-comment, label, ledger) need no declaration. Declare more here to bind
+# issue-comment, label, ledger) need no declaration. `ledger` is the run
+# record, saved to the glados/ledger branch and never to a work branch; it is
+# the one built-in that is not team-visible. Declare more here to bind
 # them in channels: above; a channels: entry naming an undeclared sink fails the
 # install (typo safety). Sink bodies are freeform config the AGENT interprets at
 # run time against your platform and conventions — the compiler never parses
@@ -59,21 +66,26 @@ channels:
 #     # verdict" in any core that reviews. Configure only what differs for
 #     # this project; anything left unsaid keeps the default. These keys
 #     # govern wording and order, never whether something is a finding —
-#     # that is settled upstream, where it can be recorded.
+#     # that is settled upstream, where it can be recorded. Nor do they
+#     # remove the `(GLaDOS <workflow>)` marker every post on a merge
+#     # request starts with: review-mr and address-review read an unmarked
+#     # note as a person's review.
 #     structure: |
 #       Breaches that predate the change point at #123, where this
 #       project tracks bringing existing code up to standard.
 #   slack:
+#     team-visible: true        # a sink you declare must say; see above
 #     channel: "#code-reviews"  # the agent posts here via its Slack tooling
 #     format: terse
 
 # Who may merge. No workflow file states an authority; they all read this key.
 merge-authority: human       # human | agent-integration-only | agent
 
-# Decision rights — closed value set: agent | record | escalate | forbidden.
-# `record` = decide, then emit a `decision` outcome. Phase presets fill these;
-# explicit entries override (weakening below your phase preset requires
-# relaxation-acknowledged).
+# Decision rights — closed value set: agent | record | escalate | forbidden;
+# any other value fails install, check and validate, naming the key (so does
+# a merge-authority outside its three). `record` = decide, then emit a
+# `decision` outcome. Phase presets fill these; explicit entries override
+# (weakening below your phase preset requires relaxation-acknowledged).
 decisions:
   schema-migration: record
   public-api-break: record
@@ -114,7 +126,13 @@ workflows:
 disabled-workflows: []
 
 # Module parameters (lane 2). `review-panel` parameterizes the
-# mr-review-panel module; `evaluator` parameterizes evaluator-spawn.
+# mr-review-panel module; `evaluator` parameterizes evaluator-spawn;
+# `standards-gate` bounds the standards gate's re-runs and `pipeline`
+# run-pipeline's revise cycles (both default from the preset table). Every
+# max-cycles bounds a loop and must be a whole number of 1 or more, written
+# plainly (max-cycles: 5): text ("5"), true or false, a list, or 0 or less
+# fails install, check and validate, naming the key, and a run that reads
+# one escalates instead of starting the loop.
 params:
   review-panel:
     personas: [architect]          # added to the standing lenses
@@ -130,11 +148,13 @@ params:
 # self-review) and the project's own: each declared under steps: with its
 # body at product-knowledge/steps/<id>.md (no frontmatter). Order is checked
 # only through inputs: a step's needs must come from an earlier step. Run
-# one with `/glados:run-pipeline <name> <brief>`; script installs also get
-# a shortcut per pipeline (`/glados:<name>`, or `/glados-<name>` in
-# Antigravity and pi). Sequences and step options are read live; renaming a
-# pipeline or changing its description needs a re-install. Check both blocks
-# with `python .glados/glados.py validate --target .`. See
+# one with `/glados:run-pipeline <name> <brief>`; script installs other than
+# aistudio also get a shortcut per pipeline (`/glados:<name>`, or
+# `/glados-<name>` in Antigravity and pi; in direct mode, a pointer file at
+# product-knowledge/glados/<name>.md). Sequences and step options are read
+# live; renaming a pipeline or changing its description needs a re-install.
+# Check both blocks with `python .glados/glados.py validate --target .` (in
+# a plugin-only repo, `bin/glados.py` under the plugin root). See
 # docs/guides/pipelines.md. Example (uncomment to use):
 # steps:
 #   architecture-review:
@@ -185,14 +205,18 @@ params:
 
 # SDA (Structured Development Artifacts) conformance — EXPLICIT-ONLY, and a
 # team declaration: phase presets may never set it. When true, install
-# scaffolds the conformance artifacts create-only (claims.md at the repo
+# scaffolds the conformance artifacts create-only (claims.md at the project's
 # root, product-knowledge/SPEC_LOG.md, `SDA: v1.0` headers on an existing
 # ROADMAP.md/PROJECT_STATUS.md, the sda-*.md standards docs into
-# product-knowledge/standards/), and every compiled workflow records claims
-# in claims.md before mutating and appends its work-unit row to SPEC_LOG.md
-# at run end (a run nested inside another, such as plan-feature inside
-# build-feature, works under the outer run's claim and row; each ticket
-# run-epic builds is a unit of work of its own). See
+# product-knowledge/standards/). A run records its claim in claims.md before it
+# first mutates shared state, and the outermost run of a unit of work appends
+# its work-unit row to SPEC_LOG.md at run end; the row and the claim's release
+# are committed with the work on the working branch, and the row links the run
+# record on the glados/ledger branch. A run nested inside another, such as
+# plan-feature inside build-feature, works under the outer run's claim and row;
+# each ticket run-epic builds is a unit of work of its own; review-mr and
+# address-review, on another's merge request, add neither; a run parked for a
+# person keeps its claim and adds its row when the unit of work ends. See
 # docs/guides/sda.md.
 sda: false
 

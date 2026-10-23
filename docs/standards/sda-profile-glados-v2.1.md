@@ -27,8 +27,9 @@ What changed, in one line each:
 - One unit of work gets one claim and one work-unit row, owned by its
   outermost run; nested runs add neither, nor do review-mr and
   address-review on another's merge request (section 5).
-- A run parked at a checkpoint keeps its claim and appends no row until the
-  work resumes and ends (section 5).
+- A run parked for a person (a checkpoint, a question, a stalled check)
+  keeps its claim and appends no row until the work resumes and ends
+  (section 5).
 - From GLaDOS 2.5's run ledger, work units are saved to the `glados/ledger`
   branch, not committed to a work branch, and the work-unit row is committed
   with the work (section 5).
@@ -62,6 +63,7 @@ verify-feature record the same way:
 | `<record>.shape.md` | the `shape` step |
 | `<record>.<step-id>.review-brief-<n>.md`, `<record>.<step-id>.review-<n>.md` | a fresh-agent design review of a step, the n-th check in its cycle table |
 | `<record>.<step-id>.audit-<n>.md` | a gate's audit done in the run itself, the n-th check in its cycle table |
+| `<record>.<step-id>.revision-<n>.md` | a `run-pipeline` step's revise loop: how the revision before the n-th check answered the open findings |
 | `<record>.requirements.md`, `<record>.spec.md` | `spec-feature` |
 | `<record>.evaluation-brief.md`, `<record>.evaluation.md` | the evaluator |
 
@@ -101,7 +103,7 @@ checkpoint) can still be unfinished.
 
 | Priority | Phase | Condition |
 |---|---|---|
-| 1a | the row's stage | the stage of the first row whose status is not `done`, `skipped` or `waived`. A `parked` row is awaiting a human approval at that stage; a `failed` row stopped there and escalated. |
+| 1a | the row's stage | the stage of the first row whose status is not `done`, `skipped` or `waived`. A `parked` row is awaiting a person at that stage: an approval at a `human` checkpoint, the answer to a one-way question, or a ruling on a stalled check; a `failed` row stopped there and escalated. |
 
 When every row is finished, the record reports the stage of its last row
 until the log marker appears: the outermost run appends the work-unit row
@@ -144,10 +146,11 @@ run**:
 - **A `run-pipeline` run is the outermost run of its pipeline.** The stage
   cores it runs follow the nested-run rules.
 - **A parked run has not finished.** A run that ends with its unit of work
-  still waiting on an approval keeps its claim and appends no row: a
-  `run-pipeline` run that parks at a `human` checkpoint or resumes a park
-  that has no approval yet, and a `run-epic` run that stops with only
-  parked tickets left. The run that resumes the work after the approval
+  still waiting on a person keeps its claim and appends no row: a
+  `run-pipeline` run that parks a step (at a `human` checkpoint, on a
+  one-way question, or at a stalled check) or resumes a park that has no
+  approval or answer yet, and a `run-epic` run that stops with only parked
+  tickets left. The run that resumes the work after the approval or answer
   builds on that claim (it is not contention) and clears it, with the row,
   when the unit ends.
 - **Nesting is decided by who started the run.** A leftover marker or an
@@ -164,7 +167,9 @@ no leases.
 
 From GLaDOS 2.5's run ledger, v2.0 section 4's work units are saved to the
 `glados/ledger` branch (`glados.py ledger save`) and never committed to a
-work branch, so a tool that reads them reads that branch, and section 7's
+work branch, so a tool that reads them reads that branch (under
+`<dir>/.glados/runs/` for a project in a subdirectory `<dir>` of its
+repository), and section 7's
 "before the record commit" reads "before the record is saved to the ledger;
 the row is committed with the work, on its branch" (see the
 [SDA guide](../guides/sda.md)).

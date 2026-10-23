@@ -5,10 +5,11 @@
 > fresh reviewer is given*) and the files that include it; this page records
 > why they are core, what changed, and what was left to projects.
 
-**Status:** part of 2.5.0, still a release candidate. **Baseline:** the
-2.5.0 candidate before this change. **Revised by** [v3.md](v3.md): an
-author's deferral no longer excuses a criterion the work received, and
-words bind as firmly as they were said.
+**Status:** shipped in 2.5.0. **Baseline:** the 2.5.0 candidate before
+this change. **Revised by** [v3.md](v3.md): an author's deferral no longer
+excuses a criterion the work received, and a person's words take the
+commitment tag their wording gives (Directive, Preference, Hunch or
+Assent; *A person's words*).
 
 ## The problem
 

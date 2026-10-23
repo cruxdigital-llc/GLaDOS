@@ -60,6 +60,9 @@ block parsing the way you meant it:
 - Double-quote `source`. A space followed by `#` starts a comment, so
   `source: Team handbook #3` reads as `Team handbook`. Quote any value that
   contains ` #`.
+- Quote a value that contains `: `, as a title with a subtitle often does.
+  YAML does not read `source: Eric Evans: Domain-Driven Design` as one
+  string, so `validate`, install and `check` refuse it and name the line.
 - A `#` with no space before it, as in a URL fragment, is part of the value.
 
 Canon is lane 2: the block is read live at run time. Editing it needs no

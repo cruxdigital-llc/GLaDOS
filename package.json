@@ -9,6 +9,7 @@
     "hooks/",
     "ci/",
     "compiled/",
+    "docs/standards/",
     "glados.yaml.example",
     "README.md"
   ]

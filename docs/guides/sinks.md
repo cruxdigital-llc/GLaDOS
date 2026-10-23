@@ -31,6 +31,7 @@ it in `channels:`:
 ```yaml
 sinks:
   slack:
+    team-visible: true           # required on a sink you declare (see Visibility)
     channel: "#code-reviews"     # the agent posts here via its Slack tooling
     format: terse
 channels:
@@ -61,6 +62,12 @@ Bodies are yours. Everything under a sink name — `channel:`, `format:`,
 `grouping:`, `threads:`, anything — is freeform config the **agent** interprets
 at run time for that sink's medium and your team's conventions. The compiler
 never parses it; it only checks that the declaration is a mapping.
+
+One thing no body changes: everything a run posts on a merge request starts
+with `(GLaDOS <workflow>)`, whatever the sink's config says. review-mr and
+address-review read a note without it, written by someone with a role on the
+project who did not write the change, as that person's review, so the marker
+is how GLaDOS's own comments stay GLaDOS's.
 
 ## Visibility
 

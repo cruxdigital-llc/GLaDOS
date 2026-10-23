@@ -20,8 +20,16 @@ is a planning/review/spec surface, not a hands-on-keyboard one.
 ## Prerequisites
 
 - Python 3.10 or newer on your PATH (the installer is one stdlib-only script).
+  Where only `python3` is on the PATH (macOS, and Debian or Ubuntu without
+  `python-is-python3`), write `python3` wherever this page says `python`.
 - A local checkout of the GLaDOS repository.
-- Your project is a git repository (run records are committed to its `glados/ledger` branch).
+- Your project is in a git repository, at its top level or in a subdirectory
+  such as a monorepo package (CI enforcement is supported only at the top
+  level; [details](README.md#what-a-run-leaves-behind)),
+  and its clone can push a `glados/ledger` branch to `origin`: every run
+  commits its record to that branch (`ledger save`) and pushes it. A
+  branch-protection rule that covers `glados/ledger` refuses the push, and the
+  records then stay in that one clone.
 - A Google account for AI Studio; a Gemini API key only if you use the
   bundled script runner.
 
@@ -38,6 +46,17 @@ cp glados.yaml.example /path/to/your/project/glados.yaml
 #   phase:     nascent | evolving | production | sunset   (required, no default)
 python bin/glados.py install --mode aistudio --target /path/to/your/project
 ```
+
+For `production` or `sunset`, delete the copy's `decisions:` block and the
+`relaxation-acknowledged: [delete-code]` line after it before you install.
+Both are written for `evolving`: install refuses each decision laxer than
+the phase's preset, and a confession left behind is restated in every
+assembly report. With both gone, the phase's preset governs. For `sunset`,
+delete `disabled-workflows: []` as well: it would re-enable `build-feature`
+and `run-pipeline`, which that phase turns off. Under `nascent` both may
+stay: where the block is stricter than nascent's preset
+(`schema-migration: record`, where nascent has `agent`) its value applies,
+and the confession relaxes nothing. Delete both to take nascent's own.
 
 ## What got installed
 
@@ -97,7 +116,11 @@ response with a mandatory run-record checklist, and
 `schemas/run_record.schema.json` can be set as the structured-output schema
 so omitting the run record is a schema violation. The CI check vendored to
 `.glados/ci/` (the installer prints the enable stanza) is the real backstop —
-context in [hooks/README.md](../../hooks/README.md).
+context in [hooks/README.md](../../hooks/README.md). A project in a
+subdirectory of its repository has no CI check: CI enforcement is supported
+only for a project at the repository root
+([details](README.md#what-a-run-leaves-behind)), so there the checklist, the
+schema and running `check` and `verify-ledger` yourself are all there is.
 
 ## Gotcha: the model has no hands — you are the executor
 

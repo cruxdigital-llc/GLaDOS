@@ -5,7 +5,8 @@ install it into a project workspace, and it compiles a set of slash
 commands (for example `/glados:build-feature`) tailored to that project's
 configuration. When your agent runs one, it follows a disciplined,
 team-visible process — reviews get posted, decisions get recorded, and
-every run leaves a committed record — instead of improvising.
+every run leaves a record on the repo's `glados/ledger` branch — instead of
+improvising.
 
 The pages below are ordered from most to least accessible. Start at the
 top; each layer assumes you have read the ones above it, never the ones
@@ -16,9 +17,10 @@ below. If you landed here without any context, the
 
 - [getting-started/](getting-started/) — pick your agent runtime — Claude
   Code, Gemini CLI (Google's open-source terminal agent), Google
-  Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google), or
-  Google AI Studio (aistudio.google.com) — and install GLaDOS into a
-  project. No prior GLaDOS knowledge needed.
+  Antigravity (Google's agentic IDE; CLI `agy`; antigravity.google), pi
+  (pi.dev, a terminal coding agent), or Google AI Studio
+  (aistudio.google.com) — and install GLaDOS into a project. No prior
+  GLaDOS knowledge needed.
 
 ## Learn by example
 
@@ -75,7 +77,8 @@ after its opening paragraph.
   fresh reviewer is given is core text, and what 2.5 changed in it.
 - [proposals/design-loop.md](proposals/design-loop.md) — why a question for
   a person parks instead of failing a gate, and why a stalled revise loop
-  parks for a person (revised by v3.md).
+  parks for a person (revised by v3.md: only a one-way door parks now, and a
+  two-way door takes its default for the person to confirm later).
 - [proposals/v3.md](proposals/v3.md) — what the first trial runs of a
   plain-first pipeline changed next: a stall parks for a person, questions
   turn on named outcomes, an author cannot defer an outcome a person set,

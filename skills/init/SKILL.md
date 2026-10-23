@@ -12,8 +12,16 @@ Bootstrap the GLaDOS framework in the current project directory.
    sunset` — and set it in the new file. Phase is required, with no default;
    it states who gets hurt when the agent is wrong, not how proud the team is
    of the code: a repo with real users is `production`, whatever the code
-   looks like. Point the user at `platform:` and the `channels:` bindings as
-   the other load-bearing keys to review.
+   looks like. The copy's `decisions:` block, and the
+   `relaxation-acknowledged: [delete-code]` line after it, are written for
+   `evolving`: for `production` or `sunset`, delete both, so the phase's
+   preset governs (`validate`, which `run-pipeline` runs first, refuses each
+   value laxer than the preset's). For `sunset`, delete
+   `disabled-workflows: []` as well: it would re-enable `build-feature` and
+   `run-pipeline`, which that phase turns off. Under `nascent` both may
+   stay (the block's stricter values, such as `schema-migration: record`,
+   apply); delete both to take nascent's own. Point the user at `platform:`
+   and the `channels:` bindings as the other load-bearing keys to review.
 
 2. **Scaffold the `product-knowledge/` directory structure:**
    - `product-knowledge/PROJECT_STATUS.md` — copy from `${CLAUDE_PLUGIN_ROOT}/src/templates/PROJECT_STATUS.md` (skip if present)

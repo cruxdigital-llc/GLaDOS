@@ -11,8 +11,8 @@ generates a set of slash commands — `/glados:build-feature`,
 `/glados:fix-bug`, `/glados:review-mr` — tailored to that project. When your
 agent runs one, it follows a disciplined, team-visible process instead of
 improvising: reviews get posted where the team can see them, decisions get
-written down with their reasons, and every run leaves a committed record in
-your repo.
+written down with their reasons, and every run leaves a record on your
+repo's `glados/ledger` branch.
 
 What you get:
 
@@ -33,7 +33,9 @@ What you get:
 
 Coming from GLaDOS v1? Run `python bin/glados.py migrate --target
 /path/to/your/project` instead — [MIGRATION.md](MIGRATION.md) is the guided
-path. Otherwise, from a clone of this repository:
+path. Otherwise you need Python 3.10 or newer, and a project in a git
+repository whose clone can push a `glados/ledger` branch to `origin`: every
+run saves its record there. From a clone of this repository:
 
 ```bash
 cp glados.yaml.example /path/to/your/project/glados.yaml
@@ -43,7 +45,16 @@ Open the copy and set two keys. `platform:` is `gitlab` or `github`. `phase:`
 is a one-word honest answer to "who gets hurt if the agent gets something
 wrong?" — `nascent` (nobody; no users yet), `evolving` (early adopters),
 `production` (real users), or `sunset` (winding down) — describe reality, not
-ambition, because the word tunes how much caution gets compiled in.
+ambition, because the word tunes how much caution gets compiled in. The copy's
+`decisions:` block, and the `relaxation-acknowledged: [delete-code]` line after
+it, are written for `evolving`: for `production` or `sunset`, delete both so
+the phase's preset governs. Otherwise install refuses each value laxer than the
+preset's, and a confession left behind is restated in every assembly report.
+For `sunset`, delete `disabled-workflows: []` as well: it would re-enable
+`build-feature` and `run-pipeline`, which that phase turns off. Under
+`nascent` both may stay: where the block is stricter than nascent's preset
+(`schema-migration: record`, where nascent has `agent`) its value applies,
+and the confession relaxes nothing. Delete both to take nascent's own.
 
 Then install for your agent's runtime (here: Claude Code):
 
@@ -73,8 +84,8 @@ how; it fixes the root cause rather than the symptom; then a second, fresh
 agent session — one that never saw the fix being written — independently
 verifies it. What you end up with is a merge request with the review verdict
 posted as a comment on it, plus a record on the `glados/ledger` branch
-saying what was decided and why. Six months later, `git log` still knows the whole
-story.
+saying what was decided and why. Six months later, `git log glados/ledger`
+still knows the whole story.
 
 `fix-bug` is one of sixteen commands. The everyday ones are `build-feature`
 (one feature from plan to a verified merge request in one sitting),
@@ -97,7 +108,9 @@ id, as advice unless a standard of yours adopts one. See
 
 ## Where things land in your repo
 
-Everything is installed into your project workspace and committed to git:
+Everything is installed into your project workspace and committed to git
+with your code, except the run records, which are committed to the
+`glados/ledger` branch instead:
 
 ```
 your-project/
@@ -105,10 +118,13 @@ your-project/
 ├── .claude/commands/glados/     # the compiled slash commands (this dir is
 │                                #   per-runtime — see the table below)
 ├── .glados/                     # GLaDOS working state, committed to git
-│   ├── runs/                    # one record file per run (created on first run)
+│   ├── runs/                    # run records: written here, kept out of every
+│   │                            #   branch's commits by the clone's git exclude
+│   │                            #   file, and saved to the glados/ledger branch
 │   ├── assembly-report.md       # what the installer resolved, and from where
 │   ├── personas/                # reviewer viewpoints: security, architecture, QA…
-│   ├── ci/                      # optional CI job that catches config drift
+│   ├── ci/                      # optional CI jobs: the config drift check and the
+│   │                            #   verify-ledger run-record backstop
 │   └── src/                     # copies of the sources, so installs are reproducible
 └── product-knowledge/           # your project's written knowledge
     ├── standards/               # rules the agent's work is checked against
@@ -142,11 +158,12 @@ One compiled output feeds every mode, so behavior matches across runtimes.
 Two commands are standing weekly jobs rather than things you run when you
 think of them:
 
-- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses old
-  run records into a short digest, refreshes stale docs, reviews the
-  accumulated observations and promotes the real patterns into written
-  standards, and sanity-checks the tests. Ships as one small cleanup merge
-  request.
+- **`/glados:steward`** (typically Saturday) — housekeeping. It condenses
+  settled run records into a short digest on the `glados/ledger` branch,
+  refreshes stale docs and, when `glados.yaml` declares `canon:`, the canon
+  digests, reviews the accumulated observations and promotes the real
+  patterns into written standards, and sanity-checks the tests. Ships as one
+  small cleanup merge request.
 - **`/glados:brunch`** (typically Sunday) — a critique roundtable. Several
   reviewer personas examine the codebase in parallel (after actually running
   the project first), a moderator ranks the findings by impact against

@@ -8,10 +8,13 @@
 > `src/kernel/presets/phases.yaml`. Companion to
 > [review-inputs.md](review-inputs.md).
 
-**Status:** part of 2.5.0, still a release candidate. **Baseline:** the
-2.5.0 candidate with *What a fresh reviewer is given*. **Revised by**
-[v3.md](v3.md): `max-stalled-cycles` is gone (one stalled check parks the
-step), and materiality now turns on named outcomes.
+**Status:** shipped in 2.5.0. **Baseline:** the 2.5.0 candidate with
+*What a fresh reviewer is given*. **Revised by** [v3.md](v3.md):
+`max-stalled-cycles` is gone (one stalled check parks the step);
+materiality turns on named outcomes; and only a one-way door parks. A
+two-way door takes its default, a person's Directive or chosen reading or
+else its finder's recommendation, and is listed for the person to confirm
+or overturn at the next park or on the MR (v3.1, v3.2).
 
 ## The problem
 
@@ -106,7 +109,8 @@ and their counting. No new severity tier, verdict word or step status:
   the step's verdict, because a step after open-mr does not edit the
   branch.
 - **A run without a branch cuts one before it parks,** because a park
-  commits and pushes the record.
+  leaves its work on a branch for the run that resumes it. Since v3.2 the
+  record itself is saved to the `glados/ledger` branch, not committed.
 
 ## Left out
 
@@ -121,5 +125,7 @@ and their counting. No new severity tier, verdict word or step status:
   number installs today for every loop; that check belongs with all of
   them.
   (Since done for every loop: install, check and validate refuse a bound
-  that is not a whole number of 1 or more, and a workflow escalates on one
-  at run time. `max-stalled-cycles` was retired.)
+  that is not a whole number of 1 or more, `glados.py effective-config`
+  refuses to pin one, and a workflow escalates on one at run time.
+  `max-stalled-cycles` was retired; install, check and validate warn when
+  a manifest still sets it.)

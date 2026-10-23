@@ -27,9 +27,11 @@ contention between two people (or agents) grabbing the same card.
 
 One path wrinkle: Wheatley's server reads the claims file at
 `product-knowledge/claims.md`, while GLaDOS's SDA support (see
-[sda.md](sda.md)) scaffolds and writes `claims.md` at the repo root. If you
-use both, keep the claims file where Wheatley looks — under
-`product-knowledge/`.
+[sda.md](sda.md)) scaffolds and writes `claims.md` at the project's root
+(the directory holding `glados.yaml`), and only there: runs append to that
+file and a re-install re-creates it. So do not move it. If you use both,
+link `product-knowledge/claims.md` to that file (`ln -s ../claims.md
+product-knowledge/claims.md` in sidecar mode).
 
 ## What works on a GLaDOS v2 project today
 
@@ -65,9 +67,10 @@ still required:
   ([MIGRATION.md](../../MIGRATION.md)) converts live `specs/` dirs into
   ledger entries, and its `--clean` flag deletes the tree. Wheatley reads
   `specs/`, so its *in-flight* columns (Planning through Verifying) are empty
-  on a v2 repo. Closing this needs Wheatley-side work (reading
-  `.glados/runs/`) planned alongside a later GLaDOS coordination release —
-  not shipped in either project.
+  on a v2 repo. Closing this needs Wheatley-side work (reading the run
+  ledger, which from GLaDOS 2.5 lives on the `glados/ledger` branch rather
+  than in a checkout's `.glados/runs/`) planned alongside a later GLaDOS
+  coordination release — not shipped in either project.
 - **`claims.md` exists only when `sda: true`.** The key is explicit-only and
   defaults to false; without it, v2's concurrency answer is the invisible
   base-SHA yield rule and the claims overlay is empty.
@@ -102,18 +105,20 @@ A project's own workflows ([pipelines.md](pipelines.md)) add no columns. The
 columns stay the six SDA phases: the
 [v2.1 profile](../standards/sda-profile-glados-v2.1.md) reads a pipeline
 run's phase as the `stage` of the first row in its step table that is not
-done, skipped or waived, until the work-unit row marks it done. A card can also show the pipeline's name, its
-current step, and an awaiting-approval badge while the run is parked at a
-human checkpoint. Like the other in-flight columns, this needs Wheatley to
-read `.glados/runs/`, which is direction, not shipped.
+done, skipped or waived, until the work-unit row marks it done. A card can
+also show the pipeline's name, its current step, and an awaiting-approval
+badge while the run is parked for a person (at a human checkpoint, on a
+one-way question, or on a stalled check). Like the other in-flight columns,
+this needs Wheatley to read the `glados/ledger` branch, which is direction,
+not shipped.
 
 ## Summary
 
 | | |
 |---|---|
-| **Works today** | Backlog column from `product-knowledge/ROADMAP.md` (maintained by the `intent` workflow); active tasks from `product-knowledge/PROJECT_STATUS.md`; claims overlay on repos with `sda: true` (kernel-maintained `claims.md` — keep it under `product-knowledge/` for Wheatley) |
-| **Coming later** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading `.glados/runs/` as in-flight state — stated direction, not shipped in either project |
-| **Your responsibility** | Run Wheatley (Docker) and mount/point it at the repo; set `sda: true` if you want the claims overlay; keep `claims.md` where Wheatley looks; don't expect in-flight columns on a v2 repo yet |
+| **Works today** | Backlog column from `product-knowledge/ROADMAP.md` (maintained by the `intent` workflow); active tasks from `product-knowledge/PROJECT_STATUS.md`; claims overlay on repos with `sda: true` (kernel-maintained `claims.md` at the project's root, linked under `product-knowledge/` for Wheatley) |
+| **Coming later** | The lease lockfile backend writing `claims.md`-compatible entries when `sda: true`; Wheatley reading the run ledger (the `glados/ledger` branch) as in-flight state — stated direction, not shipped in either project |
+| **Your responsibility** | Run Wheatley (Docker) and mount/point it at the repo; set `sda: true` if you want the claims overlay; keep `claims.md` at the project's root and link it where Wheatley looks; don't expect in-flight columns on a v2 repo yet |
 
 See also: [sda.md](sda.md) for the `sda:` key and the artifacts Wheatley
 reads, and [../../MIGRATION.md](../../MIGRATION.md) for why v2 retired
