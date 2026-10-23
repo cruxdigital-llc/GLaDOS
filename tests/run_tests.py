@@ -7110,6 +7110,76 @@ class TestPortability(unittest.TestCase):
         gone = json.dumps({"cwd": str(base / "no-such-dir")}).encode("utf-8")
         self.assertEqual(guard(gone, repo), "block")
 
+    # A subprocess call named here reads its child's output as text when
+    # passed text= or universal_newlines=.
+    SUBPROCESS_CALLS = frozenset({"run", "Popen", "check_output", "call",
+                                  "check_call"})
+
+    def _locale_decoded(self, path: Path, rel: str) -> list:
+        """Each subprocess call in the script at ``path`` that reads its
+        child's output as text and leaves the codec, or what to do with a
+        byte it cannot decode, to the locale, as `<rel>:<line>: <call>`."""
+        tree = ast.parse(read(path), rel)
+        found = []
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute)
+                    and isinstance(n.func.value, ast.Name)
+                    and n.func.value.id == "subprocess"
+                    and n.func.attr in self.SUBPROCESS_CALLS):
+                continue
+            kw = {k.arg: k.value for k in n.keywords if k.arg}
+            text = any(k in kw and not (isinstance(kw[k], ast.Constant)
+                                        and not kw[k].value)
+                       for k in ("text", "universal_newlines"))
+            if text and not ("encoding" in kw and "errors" in kw):
+                found.append(f"{rel}:{n.lineno}: subprocess.{n.func.attr}")
+        return found
+
+    def test_no_child_output_is_decoded_in_the_locale_codec(self):
+        """git writes UTF-8, and a text-mode child process is decoded in the
+        locale's codec unless the call names one: cp1252 on Windows, which
+        has no character for the bytes 0x81, 0x8D, 0x8F, 0x90 and 0x9D. The
+        reader thread raised, stdout came back None, and the caller
+        crashed. Every text-mode call in bin/ and hooks/ names the codec
+        and a way past a byte it cannot decode."""
+        probe = tmpdir("glados-port-probe-")
+        write(probe / "probe.py",
+              "import subprocess\n"
+              "a = subprocess.run(['git'], capture_output=True, text=True)\n"
+              "b = subprocess.run(['git'], capture_output=True, text=True,\n"
+              "                   encoding='utf-8', errors='replace')\n"
+              "c = subprocess.run(['git'], capture_output=True)\n"
+              "d = subprocess.check_output(['git'], universal_newlines=True,\n"
+              "                            encoding='utf-8')\n"
+              "e = subprocess.run(['git'], capture_output=True, text=False)\n")
+        self.assertEqual(self._locale_decoded(probe / "probe.py", "probe.py"),
+                         ["probe.py:2: subprocess.run",
+                          "probe.py:6: subprocess.check_output"])
+        found = [f for rel in self.SCRIPTS
+                 for f in self._locale_decoded(REPO / rel, rel)]
+        self.assertEqual(found, [])
+
+    def test_verify_ledger_reads_git_as_utf8(self):
+        """A commit subject or a branch name holding a byte cp1252 cannot
+        decode (📝, Á, č) stopped verify-ledger, whose report never fails,
+        with a traceback on Windows."""
+        repo = self._repo_at(tmpdir("glados-port-log-") / "r")
+        for subject in ("📝 docs: update readme", "oprava: přidat čtení",
+                        "review: Ágnes signed off"):
+            subprocess.run(["git", "-C", str(repo), "commit", "-q",
+                            "--allow-empty", "-m", subject],
+                           capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b",
+                        "feat/Ágnes-čtení"], capture_output=True)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        rc, out = run_cli("verify-ledger", "--target", repo, env=env)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        self.assertIn("feature/other branches: 1", out)
+        self.assertIn("review: Ágnes signed off", out)
+
 
 class TestHookGuards(unittest.TestCase):
     """The run-record guard scripts, driven as real subprocesses through their
@@ -9070,6 +9140,20 @@ class TestMigrate(unittest.TestCase):
         line = re.search(r"(?m)^platform:.*$", read(t2 / "glados.yaml")).group(0)
         self.assertIn("platform: gitlab", line,
                       "no remote must keep the example default")
+        self.assertIn("TODO", line)
+
+    def test_a_non_ascii_origin_is_read_as_utf8(self):
+        """git writes the origin URL in UTF-8. Read in cp1252, a local path
+        remote with an Á in it crashed migrate on Windows with a traceback
+        before it detected anything. It is no known host: the example's
+        default stays, with its TODO."""
+        t, _ = self._v1_repo(remote="/srv/Ádám/čtení.git")
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+        rc, out = run_cli("migrate", "--target", t, "--source", REPO, env=env)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Traceback", out)
+        line = re.search(r"(?m)^platform:.*$", read(t / "glados.yaml")).group(0)
         self.assertIn("TODO", line)
 
     def test_git_date_fallback_and_create_only_records(self):

@@ -5063,8 +5063,12 @@ def cmd_verify_ledger(args) -> int:
 
     def git(*a):
         try:
+            # git writes UTF-8; the locale's codec (cp1252 on Windows)
+            # cannot decode every byte of it, and stdout came back None.
             out = subprocess.run(["git", "-C", str(target), *a],
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace",
+                                 timeout=30)
             return out.stdout if out.returncode == 0 else ""
         except (OSError, subprocess.SubprocessError):
             return ""
@@ -6254,7 +6258,8 @@ def _detect_platform(target: Path):
     try:
         proc = subprocess.run(
             ["git", "-C", str(target), "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     url = proc.stdout.strip()
@@ -6385,7 +6390,8 @@ def _git_last_commit_date(target: Path, rel: str):
     try:
         proc = subprocess.run(
             ["git", "-C", str(target), "log", "-1", "--format=%cs", "--", rel],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
