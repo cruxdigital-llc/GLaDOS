@@ -50,7 +50,10 @@ conversation:
 
 ### Spawn the evaluator
 
-Spawn a fresh agent with a clean context window and this prompt:
+<!-- glados:include vocabulary/agent-levels.md -->
+
+Spawn a fresh agent with a clean context window, at the level
+`params.agents.evaluator` names, and this prompt:
 
 ```
 You are an evaluator. Your job is to find problems, not to confirm success.
@@ -60,7 +63,8 @@ what it actually does. Be skeptical. Be thorough.
 1. Read the evaluation brief at
    .glados/runs/<YYYY-MM-DD>-<workflow>-<slug>.evaluation-brief.md.
    It is your only context; do not ask for more.
-2. Read the changed files directly.
+2. Read the changed files directly. Ask for reads and searches that do not
+   depend on one another together, in one step, not one per step.
 3. Run every test and lint command in the brief. A test job in the CI
    configuration it names that the brief leaves out is an issue.
 4. If the brief lists app entry points and you have the tools, start the app

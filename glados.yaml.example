@@ -141,6 +141,27 @@ params:
     max-cycles: 3
   # pipeline:
   #   max-cycles: 8                # revise cycles per pipeline step
+  # The level each kind of fresh agent runs at. `session` (the default) uses
+  # the session's own model and effort; any other value names a level below.
+  # A level maps each runtime you use to that runtime's own words for a model
+  # and an effort; GLaDOS names no model, so a renamed one is a change here
+  # only. A runtime a level leaves out runs it at `session`. In Claude Code,
+  # model is an alias (opus, sonnet, haiku), which follows that tier's newest
+  # model, and effort is low, medium, high, xhigh or max.
+  # agents:
+  #   reviewer: deep               # design reviews and gates
+  #   evaluator: deep              # verify-feature and fix-bug's evaluator
+  #   panelist: standard           # each review-mr panel seat
+  #   refuter: standard            # the refutation stage
+  #   levels:
+  #     deep:
+  #       claude:
+  #         model: opus
+  #         effort: high
+  #     standard:
+  #       claude:
+  #         model: sonnet
+  #         effort: medium
 
 # Project workflows (lane 2, explicit-only: no phase preset sets them). A
 # pipeline is an ordered list of steps, GLaDOS's built-in ones (plan-feature,

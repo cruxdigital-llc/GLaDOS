@@ -77,10 +77,13 @@ the review loop (build-feature → review-mr ⇄ address-review).
 - Add or update tests that pin each fixed behavior — every `blocking` fix
   gets a test that would have caught it.
 
-### 4. Full-suite gate
-- Run the project linters and the **full test suite** — not just the files
-  you touched — before committing. Distinguish pre-existing or known-flaky
-  failures from regressions this fix pass introduced, and say which is which.
+### 4. Test gate
+- Run the project linters and the tests this fix pass touches before
+  committing: the tests of each file it changes, and every test that names
+  a name it changes. The full suite runs on the pushed head in the merge
+  request's pipeline, whose jobs the next review pass reads; do not run it
+  again locally. Distinguish pre-existing or known-flaky failures from
+  regressions this fix pass introduced, and say which is which.
 - Do not proceed with an unexplained failure: a fix pass that breaks
   something else has not resolved the review.
 

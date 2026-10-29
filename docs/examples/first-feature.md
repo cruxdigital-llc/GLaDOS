@@ -183,9 +183,10 @@ in the open ("your words say X; the code shows Y; I propose Z"), and a
 withdraw or waive it in your own words.
 
 A dirty pass hands off to `/glados:address-review`, which fixes every open
-finding in one coherent pass, runs the full test suite, pushes, and maps each
-finding to its resolution (fixed, with the commit — or declined, with a
-one-line reason). Then `/glados:review-mr` runs again against the new commit.
+finding in one coherent pass, runs the tests the fixes touch, pushes (the
+merge request's pipeline runs the full suite), and maps each finding to its
+resolution (fixed, with the commit — or declined, with a one-line reason).
+Then `/glados:review-mr` runs again against the new commit.
 The loop repeats until the MR is review-clean, a fix pass commits nothing,
 or the cycle bound (`params.review-panel.max-cycles: 5`, a whole number of 1
 or more written unquoted: install, `check` and `validate` reject `0`, `"5"`,

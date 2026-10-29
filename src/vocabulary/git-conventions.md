@@ -15,8 +15,11 @@ Defaults, where the project states nothing:
   issues, or comments.
 - **Separate `git add`, `git commit`, `git push`** — never chained, so each
   result is visible on its own.
-- Run the project's full test suite before committing code, and its exact
-  CI checks locally before pushing it; a fresh evaluator's run of them on
-  the same diff counts. Install any commit-msg hook the project declares
-  before the first commit.
+- Run the tests the change touches before committing code: the tests of
+  each file it changes, and every test that names a name it changes. The
+  project's full test suite and its exact CI checks run once, as the
+  change's final verification: in a fresh evaluator where the workflow
+  spawns one, otherwise before the push that opens the merge request. A
+  later fix pass leaves the full run to the merge request's pipeline.
+  Install any commit-msg hook the project declares before the first commit.
 - Never force-push over work you did not write.

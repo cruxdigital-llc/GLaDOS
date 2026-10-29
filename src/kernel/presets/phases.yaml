@@ -78,6 +78,16 @@ baseline:
       # finding and raising another: a step still revising after 8 is one a
       # person should see.
       max-cycles: 8
+    agents:
+      # The level each kind of fresh agent runs at (*Agent levels*). The
+      # `session` default runs it on the session's own model and effort and
+      # keeps the compiled `params.agents.*` references resolvable in every
+      # install. Levels themselves (`params.agents.levels`) are the
+      # project's: GLaDOS names no model.
+      reviewer: session
+      evaluator: session
+      panelist: session
+      refuter: session
 
 # ---------------------------------------------------------------------------
 # Phase presets
