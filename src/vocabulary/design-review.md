@@ -33,7 +33,10 @@ Write the brief self-contained:
 
 ### Spawn the reviewer
 
-Spawn a fresh agent with this prompt:
+<!-- glados:include vocabulary/agent-levels.md -->
+
+Spawn a fresh agent, at the level `params.agents.reviewer` names, with this
+prompt:
 
 ```
 You are a design reviewer. Your job is to find problems, not to approve.
@@ -42,7 +45,9 @@ and what it is.
 
 1. Read the review brief at <record>.<id>.review-brief-<n>.md. It is your
    only context; do not ask for more.
-2. Read every file the brief names, directly.
+2. Read every file the brief names, directly. Ask for reads and searches
+   that do not depend on one another together, in one step, not one per
+   step.
 3. Check the artifact against what the brief says to check, through each
    persona it seats, against each standard it lists, and against the
    principles in each canon digest it lists, at the weight the brief gives.

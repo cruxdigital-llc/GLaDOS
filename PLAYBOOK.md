@@ -145,6 +145,27 @@ priority_areas: [security, compliance]
 # Security Expert Persona
 ```
 
+### Choosing Agent Levels
+
+Every fresh agent — a design reviewer, an evaluator, a review-panel seat, a refuter — runs on the session's own model and effort unless `params.agents` in `glados.yaml` gives its kind a level. A level maps each runtime you use to that runtime's own words for a model and an effort, so GLaDOS itself names no model and a renamed one is a one-line change in your manifest. Put the strongest model where a miss is expensive, such as design reviews and the evaluator, and a faster one where the work is narrower. A runtime a level leaves out runs it at `session`. No reinstall; `validate` refuses a role naming a level that does not exist.
+
+```yaml
+params:
+  agents:
+    reviewer: deep
+    evaluator: deep
+    panelist: standard
+    levels:
+      deep:
+        claude:
+          model: opus           # Claude Code aliases follow the newest model
+          effort: high
+      standard:
+        claude:
+          model: sonnet
+          effort: medium
+```
+
 ### Adding a Philosophy
 
 Create a file in `product-knowledge/philosophies/`. Start with `preferred` weight and promote to `core` only after the team has lived with it. Keep philosophies high-level — if it has a code example, it's a standard.

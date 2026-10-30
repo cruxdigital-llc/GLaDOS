@@ -60,7 +60,7 @@ from pathlib import Path
 # 1. CONSTANTS
 # =============================================================================
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 # The sixteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
@@ -1568,6 +1568,15 @@ def unknown_manifest_keys(raw: dict) -> list[str]:
     return [k for k in raw if k not in KNOWN_MANIFEST_KEYS]
 
 
+# The kinds of fresh agent `params.agents` gives a level (*Agent levels*), and
+# the fields a level sets per runtime.
+AGENT_ROLES = ("reviewer", "evaluator", "panelist", "refuter")
+AGENT_LEVEL_FIELDS = ("model", "effort")
+
+# `params` keys the compiled text names that may stay unset: check (8) skips
+# them. A project with no levels of its own has no `params.agents.levels`.
+OPTIONAL_PARAMS = {"agents.levels"}
+
 # `params` keys a release stopped reading, each with why. A manifest that
 # still sets one resolves (it is only a value nothing reads), but a team that
 # tuned it would otherwise get no signal that the tuning does nothing, and
@@ -1963,6 +1972,9 @@ def run_type_checks(source: Source, comp: Compilation,
     # ---- (8b) loop bounds are whole numbers ----------------------------------
     errors.extend(loop_bound_errors(r))
 
+    # ---- (8c) agent levels name a level -------------------------------------
+    errors.extend(agent_level_errors(r))
+
     # ---- (9) project workflows: pipelines + steps ----------------------------
     # Lane 2 by design (run-pipeline reads them live), but they decide which
     # steps gate a change, so they are checked wherever the compiler runs:
@@ -2022,11 +2034,65 @@ def unresolved_params_errors(comp: Compilation) -> list[str]:
     for c, text in comp.cores.items():
         for lit in sorted(set(PARAMS_LITERAL_RE.findall(text))):
             _, ns, key = lit.split(".")
+            if f"{ns}.{key}" in OPTIONAL_PARAMS:
+                continue
             if (params.get(ns) or {}).get(key) is None:
                 errors.append(f"compiled {c}: references `{lit}` but the "
                               f"resolved manifest has no value for it — set it "
                               f"under params: in glados.yaml or a phase-preset "
                               f"baseline")
+    return errors
+
+
+def agent_level_errors(r: Resolved) -> list[str]:
+    """`params.agents` gives each kind of fresh agent a level (*Agent
+    levels*): `session`, or a name under `levels`, which maps runtimes to
+    their own model and effort words. A role naming no level, or a level out
+    of shape, would leave the spawning agent to guess at a model. An absent
+    role is check (8)'s."""
+    agents = (r.values.get("params") or {}).get("agents") or {}
+    levels = agents.get("levels")
+    errors = []
+    if levels is not None and not isinstance(levels, dict):
+        prov = r.provenance.get("params.agents.levels", "baseline")
+        errors.append(f"params.agents.levels: must be a mapping of level "
+                      f"names, each mapping a runtime to its model and "
+                      f"effort — got {_fmt(levels)} (value from {prov})")
+    levels = levels if isinstance(levels, dict) else {}
+    for name, runtimes in sorted(levels.items()):
+        where = f"params.agents.levels.{name}"
+        if name == "session":
+            errors.append(f"{where}: `session` is the built-in level (the "
+                          f"session's own model and effort) — give this "
+                          f"level another name")
+            continue
+        if not isinstance(runtimes, dict) or not runtimes:
+            errors.append(f"{where}: must map at least one runtime (such as "
+                          f"claude) to its model and effort — got "
+                          f"{_fmt(runtimes)}")
+            continue
+        for runtime, binding in sorted(runtimes.items()):
+            at = f"{where}.{runtime}"
+            if not isinstance(binding, dict) or not binding:
+                errors.append(f"{at}: must set model, effort or both — got "
+                              f"{_fmt(binding)}")
+                continue
+            for field, val in sorted(binding.items()):
+                if field not in AGENT_LEVEL_FIELDS:
+                    errors.append(f"{at}.{field}: a level sets only "
+                                  f"{' and '.join(AGENT_LEVEL_FIELDS)}")
+                elif not isinstance(val, str) or not val.strip():
+                    errors.append(f"{at}.{field}: must be the runtime's own "
+                                  f"word for it, as text — got {_fmt(val)}")
+    for role in AGENT_ROLES:
+        val = agents.get(role)
+        if val is None or val == "session" or (
+                isinstance(val, str) and val in levels):
+            continue
+        prov = r.provenance.get(f"params.agents.{role}", "baseline")
+        known = ", ".join(["session"] + sorted(levels))
+        errors.append(f"params.agents.{role}: {_fmt(val)} is not a level — "
+                      f"use one of {known} (value from {prov})")
     return errors
 
 
@@ -4680,7 +4746,7 @@ def cmd_effective_config(args) -> int:
     r, where = run_configuration(source, target, args.ref)
     comp = compile_all(source, r, structural_hash(r.raw))
     errors = (unresolved_params_errors(comp) + loop_bound_errors(r)
-              + decision_value_errors(r))
+              + agent_level_errors(r) + decision_value_errors(r))
     if errors:
         print(f"glados effective-config: FAIL — {where}")
         skew = _version_skew(target)

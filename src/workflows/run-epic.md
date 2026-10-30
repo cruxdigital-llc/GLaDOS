@@ -120,13 +120,15 @@ For each ticket, on a working branch off the integration branch (named per
 ### Operating conventions — the autonomy enablers
 - **Delegate implementation, keep review.** Subagents implement (leaving
   changes uncommitted) and review; the orchestrator specs, reviews the diff,
-  runs the full suite, commits, and merges — conserving orchestration context
-  for the long haul.
+  runs the tests it touches, commits, and merges — conserving orchestration
+  context for the long haul.
 - **One durable progress record** — `epic.progress` in the ledger, updated as
   every ticket lands. Never a second copy, never a machine-local file.
 - **A failing test is a real defect until proven otherwise.** Targeted runs
-  miss integration breaks — gate every commit on the full suite; never loosen
-  an assertion or a test double to make it pass.
+  miss integration breaks, so no ticket merges without a full run: its
+  evaluator's, then its merge request's pipeline, and the integration branch
+  gets one more before the epic's MR. Never loosen an assertion or a test
+  double to make it pass.
 - **Fix in-MR, don't defer.** Carry forward only what is genuinely outside
   the epic's scope, and say so explicitly with the owning ticket — never
   silently drop a finding.

@@ -1026,6 +1026,7 @@ class TestParamsResolution(unittest.TestCase):
         for core in (t / "product-knowledge" / "glados").glob("*.md"):
             bounds |= set(glados.PARAMS_LITERAL_RE.findall(read(core)))
         bounds.discard("params.review-panel.personas")
+        bounds = {b for b in bounds if not b.startswith("params.agents.")}
         self.assertIn("params.pipeline.max-cycles", bounds)
         self.assertEqual(len(bounds), 4, bounds)
         bad = (('"8"', "got the text '8'"), ("lots", "got the text 'lots'"),
@@ -1045,6 +1046,64 @@ class TestParamsResolution(unittest.TestCase):
             with self.subTest(bound=lit, value="1"):
                 self.assertEqual(self._type_errors(
                     self.MINIMAL + f"params:\n  {ns}:\n    {key}: 1\n"), [])
+
+    def test_each_fresh_agent_runs_at_a_level_the_project_names(self):
+        """Each kind of fresh agent runs at `session` unless the manifest
+        names a level, and a level maps runtimes to their own model and
+        effort words, so GLaDOS names no model. A role naming a level that
+        does not exist, or a level out of shape, fails install rather than
+        leave the spawning agent to guess."""
+        self.assertEqual(self._type_errors(self.MINIMAL), [])
+        levels = ("    levels:\n      deep:\n        claude:\n"
+                  "          model: opus\n          effort: high\n"
+                  "      quick:\n        codex:\n          effort: low\n")
+        self.assertEqual(self._type_errors(
+            self.MINIMAL + "params:\n  agents:\n    reviewer: deep\n"
+            "    panelist: quick\n" + levels), [])
+        bad = (
+            ("    reviewer: deeep\n" + levels,
+             "params.agents.reviewer: deeep is not a level — use one of "
+             "session, deep, quick (value from explicit)"),
+            ("    refuter: deep\n",
+             "params.agents.refuter: deep is not a level — use one of "
+             "session (value from explicit)"),
+            ("    levels:\n      session:\n        claude:\n"
+             "          model: opus\n",
+             "params.agents.levels.session: `session` is the built-in level"),
+            ("    levels:\n      deep: fast\n",
+             "params.agents.levels.deep: must map at least one runtime"),
+            ("    levels:\n      deep:\n        claude: opus\n",
+             "params.agents.levels.deep.claude: must set model, effort or "
+             "both"),
+            ("    levels:\n      deep:\n        claude:\n"
+             "          temperature: hot\n",
+             "params.agents.levels.deep.claude.temperature: a level sets "
+             "only model and effort"),
+            ("    levels:\n      deep:\n        claude:\n"
+             "          effort: 3\n",
+             "params.agents.levels.deep.claude.effort: must be the "
+             "runtime's own word for it, as text — got 3"),
+        )
+        for body, expected in bad:
+            with self.subTest(expected=expected):
+                errors = self._type_errors(
+                    self.MINIMAL + "params:\n  agents:\n" + body)
+                self.assertTrue(any(e.startswith(expected) for e in errors),
+                                errors)
+        # every spawn names its kind's level, and the levels say how to read
+        # one; no model is named in the compiled text
+        t = make_target(read(EXAMPLE))
+        self.assertEqual(install("direct", t)[0], 0)
+        cores = t / "product-knowledge" / "glados"
+        for core, role in (("run-pipeline", "reviewer"),
+                           ("verify-feature", "evaluator"),
+                           ("review-mr", "panelist"),
+                           ("review-mr", "refuter")):
+            with self.subTest(core=core, role=role):
+                text = read(cores / f"{core}.md")
+                self.assertIn(f"`params.agents.{role}` names", text)
+                self.assertIn("## Agent levels", text)
+                self.assertNotRegex(text, r"\b(opus|sonnet|haiku)\b")
 
     def test_a_preset_bound_and_a_bound_out_of_shape_fail_too(self):
         """A bound the manifest inherits is checked like one it sets, and
@@ -3491,15 +3550,27 @@ class TestHealthierRun(unittest.TestCase):
             "the CI configuration it names that the brief leaves out is an "
             "issue.",
         ), "verify-feature")
-        # committing code needs the full suite, and the evaluator's run of
-        # it on the same diff counts, so a fix loop pays for it once
+        # committing code needs only the tests it touches; the full suite
+        # runs once, as the final verification, so a change pays for it once
         for name in ("run-pipeline", "build-feature", "fix-bug"):
             with self.subTest(core=name):
                 self.assertAllIn((
-                    "Run the project's full test suite before committing "
-                    "code, and its exact CI checks locally before pushing "
-                    "it; a fresh evaluator's run of them on the same diff "
-                    "counts.",), name)
+                    "Run the tests the change touches before committing "
+                    "code: the tests of each file it changes, and every "
+                    "test that names a name it changes.",
+                    "The project's full test suite and its exact CI checks "
+                    "run once, as the change's final verification: in a "
+                    "fresh evaluator where the workflow spawns one, "
+                    "otherwise before the push that opens the merge "
+                    "request. A later fix pass leaves the full run to the "
+                    "merge request's pipeline.",), name)
+        # a review fix pass runs what it touches; the pipeline runs the rest
+        self.assertAllIn((
+            "### 4. Test gate",
+            "The full suite runs on the pushed head in the merge request's "
+            "pipeline, whose jobs the next review pass reads; do not run it "
+            "again locally.",), "address-review")
+        self.assertNotIn("**full test suite**", self.core("address-review"))
 
     def test_the_record_is_an_index_and_commits_go_by_row(self):
         """A reader reads the head and its rows, not the whole record; a
@@ -3981,9 +4052,9 @@ class TestPeopleOnTheMR(unittest.TestCase):
                      "address-review"):
             with self.subTest(core=name):
                 self.assertAllIn((
-                    "a fresh evaluator's run of them on the same diff counts. "
-                    "Install any commit-msg hook the project declares before "
-                    "the first commit.",), name)
+                    "A later fix pass leaves the full run to the merge "
+                    "request's pipeline. Install any commit-msg hook the "
+                    "project declares before the first commit.",), name)
 
 
 class TestSinkConfig(unittest.TestCase):

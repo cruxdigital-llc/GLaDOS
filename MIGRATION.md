@@ -763,3 +763,40 @@ failing in CI. Nothing to do by hand.
 10. Optionally, extend CODEOWNERS to `/product-knowledge/steps/` (step
     bodies gate pipeline runs) and `/product-knowledge/canon/` (digests
     weigh in reviews), as in [The `phase:` decision](#the-phase-decision).
+
+## Upgrading a v2 install to 2.6
+
+2.6 shortens the time a change spends in its gates. A 2.5 manifest needs
+no change: reinstall to pick it up.
+
+- **Targeted tests in the interim, the full suite once.** Where the
+  project's agent instructions say nothing about testing, an agent now
+  runs the tests a change touches before each commit: the tests of each
+  file it changes, and every test that names a name it changes. The full
+  suite and the exact CI checks run once, as the change's final
+  verification: in verify-feature's evaluator, or, where no evaluator
+  runs, before the push that opens the merge request. address-review's fix
+  passes run their targeted tests and leave the full run to the merge
+  request's pipeline, whose jobs the next review pass reads. run-epic
+  keeps one more full run on the integration branch before the epic's
+  merge request. A project that wants the full suite before every commit
+  says so in its `CLAUDE.md` (or equivalent), which overrides these
+  defaults, as before.
+- **Agent levels.** Each kind of fresh agent (design reviewer, evaluator,
+  review-panel seat, refuter) can run at a level `params.agents` names.
+  A level binds each runtime the project uses to that runtime's own model
+  and effort, under `params.agents.levels`; GLaDOS names no model. The
+  default, `session`, runs every agent on the session's own model and
+  effort, as 2.5 did. See *Choosing Agent Levels* in
+  [PLAYBOOK.md](PLAYBOOK.md). install, check and validate refuse a role
+  naming a level that is not defined, a level named `session`, and a level
+  with no runtime, an empty binding, or a field other than `model` and
+  `effort`.
+- **Batched reads.** Design reviewers, evaluators and review-panel seats
+  now ask for reads and searches that do not depend on one another
+  together, in one step. Nothing to do.
+
+**The upgrade, in order.** Update your GLaDOS checkout, or the plugin, to
+2.6.0; run `validate` from it against the project; reinstall in each mode
+the project uses; run `check` and `effective-config`; commit the
+reinstalled files.

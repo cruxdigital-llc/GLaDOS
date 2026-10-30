@@ -47,8 +47,11 @@ it before spawning — a panelist that has to guess reviews the wrong change.
 
 ### Spawn the panel (parallel)
 
-Spawn **one fresh agent per panelist, all in parallel**. Each panelist's
-prompt contains the brief, its persona mandate, and these standing orders:
+<!-- glados:include vocabulary/agent-levels.md -->
+
+Spawn **one fresh agent per panelist, all in parallel**, each at the level
+`params.agents.panelist` names. Each panelist's prompt contains the brief,
+its persona mandate, and these standing orders:
 
 ```
 You are the [Persona] reviewer on an adversarial MR review panel.
@@ -56,6 +59,9 @@ You have no knowledge of how this change was written — only the brief.
 Your job is to find real problems, not to confirm success.
 
 1. Read the brief, the spec, and the diff. Read surrounding source as needed.
+   Ask for reads and searches that do not depend on one another together,
+   in one step, not one per step. Run only the tests a finding turns on:
+   the brief carries the pipeline's jobs for the rest.
 2. Review strictly through your persona's lens, and review the code: a
    finding about prose is advisory, one line. Cite file + line per finding.
    Review what this change introduced — a breach you find in a touched file
@@ -134,8 +140,9 @@ team to skim the next review.
 
 So every `blocking` finding earns its place before the tally counts it:
 
-- Spawn **one fresh agent per blocking finding**, in parallel, with a brief
-  carrying only that finding, the diff, and the cited file — never the panel's
+- Spawn **one fresh agent per blocking finding**, in parallel, at the level
+  `params.agents.refuter` names (*Agent levels*), with a brief carrying
+  only that finding, the diff, and the cited file — never the panel's
   other findings and never the panelist's reasoning. Its instruction is to
   **refute**: read the cited lines at this HEAD and show the finding is wrong.
 - Three outcomes, and only these: **confirmed** (the refuter could not break
