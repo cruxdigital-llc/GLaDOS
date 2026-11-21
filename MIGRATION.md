@@ -1,7 +1,9 @@
 # Migrating from GLaDOS v1.4.0 to v2.0.0
 
-Already on v2 and upgrading to 2.5? Skip to
-[Upgrading a v2 install to 2.5](#upgrading-a-v2-install-to-25).
+Already on v2? Skip to
+[Upgrading a v2 install to 2.5](#upgrading-a-v2-install-to-25),
+[to 2.6](#upgrading-a-v2-install-to-26) or
+[to 2.7](#upgrading-a-v2-install-to-27).
 
 One command does the mechanical work:
 
@@ -800,3 +802,36 @@ no change: reinstall to pick it up.
 2.6.0; run `validate` from it against the project; reinstall in each mode
 the project uses; run `check` and `effective-config`; commit the
 reinstalled files.
+
+## Upgrading a v2 install to 2.7
+
+2.7 lets Claude Code run the weekly ceremonies unattended. A 2.6 manifest
+needs no change: reinstall to pick it up.
+
+- **steward and brunch pre-approve their tools.** Their skills (plugin
+  mode) and command files (`claude` mode) now declare `allowed-tools`:
+  file edits, `.glados/glados.py`, the git commands a cleanup branch needs
+  (including `push`), and `gh pr`/`gh issue` or `glab mr`/`glab issue`.
+  Claude Code grants these only while the ceremony runs. In `claude` mode
+  the reinstall adds a frontmatter header to
+  `.claude/commands/glados/steward.md` and `brunch.md`; commit them with
+  the rest. No other workflow changes.
+- **Allowing a ceremony to start.** For `/loop` or a scheduled task to
+  start a ceremony without a prompt, add `Skill(glados:steward)` and
+  `Skill(glados:brunch)` to `permissions.allow`. Allow your project's test
+  and run commands there too, since the ceremonies don't pre-approve them.
+  See
+  [Running ceremonies unattended](docs/getting-started/claude-code.md#running-ceremonies-unattended).
+  If you don't add the rules, nothing changes: the ceremonies run as
+  before, and Claude Code asks before tools that aren't pre-approved.
+- **The plugin requires Claude Code 2.1.325 or later.** `plugin.json`
+  declares `engines.claude-code: ">=2.1.325"`, the release that added
+  `Skill(...)` rules. Upgrade Claude Code before you update the plugin.
+- **Plugin-only repos.** The pre-approved `.glados/glados.py` rule doesn't
+  match `python /path/to/GLaDOS/bin/glados.py ledger save`, so allow that
+  command in the repo's settings.
+
+**The upgrade, in order.** Update Claude Code to 2.1.325 or later; update
+your GLaDOS checkout, or the plugin, to 2.7.0; reinstall in each mode the
+project uses; run `check`; add the `Skill(...)` rules if you schedule the
+ceremonies; commit.

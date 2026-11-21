@@ -172,9 +172,24 @@ think of them:
 GLaDOS deliberately ships no scheduler. Every command can run
 non-interactively, so use whatever your project already has: a cron job (e.g.
 `gemini -p "/glados:brunch"` for Gemini CLI), a scheduled CI pipeline, or your
-agent's own scheduled-task feature. In Claude Code, `/loop` or a scheduled
-task runs a ceremony unattended once `permissions.allow` lists it, e.g.
-`Skill(glados:steward)`; see
+agent's own scheduled-task feature.
+
+**Unattended in Claude Code (new in 2.7).** `/loop`, a scheduled task or
+`claude -p` can now run steward and brunch from start to finish without
+stopping at a permission prompt. Each ceremony pre-approves only the tools
+it needs while it runs: file edits, `.glados/glados.py`, the git commands a
+cleanup branch needs, and `gh`/`glab` for its merge request. Anything else,
+such as your test command, still follows your own settings. To use it:
+
+1. Use Claude Code 2.1.325 or later (the plugin now requires it).
+2. Add `"Skill(glados:steward)"` and `"Skill(glados:brunch)"` to
+   `permissions.allow` in `.claude/settings.json`, plus a rule for your test
+   command.
+3. Try one run by hand and watch for a prompt before you schedule it.
+
+An unattended ceremony pushes its branch and opens its merge request
+without asking. Whether it may merge is still up to `merge-authority:` in
+`glados.yaml`. The details are in
 [Running ceremonies unattended](docs/getting-started/claude-code.md#running-ceremonies-unattended).
 
 ## What GLaDOS does and doesn't do
