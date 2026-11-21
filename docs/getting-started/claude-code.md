@@ -141,6 +141,54 @@ directory Claude Code runs in, so for a project in a subdirectory of its
 repository, start Claude Code there. It only activates while a run is
 actually in flight, so ordinary sessions are never disturbed.
 
+## Running ceremonies unattended
+
+`/glados:steward` and `/glados:brunch` are written to run with nobody
+watching, from `/loop`, a desktop scheduled task or a cron job running
+`claude -p "/glados:steward"`. Two things keep such a run from stopping at a
+permission prompt.
+
+**The ceremony pre-approves its own tools.** Both skills declare
+`allowed-tools` in their frontmatter: reading and editing files,
+`python .glados/glados.py` (or `python3`), the git commands a cleanup branch
+needs (`fetch`, `checkout`, `add`, `commit`, `push` and the read-only ones),
+and `gh pr`/`gh issue` or `glab mr`/`glab issue`. Claude Code grants these
+only during the turn that invokes the skill, and an unattended run is a
+single turn. Anything else, such as your project's test or build command,
+follows your normal permission settings, so allow it in the project's
+settings too. Note what this pre-approves: an unattended ceremony pushes its
+branch and opens its merge request without asking, as `glados.yaml`'s
+merge authority and decision rights permit.
+
+**You allow the skill itself.** Claude Code 2.1.325 added `Skill(<name>)`
+rules in `permissions.allow` so a loop or scheduled task can start a skill
+without a prompt. Add one for each ceremony you
+schedule, in `.claude/settings.json` (committed, shared with the team) or
+`.claude/settings.local.json` (yours only):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Skill(glados:steward)",
+      "Skill(glados:brunch)",
+      "Bash(npm test *)"
+    ]
+  }
+}
+```
+
+The last rule stands for your own test command. List each skill by name, as
+a wildcard such as `Skill(glados:*)` is not documented. Project rules apply
+only after someone accepts Claude Code's workspace trust prompt for the
+folder; a headless `-p` run in an untrusted folder ignores them. Try the
+schedule once by hand (`/loop` the command, or a `claude -p` run) and watch
+for a prompt before leaving it alone. Brunch's reviewer subagents run the
+project; whether they share the skill's grant is not documented, so allow
+the project's run and test commands in settings rather than relying on it. The same `Skill(...)` rule works for
+any other GLaDOS workflow you schedule, but only the two ceremonies
+pre-approve tools.
+
 ## Gotcha: two kinds of config edits
 
 Most `glados.yaml` keys (channels, merge authority, decisions, sinks,

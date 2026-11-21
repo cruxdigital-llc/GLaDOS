@@ -6,7 +6,9 @@
 
 A v2 workflow is a **core**: a markdown file in `src/workflows/` whose YAML
 frontmatter declares its contract (`reads:` / `writes:` state-registry tokens,
-`emits:` outcome types, `mutates:`, `requires:` modules) and whose body covers
+`emits:` outcome types, `mutates:`, `requires:` modules, and optionally
+`allowed-tools:`, the tools a Claude Code skill may use without a prompt)
+and whose body covers
 only that workflow's distinctive work. At compile time the installer prepends
 the kernel preamble, inlines the enabled modules and any vocabulary partials
 the body includes, and appends the kernel epilogue — cores never restate

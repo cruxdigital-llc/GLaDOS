@@ -176,6 +176,19 @@ becomes `python /path/to/GLaDOS/bin/glados.py ledger save` in a plugin-only
 repo; to release a run you have abandoned, delete both `.glados/runs/current`
 and `.glados/runs/stack`.
 
+## Running ceremonies unattended
+
+Plugin mode works as [claude-code.md](claude-code.md#running-ceremonies-unattended)
+describes: the `steward` and `brunch` skills declare `allowed-tools`, and you
+add `Skill(glados:steward)` and `Skill(glados:brunch)` to `permissions.allow`
+in the consuming repo. The plugin's `plugin.json` requires Claude Code
+2.1.325 or later, whose release notes add `Skill(...)` rules to
+`permissions.allow` for loops and scheduled tasks. One
+difference: the pre-approved `python .glados/glados.py` rule doesn't match a
+plugin-only repo's `python /path/to/GLaDOS/bin/glados.py ledger save`, so
+allow that command in the repo's settings as well, as
+`Bash(python /path/to/GLaDOS/bin/glados.py *)`.
+
 ## Maintainer corner: regenerating the artifacts
 
 After changing workflow sources or bumping the GLaDOS version, regenerate the
