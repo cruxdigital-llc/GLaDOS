@@ -172,7 +172,10 @@ think of them:
 GLaDOS deliberately ships no scheduler. Every command can run
 non-interactively, so use whatever your project already has: a cron job (e.g.
 `gemini -p "/glados:brunch"` for Gemini CLI), a scheduled CI pipeline, or your
-agent's own scheduled-task feature.
+agent's own scheduled-task feature. In Claude Code, `/loop` or a scheduled
+task runs a ceremony unattended once `permissions.allow` lists it, e.g.
+`Skill(glados:steward)`; see
+[Running ceremonies unattended](docs/getting-started/claude-code.md#running-ceremonies-unattended).
 
 ## What GLaDOS does and doesn't do
 

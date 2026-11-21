@@ -1,8 +1,11 @@
 {
   "name": "glados",
-  "version": "2.6.0",
-  "description": "GLaDOS — agentic development framework with structured workflows, modules, and personas",
+  "version": "2.7.0",
+  "description": "GLaDOS \u2014 agentic development framework with structured workflows, modules, and personas",
   "author": {
     "name": "The Crux Digital Team"
+  },
+  "engines": {
+    "claude-code": ">=2.1.325"
   }
 }

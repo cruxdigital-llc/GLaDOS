@@ -7,6 +7,34 @@ writes: [observations.pending, standards.index, intent.status, work.base-sha, ca
 emits: [progress, observation, bug]
 mutates: branch
 requires: []
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Bash(python .glados/glados.py *)
+  - Bash(python3 .glados/glados.py *)
+  - Bash(git status *)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Bash(git show *)
+  - Bash(git rev-parse *)
+  - Bash(git ls-files *)
+  - Bash(git merge-base *)
+  - Bash(git fetch *)
+  - Bash(git pull *)
+  - Bash(git checkout *)
+  - Bash(git switch *)
+  - Bash(git branch *)
+  - Bash(git worktree *)
+  - Bash(git add *)
+  - Bash(git commit *)
+  - Bash(git push *)
+  - Bash(gh pr *)
+  - Bash(gh issue *)
+  - Bash(glab mr *)
+  - Bash(glab issue *)
 ---
 
 # (GLaDOS) Steward

@@ -115,6 +115,28 @@ above. An event it cannot parse, one that is not a JSON object, or none at
 all (the hook started with no stdin) still gets the check, in the process's
 working directory. The Gemini/agy guard below does the same.
 
+For a scheduled `/glados:steward` or `/glados:brunch`, the same file also
+carries the `Skill(...)` allow rules that let the ceremony start without a
+prompt; see
+[Running ceremonies unattended](../docs/getting-started/claude-code.md#running-ceremonies-unattended):
+
+```json
+{
+  "permissions": {
+    "allow": ["Skill(glados:steward)", "Skill(glados:brunch)"]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python .glados/hooks/claude-stop-hook.py" }
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## Gemini CLI — AfterAgent guard (retries the turn)
 
 Gemini's SessionEnd cannot block; AfterAgent can (exit 2 retries the turn).

@@ -60,7 +60,7 @@ from pathlib import Path
 # 1. CONSTANTS
 # =============================================================================
 
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 
 # The sixteen v2 cores, in canonical (pipeline-ish) order. The compiler touches
 # ONLY these — other .md files under src/workflows are v1 leftovers deleted at
@@ -1171,10 +1171,22 @@ class Source:
             else:
                 raise Fatal(f"{path}: frontmatter field '{field}' must be a "
                             f"list of strings — got {val!r}")
+        # Optional: tools a Claude Code skill may use without a prompt during
+        # the turn that invokes it (`allowed-tools:` in skill frontmatter).
+        # With a `Skill(glados:<name>)` rule in permissions.allow, a /loop or
+        # scheduled task can then run the workflow unattended.
+        allowed = fm.get("allowed-tools")
+        if allowed is None:
+            allowed = []
+        elif not (isinstance(allowed, list)
+                  and all(isinstance(x, str) and x.strip() for x in allowed)):
+            raise Fatal(f"{path}: frontmatter field 'allowed-tools' must be a "
+                        f"list of non-empty strings — got {allowed!r}")
         return {
             "name": name,
             "path": path,
             "frontmatter": fm,
+            "allowed_tools": list(allowed),
             "body": body,
             "reads": lists["reads"],
             "writes": lists["writes"],
@@ -3300,11 +3312,24 @@ def _pipeline_shim_body(comp: Compilation, name: str, runner: str,
 
 # ---- claude -----------------------------------------------------------------
 
+def _allowed_tools_yaml(tools: list) -> str:
+    """The `allowed-tools:` frontmatter lines for a Claude Code skill or
+    command, or "" when the core declares none."""
+    if not tools:
+        return ""
+    return "allowed-tools:\n" + "".join(f"  - {_yaml_quote(t)}\n" for t in tools)
+
+
 def adapter_claude(source: Source, comp: Compilation) -> dict:
     plan: dict = {}
     base = ".claude/commands/glados"
     for c in comp.enabled:
-        plan[f"{base}/{c}.md"] = ("text", comp.cores[c])
+        tools = source.cores[c].get("allowed_tools") or []
+        # Only a core that pre-approves tools gets frontmatter, so every
+        # other command file stays byte-identical to its compiled core.
+        head = (f"---\ndescription: {_yaml_quote(source.cores[c]['description'])}"
+                f"\n{_allowed_tools_yaml(tools)}---\n\n" if tools else "")
+        plan[f"{base}/{c}.md"] = ("text", head + comp.cores[c])
     for alias, (target, enabled) in _alias_targets(source, comp).items():
         body = (f"The `{alias}` workflow was renamed. Run `/glados:{target}` "
                 f"instead.\n" if enabled else _disabled_alias_body(alias, target, comp))
@@ -3324,8 +3349,9 @@ def adapter_claude_plugin(source: Source, comp: Compilation) -> dict:
     for c in comp.enabled:
         plan[f"compiled/claude-plugin/{c}.md"] = ("text", comp.cores[c])
         desc = _yaml_quote(source.cores[c]["description"])
+        tools = _allowed_tools_yaml(source.cores[c].get("allowed_tools") or [])
         plan[f"skills/{c}/SKILL.md"] = ("text",
-            f"---\ndescription: {desc}\n---\n\n"
+            f"---\ndescription: {desc}\n{tools}---\n\n"
             f"Read and follow the compiled workflow at "
             f"`{PLUGIN_STUB_MARKER}{c}.md`.\n")
     for alias, (target, enabled) in _alias_targets(source, comp).items():

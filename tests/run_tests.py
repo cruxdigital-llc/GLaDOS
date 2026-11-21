@@ -6527,6 +6527,78 @@ class TestCanon(unittest.TestCase):
         self.assertIn("any canon (`canon:`) govern this run", flat)
 
 
+class TestUnattendedCeremonies(unittest.TestCase):
+    """steward and brunch pre-approve their tools (`allowed-tools`) so a
+    Claude Code /loop or scheduled task allowed by a `Skill(glados:<name>)`
+    rule runs them without stopping at a permission prompt."""
+
+    CEREMONIES = ("steward", "brunch")
+
+    def _fm(self, path):
+        fm, _ = glados.split_frontmatter(read(path), path.name)
+        self.assertIsNotNone(fm, f"{path} has no frontmatter")
+        return fm
+
+    def test_ceremony_sources_declare_tools(self):
+        for c in self.CEREMONIES:
+            tools = self._fm(REPO / "src" / "workflows" / f"{c}.md")["allowed-tools"]
+            for must in ("Bash(python .glados/glados.py *)", "Bash(git push *)",
+                         "Bash(gh pr *)", "Bash(glab mr *)", "Edit", "Write"):
+                self.assertIn(must, tools, f"{c} must pre-approve {must}")
+            self.assertFalse(any(t in ("Bash", "Bash(*)") for t in tools),
+                             f"{c} must not pre-approve every shell command")
+
+    def test_plugin_stubs_carry_tools(self):
+        t = make_plugin_target()
+        rc, out = install("claude-plugin", t)
+        self.assertEqual(rc, 0, out)
+        for c in self.CEREMONIES:
+            src = self._fm(REPO / "src" / "workflows" / f"{c}.md")
+            fm = self._fm(t / "skills" / c / "SKILL.md")
+            self.assertEqual(fm["allowed-tools"], src["allowed-tools"])
+        self.assertNotIn("allowed-tools",
+                         self._fm(t / "skills" / "plan-feature" / "SKILL.md"))
+
+    def test_checked_in_stubs_current(self):
+        for c in self.CEREMONIES:
+            src = self._fm(REPO / "src" / "workflows" / f"{c}.md")
+            fm = self._fm(REPO / "skills" / c / "SKILL.md")
+            self.assertEqual(fm["allowed-tools"], src["allowed-tools"],
+                             "run `python bin/glados.py compile-plugin`")
+
+    def test_claude_commands_carry_tools(self):
+        t = make_target()
+        rc, out = install("claude", t)
+        self.assertEqual(rc, 0, out)
+        base = t / ".claude" / "commands" / "glados"
+        for c in self.CEREMONIES:
+            fm = self._fm(base / f"{c}.md")
+            self.assertIn("Bash(git push *)", fm["allowed-tools"])
+            self.assertTrue(fm["description"])
+        # A core that pre-approves nothing keeps a frontmatter-free file.
+        self.assertFalse(read(base / "plan-feature.md").startswith("---"))
+        rc, out = run_cli("check", "--target", t, "--source", REPO)
+        self.assertEqual(rc, 0, out)
+
+    def test_malformed_allowed_tools_rejected(self):
+        src = make_doctored_source()
+        core = src / "src" / "workflows" / "steward.md"
+        text = read(core)
+        start = text.index("allowed-tools:\n")
+        end = text.index("---\n", start)
+        write(core, text[:start] + "allowed-tools: Bash\n" + text[end:])
+        t = make_target()
+        rc, out = install("claude", t, source=src)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("'allowed-tools' must be a list", out)
+
+    def test_plugin_requires_skill_rule_support(self):
+        plugin = json.loads(read(REPO / ".claude-plugin" / "plugin.json"))
+        self.assertEqual(plugin.get("engines", {}).get("claude-code"),
+                         ">=2.1.325",
+                         "Skill(...) permission rules need Claude Code 2.1.325")
+
+
 class TestReleaseHygiene(unittest.TestCase):
     """The version lives in three files and the release checks guard the
     paths that change behaviour (F6f-h)."""
